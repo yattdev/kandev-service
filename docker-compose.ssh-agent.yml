@@ -1,0 +1,25 @@
+# docker-compose.ssh-agent.yml — optional overlay for SSH agent socket forwarding.
+#
+# Use this when you need:
+#   - Passphrase caching (keys protected by a passphrase)
+#   - SSH agent forwarding to remote hosts (ssh -A / ProxyJump through bastions)
+#
+# USAGE — via the helper script (recommended):
+#   bash ~/Code/kandev/kandev-ssh-agent.sh
+#
+# USAGE — manually:
+#   eval $(ssh-agent) && ssh-add ~/.ssh/ayattara_key ~/.ssh/github_yattdev_sfldesktop
+#   SSH_AUTH_SOCK=$SSH_AUTH_SOCK docker compose \
+#     -f docker-compose.yml \
+#     -f docker-compose.override.yml \
+#     -f docker-compose.ssh-agent.yml \
+#     -p kandev up -d --force-recreate
+services:
+  kandev:
+    environment:
+      # Point SSH inside the container at the forwarded agent socket.
+      - SSH_AUTH_SOCK=/run/ssh-agent.sock
+    volumes:
+      # Bind-mount the host agent socket into the container.
+      # SSH_AUTH_SOCK must be set in the host shell before running compose.
+      - ${SSH_AUTH_SOCK}:/run/ssh-agent.sock:ro

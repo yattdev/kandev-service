@@ -1,0 +1,48 @@
+# docker-compose.override.yml — automatically merged with docker-compose.yml by Docker Compose.
+# Adds: local image build (Dockerfile.local) + host identity/config volume mounts
+# so that ssh, git, gh, and glab inside the container behave exactly like on the host.
+#
+# For SSH agent forwarding (passphrase caching, agent-forwarding to remote hosts):
+#   use the kandev-ssh-agent.sh helper instead of `docker compose up` directly.
+#
+# To opt-out of this file temporarily:
+#   docker compose -f docker-compose.yml up -d
+services:
+  kandev:
+    # Build from Dockerfile.local (extends upstream image).
+    # `image:` names the built result so update.sh can reference it by tag.
+    build:
+      context: .
+      dockerfile: Dockerfile.local
+      network: host
+      args:
+        BASE_IMAGE: ghcr.io/kdlbs/kandev:latest
+    image: kandev-local:latest
+
+    environment:
+      # Mirror host user identity — needed by ssh, git, glab, gh and other tools
+      # that inspect $USER / $LOGNAME to determine the current user's identity.
+      - USER=${USER}
+      - LOGNAME=${USER}
+
+    volumes:
+      # ── SSH ──────────────────────────────────────────────────────────────────
+      # Full ~/.ssh directory: keys, config, known_hosts.
+      # Paths in ~/.ssh/config use ~ which resolves to /data/home inside the
+      # container (HOME=/data/home), so all IdentityFile entries work as-is.
+      # Read-only: the container should never modify your private keys.
+      - ${HOME}/.ssh:/data/home/.ssh:ro
+
+      # ── Git ───────────────────────────────────────────────────────────────────
+      # Global git identity (name, email, aliases, colour, etc.).
+      # safe.directory=* is injected at the system level via Dockerfile.local
+      # so repos under /data/home/Code/ are never flagged as "dubious ownership".
+      - ${HOME}/.gitconfig:/data/home/.gitconfig:ro
+
+      # ── GitHub CLI ────────────────────────────────────────────────────────────
+      # Read-write: `gh auth login` writes tokens here.
+      - ${HOME}/.config/gh:/data/home/.config/gh
+
+      # ── GitLab CLI ────────────────────────────────────────────────────────────
+      # Read-write: `glab auth login` writes tokens here.
+      - ${HOME}/.config/glab-cli:/data/home/.config/glab-cli

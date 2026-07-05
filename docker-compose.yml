@@ -1,0 +1,24 @@
+services:
+  kandev:
+    image: ghcr.io/kdlbs/kandev:latest
+    container_name: kandev
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ${HOME}/.local/share/kandev:/data
+      # Nested bind: ~/Code -> /data/home/Code (under container HOME=/data/home).
+      # Kandev's HOME-rooted allowed-roots check accepts /data/home/Code/<project>,
+      # and the discovery scanner walks a real directory (it does NOT follow symlinks).
+      # The empty mountpoint /data/home/Code is created by install-*.sh before the
+      # container starts, so Docker can apply the nested bind cleanly.
+      - ${HOME}/Code:/data/home/Code
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - KANDEV_NO_BROWSER=1
+      - KANDEV_HOME_DIR=/data
+      - KANDEV_DOCKER_ENABLED=false
+      - HOME=/data/home
+      - NPM_CONFIG_PREFIX=/data/.npm-global
+      - HOSTNAME=0.0.0.0
+      - NODE_ENV=production
+    command: ["kandev", "start", "--backend-port", "38429", "--verbose"]

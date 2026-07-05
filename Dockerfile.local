@@ -1,0 +1,42 @@
+# Dockerfile.local — extends the upstream kandev image with extra packages.
+# Build via docker-compose.override.yml (automatic) or manually:
+#   docker build --network=host -f Dockerfile.local -t kandev-local:latest .
+ARG BASE_IMAGE=ghcr.io/kdlbs/kandev:latest
+FROM ${BASE_IMAGE}
+
+USER root
+
+# ── Core tools ────────────────────────────────────────────────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    openssh-client \
+    curl \
+    gnupg \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── GitHub CLI (gh) ───────────────────────────────────────────────────────────
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] \
+        https://cli.github.com/packages stable main" \
+      | tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
+    && apt-get update && apt-get install -y --no-install-recommends gh \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── GitLab CLI (glab) ─────────────────────────────────────────────────────────
+# Version resolved via GitLab's own API; download URL uses the generic packages endpoint.
+RUN ARCH=$(dpkg --print-architecture) \
+    && GLAB_VER=$(curl -fsSL \
+        "https://gitlab.com/api/v4/projects/gitlab-org%2Fcli/releases?per_page=1" \
+        | grep -o '"tag_name":"[^"]*"' | head -1 | sed 's/"tag_name":"v//;s/"//') \
+    && DL_URL="https://gitlab.com/api/v4/projects/gitlab-org%2Fcli/packages/generic/glab/${GLAB_VER}/glab_${GLAB_VER}_linux_${ARCH}.deb" \
+    && curl -fsSL "$DL_URL" -o /tmp/glab.deb \
+    && dpkg -i /tmp/glab.deb \
+    && rm /tmp/glab.deb
+
+# ── Git: trust all directories ────────────────────────────────────────────────
+# Prevents "dubious ownership" errors for repos owned by root (docker leftovers)
+# or repos where the host path (/home/ayattara/...) differs from the container
+# path (/data/home/...) in the global gitconfig safe.directory entries.
+RUN git config --system safe.directory '*'
