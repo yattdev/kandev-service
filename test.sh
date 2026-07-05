@@ -94,7 +94,12 @@ fi
 # ── 3. Service ────────────────────────────────────────────────────────────────
 section "3. Service reachability"
 
-HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:38429/ 2>/dev/null || echo "000")
+HTTP_CODE="000"
+for i in 1 2 3 4 5; do
+  HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:38429/ 2>/dev/null || echo "000")
+  [[ "$HTTP_CODE" == "200" ]] && break
+  sleep 2
+done
 if [[ "$HTTP_CODE" == "200" ]]; then
   ok "HTTP 200 on localhost:38429"
 else

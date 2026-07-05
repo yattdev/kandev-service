@@ -19,6 +19,13 @@ services:
         BASE_IMAGE: ghcr.io/kdlbs/kandev:latest
     image: kandev-local:latest
 
+    # Load secrets from .env (git-ignored). required: false so the container
+    # starts even before .env is populated — tools just won't have API access.
+    # After filling in .env, restart with: docker compose up -d --force-recreate
+    env_file:
+      - path: .env
+        required: false
+
     environment:
       # Propagate the host username into the container.
       # The container OS user is named "kandev" but tools like git, ssh, gh, and
