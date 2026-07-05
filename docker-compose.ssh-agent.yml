@@ -17,7 +17,11 @@
 services:
   kandev:
     environment:
-      # Point SSH inside the container at the forwarded agent socket.
+      # Tell SSH (and any library using libssh/libssh2) where to find the agent socket.
+      # The actual socket is bind-mounted from the host into /run/ssh-agent.sock (below).
+      # Without this variable, SSH ignores the mounted socket entirely and falls back
+      # to key-file auth only — defeating the purpose of agent forwarding.
+      # Value must match the container-side path in the volume mount below.
       - SSH_AUTH_SOCK=/run/ssh-agent.sock
     volumes:
       # Bind-mount the host agent socket into the container.

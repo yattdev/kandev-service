@@ -14,11 +14,48 @@ services:
       - ${HOME}/Code:/data/home/Code
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
+      # Prevent kandev from launching a browser window on startup.
+      # Required on headless servers — without this, kandev tries to open the
+      # web UI in a desktop browser and may hang or error if no display is available.
       - KANDEV_NO_BROWSER=1
+
+      # Root of the kandev data directory inside the container.
+      # Kandev stores its sqlite database, sessions, and internal config under
+      # this path. Must match the first volume mount (${HOME}/.local/share/kandev:/data).
       - KANDEV_HOME_DIR=/data
+
+      # Disable kandev's built-in Docker container spawning feature.
+      # When enabled, kandev would try to launch per-project containers via the
+      # mounted Docker socket. We keep it disabled because we run with
+      # network_mode: host and manage containers separately.
+      # The socket (/var/run/docker.sock) is still mounted for any manual
+      # docker/docker compose commands run from inside the container.
       - KANDEV_DOCKER_ENABLED=false
+
+      # Override the container user's home directory.
+      # The actual container user (kandev, UID 1000) has /data/home set as its
+      # home in /etc/passwd. All tools that expand ~ or read $HOME will resolve
+      # config files here: ~/.ssh → /data/home/.ssh, ~/.gitconfig → /data/home/.gitconfig, etc.
+      # This is what makes the host identity volume mounts (in override.yml) work.
       - HOME=/data/home
+
+      # Redirect npm global installs to the persistent data volume.
+      # Without this, `npm install -g <tool>` writes into the container's read-only
+      # root filesystem and is lost on every rebuild. With this set, globals land in
+      # /data/.npm-global (inside the ${HOME}/.local/share/kandev bind mount) and
+      # survive container updates.
       - NPM_CONFIG_PREFIX=/data/.npm-global
+
+      # Bind address reported / used by the kandev server.
+      # With network_mode: host the container shares the host's network stack.
+      # Setting this to 0.0.0.0 tells kandev to accept connections on all
+      # interfaces (LAN, loopback), making the UI reachable from other machines
+      # on the same network (e.g. http://board.home, http://board.sfl).
       - HOSTNAME=0.0.0.0
+
+      # Run Node.js (and kandev) in production mode.
+      # Effects: disables development-only middleware and verbose error stack traces,
+      # enables internal caching and performance optimisations, and reduces log noise.
+      # Change to "development" only when debugging kandev itself.
       - NODE_ENV=production
     command: ["kandev", "start", "--backend-port", "38429", "--verbose"]
