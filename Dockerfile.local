@@ -40,3 +40,12 @@ RUN ARCH=$(dpkg --print-architecture) \
 # or repos where the host path (/home/ayattara/...) differs from the container
 # path (/data/home/...) in the global gitconfig safe.directory entries.
 RUN git config --system safe.directory '*'
+
+# ── Entrypoint: tolerate read-only bind mounts ────────────────────────────────
+# The upstream entrypoint runs `chown -R kandev:kandev /data` under `set -e`.
+# It crashes when it hits our :ro mounts (~/.ssh, ~/.gitconfig) because chown
+# cannot change ownership on a read-only filesystem — causing an infinite restart
+# loop. The patched version adds `|| true` so chown proceeds on all writable
+# paths and silently skips the read-only ones instead of aborting startup.
+COPY docker-entrypoint-local.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
