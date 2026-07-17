@@ -79,7 +79,7 @@ curl -s -o /dev/null -w "HTTP %{http_code}" http://localhost:38429/
 2. Rebuild if Dockerfile.local was modified:  docker compose build
 3. Restart container if compose files changed: docker compose up -d --force-recreate
 4. Run:  bash ~/Code/kandev/test.sh
-5. All 24 tests must be green
+5. All 29 tests must be green
 6. Commit
 7. Only then report the task as complete
 ```
@@ -152,6 +152,31 @@ host path). Inside the container the same repo is at `/data/home/Code/scsl`. Add
 docker-leftover root-owned files under `~/Code/` trigger git ownership errors.
 `git config --system safe.directory '*'` in `/etc/gitconfig` bypasses all of this.
 
+### Language toolchains (mise) — no Dockerfile edit per project
+
+Projects need many runtimes (Node, Python, Go, Java, Ruby, PHP, .NET). Rather than
+adding each dependency to `Dockerfile.local`, the image ships **`mise`** (a polyglot
+version manager) plus `build-essential` and common dev headers. Design:
+
+- **Global defaults** matched to the host live in `/etc/mise/config.toml`
+  (baked from `mise.default.toml`). Projects override them with their own
+  `mise.toml` / `.tool-versions` / `.nvmrc` / `.python-version`, which mise
+  auto-installs on demand.
+- **Nothing is pre-installed in the image.** Because `HOME=/data/home` is on the
+  persistent bind mount, mise installs runtimes to
+  `/data/home/.local/share/mise` — they **survive image rebuilds and container
+  recreation**. The same is true for every default per-user cache
+  (`~/.cache/pip`, `~/.npm`, `~/go`, `~/.cargo`, `~/.m2`).
+- **Shims on PATH:** `Dockerfile.local` puts `…/mise/shims` on `PATH` via `ENV`
+  so tools resolve even in non-interactive `bash -c` shells (how agents run).
+- **First-time population:** run `bash setup-toolchains.sh` once to install the
+  global toolchains into the volume. Precompiled tools (node/python/go/java/dotnet)
+  are fast; ruby/php compile from source (hence the baked-in build headers).
+
+Bottom line: adding a project or a new dependency requires **no Dockerfile change** —
+the agent just runs the project's own install command (`pip install -r`, `npm install`,
+`go mod download`, `bundle install`), and everything persists in `/data`.
+
 ### Transparent proxy (sfl-desktop)
 
 The corporate network uses a transparent proxy that intercepts HTTP/HTTPS and injects
@@ -175,9 +200,11 @@ Use `kandev-ssh-agent.sh` when:
 | `docker-compose.yml` | Base service: upstream image, restart policy, `network_mode: host`, core env vars and volumes |
 | `docker-compose.override.yml` | Local build, `USER`/`LOGNAME` env, SSH/git/gh/glab identity mounts |
 | `docker-compose.ssh-agent.yml` | Optional SSH agent socket overlay |
-| `Dockerfile.local` | Extends upstream: adds SSH, gh, glab; patches git and entrypoint |
+| `Dockerfile.local` | Extends upstream: adds SSH, gh, glab, Docker CLI, build toolchain, mise; patches git and entrypoint |
 | `docker-entrypoint-local.sh` | Upstream entrypoint + `|| true` chown fix for :ro mounts |
-| `test.sh` | 24 automated tests covering image, container, service, identity, SSH, git, CLI tools |
+| `mise.default.toml` | System-wide mise config (`/etc/mise/config.toml`): global language versions matched to host |
+| `setup-toolchains.sh` | One-time helper: installs the mise language toolchains into the persistent `/data` volume |
+| `test.sh` | 29 automated tests covering image, container, service, identity, SSH, git, CLI tools, toolchains |
 | `update.sh` | Daily cron: pull upstream → rebuild local → restart if changed |
 | `kandev-ssh-agent.sh` | Helper: start/reuse ssh-agent, load keys, restart kandev with socket forwarding |
 | `install-mini.sh` | One-time mini-desktop setup: sync cron, update cron, `/data/home/Code` mountpoint |
@@ -199,3 +226,4 @@ Use `kandev-ssh-agent.sh` when:
 | SSH uses wrong key for a host | `~/.ssh` not mounted or `HOME` wrong | Verify mount and `HOME=/data/home` |
 | `http://board.sfl` unreachable | iptables NAT rules missing after reboot | Re-run `install-sfl.sh` or apply rules via privileged container (see README) |
 | `http://board.sfl` unreachable after our changes | Container crash-loop | Check `docker inspect kandev --format '{{.RestartCount}}'`; run `test.sh` |
+| `http://board.sfl` (or `board.home`, or literally any `http://` site) shows the **wrong data** or a stale/empty "Default Workspace" **when browsed from yattara-pc** | `install-yattara.sh` set an **unscoped** iptables `OUTPUT` NAT redirect — `-A OUTPUT -p tcp --dport 80 -j REDIRECT --to-port 38429` has no `-d` filter, so it matches port-80 packets to **any destination**, silently rewriting them to yattara-pc's own local kandev (127.0.0.1:38429) instead of letting them leave the host. Confirmed by stopping yattara-pc's local kandev container: `board.sfl:80` then failed outright (connection refused) instead of reaching sfl-desktop — proving the request never left the machine. (Earlier guess blaming the SFL corporate VPN was wrong — ruled out once the local-redirect rule was found.) | Fixed in `install-yattara.sh`: the OUTPUT rule is now scoped with `-d 127.0.0.1/32` so it only catches the host's own loopback traffic (browser on yattara-pc → `board.local`), and the old unscoped rule is actively removed (live + persisted in `/etc/ufw/before.rules`). Re-run `bash ~/Code/kandev/install-yattara.sh` (needs sudo) to apply after pulling this fix. |

@@ -213,6 +213,45 @@ else
   fail "~/.gitconfig mount is NOT read-only"
 fi
 
+# ── 8. Language toolchains (mise) ─────────────────────────────────────────────
+section "8. Language toolchains (mise)"
+
+# mise binary present in image
+if docker run --rm kandev-local:latest which mise &>/dev/null; then
+  ok "mise binary present in image"
+else
+  fail "mise binary missing from image"
+fi
+
+# Build toolchain present (native extensions, ruby/php source builds)
+if docker run --rm kandev-local:latest which gcc &>/dev/null; then
+  ok "gcc / build-essential present in image"
+else
+  fail "gcc / build-essential missing from image"
+fi
+
+# System-wide mise config baked in and listing the expected tools
+if docker run --rm kandev-local:latest sh -c \
+    'test -f /etc/mise/config.toml && grep -q "^node" /etc/mise/config.toml'; then
+  ok "/etc/mise/config.toml present with global tool versions"
+else
+  fail "/etc/mise/config.toml missing or does not list tools"
+fi
+
+# mise shims directory must be on PATH inside the running container
+if docker exec kandev printenv PATH 2>/dev/null | grep -q '/data/home/.local/share/mise/shims'; then
+  ok "mise shims dir is on container PATH"
+else
+  fail "mise shims dir not on container PATH — installed tools would not resolve"
+fi
+
+# mise inside the running container parses the config and lists the tools
+if docker exec -u kandev kandev mise ls 2>/dev/null | grep -qi '^node'; then
+  ok "mise lists configured toolchains inside container"
+else
+  fail "mise does not list configured toolchains (config not parsed/trusted)"
+fi
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 TOTAL=$((PASS + FAIL))
 echo ""

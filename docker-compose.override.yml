@@ -60,3 +60,16 @@ services:
       # ── GitLab CLI ────────────────────────────────────────────────────────────
       # Read-write: `glab auth login` writes tokens here.
       - ${HOME}/.config/glab-cli:/data/home/.config/glab-cli
+
+      # ── Docker socket ─────────────────────────────────────────────────────────
+      # Forwards the host Docker daemon socket into the container so that
+      # `docker` and `docker compose` commands run against the host daemon.
+      # The kandev user is added to the docker group (GID 984) during the image
+      # build; group_add ensures the running process inherits that GID even if
+      # the group table inside the container is not fully synchronised.
+      # Override DOCKER_GID if your host docker group GID differs from 984:
+      #   DOCKER_GID=<gid> docker compose up -d
+      - /var/run/docker.sock:/var/run/docker.sock
+
+    group_add:
+      - "${DOCKER_GID:-984}"

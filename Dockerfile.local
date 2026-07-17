@@ -35,6 +35,94 @@ RUN ARCH=$(dpkg --print-architecture) \
     && dpkg -i /tmp/glab.deb \
     && rm /tmp/glab.deb
 
+# ── Docker CLI + Compose plugin ───────────────────────────────────────────────
+# Installs the Docker CLI and Compose v2 plugin so that docker/docker compose
+# commands inside the container talk to the host daemon via the mounted socket.
+RUN curl -fsSL https://download.docker.com/linux/debian/gpg \
+      | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] \
+        https://download.docker.com/linux/debian bookworm stable" \
+      | tee /etc/apt/sources.list.d/docker.list > /dev/null \
+    && apt-get update && apt-get install -y --no-install-recommends \
+        docker-ce-cli \
+        docker-compose-plugin \
+        docker-buildx-plugin \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Python 3 ──────────────────────────────────────────────────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Docker socket group ────────────────────────────────────────────────────────
+# GID 984 matches the host's docker group (sfl-desktop: getent group docker).
+# kandev is added to this group so it can access the mounted /var/run/docker.sock.
+# DOCKER_GID can be overridden at build time if the host GID differs.
+ARG DOCKER_GID=984
+RUN if getent group docker > /dev/null 2>&1; then \
+        groupmod -g ${DOCKER_GID} docker; \
+    else \
+        groupadd -g ${DOCKER_GID} docker; \
+    fi \
+    && usermod -aG docker kandev
+
+# ── Build toolchain + dev headers ─────────────────────────────────────────────
+# Needed so that (a) pip/npm/gem can compile native extensions on demand and
+# (b) mise can build Ruby and PHP from source. Baking these once means projects
+# never require a Dockerfile edit just to satisfy a build-time dependency.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    pkg-config \
+    cmake \
+    autoconf \
+    bison \
+    re2c \
+    unzip \
+    zip \
+    xz-utils \
+    file \
+    libssl-dev \
+    zlib1g-dev \
+    libbz2-dev \
+    libreadline-dev \
+    libsqlite3-dev \
+    libffi-dev \
+    liblzma-dev \
+    libncurses-dev \
+    libgdbm-dev \
+    libyaml-dev \
+    libxml2-dev \
+    libxslt1-dev \
+    libcurl4-openssl-dev \
+    libonig-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── mise (polyglot version manager) ───────────────────────────────────────────
+# mise reads each project's mise.toml / .tool-versions / .nvmrc / .python-version
+# and installs the exact runtime version on demand into the persistent /data
+# volume — so the container matches the host's multi-language toolset without
+# per-project Dockerfile edits. Global defaults live in /etc/mise/config.toml.
+RUN install -dm 755 /etc/apt/keyrings \
+    && curl -fsSL https://mise.jdx.dev/gpg-key.pub \
+      | gpg --dearmor -o /etc/apt/keyrings/mise-archive-keyring.gpg \
+    && chmod go+r /etc/apt/keyrings/mise-archive-keyring.gpg \
+    && echo "deb [signed-by=/etc/apt/keyrings/mise-archive-keyring.gpg arch=$(dpkg --print-architecture)] \
+        https://mise.jdx.dev/deb stable main" \
+      | tee /etc/apt/sources.list.d/mise.list > /dev/null \
+    && apt-get update && apt-get install -y --no-install-recommends mise \
+    && rm -rf /var/lib/apt/lists/*
+
+# System-wide mise defaults (global tool versions matched to the host).
+COPY mise.default.toml /etc/mise/config.toml
+
+# Put mise's shim directory on PATH for ALL processes (including non-interactive
+# `bash -c` invocations used by agents). HOME=/data/home lives on the persistent
+# volume, so mise installs tools to /data/home/.local/share/mise which survives
+# rebuilds. The directory may be empty until setup-toolchains.sh runs — an empty
+# PATH entry is harmless.
+ENV PATH="/data/home/.local/share/mise/shims:${PATH}"
+
 # ── Git: trust all directories ────────────────────────────────────────────────
 # Prevents "dubious ownership" errors for repos owned by root (docker leftovers)
 # or repos where the host path (/home/ayattara/...) differs from the container

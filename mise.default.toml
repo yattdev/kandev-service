@@ -1,0 +1,40 @@
+# mise.default.toml — system-wide mise defaults, baked into the image at
+# /etc/mise/config.toml by Dockerfile.local.
+#
+# Purpose: give the container the SAME language toolset as the host
+# (sfl-desktop) without editing the Dockerfile for every project. The versions
+# below are the global defaults (matched to the host at setup time); any
+# project can override them with its own mise.toml / .tool-versions / .nvmrc /
+# .python-version / .ruby-version file and mise will auto-install the requested
+# version into the persistent /data volume.
+#
+# Install the global defaults once with:  bash ~/Code/kandev/setup-toolchains.sh
+# (Tools install into /data/home/.local/share/mise, which is on the persistent
+#  bind mount, so they survive image rebuilds and container recreation.)
+
+[tools]
+# Precompiled binaries (fast to install):
+node   = "22.13.1"        # host: nvm node v22.13.1
+python = "3.12.3"         # host: system Python 3.12.3 (mise uses standalone builds)
+go     = "1.26.0"         # host: go1.26.0
+java   = "temurin-21.0.10" # host: openjdk 21.0.10
+dotnet = "8"              # LTS (not installed on host; sane default)
+# Compiled from source (slower first install — build headers baked into image):
+ruby   = "3.2.3"          # host: ruby 3.2.3
+php    = "8.3"            # current stable (not installed on host; sane default)
+
+[settings]
+# Auto-trust project configs living under the mounted ~/Code directory so that
+# agents running non-interactively are never blocked by a "config not trusted"
+# confirmation prompt.
+trusted_config_paths = ["/data/home/Code"]
+
+# Automatically install a tool version the first time it is requested (e.g. when
+# an agent cd's into a project whose mise.toml pins a version we don't have yet).
+not_found_auto_install = true
+
+# Honour idiomatic per-language version files (.nvmrc, .node-version,
+# .python-version, .ruby-version, .go-version, .java-version) in addition to
+# mise.toml / .tool-versions, so projects that don't use mise still resolve to
+# the right runtime — exactly like the host setup.
+idiomatic_version_file_enable_tools = ["node", "python", "ruby", "go", "java"]
