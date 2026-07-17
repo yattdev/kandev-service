@@ -38,3 +38,10 @@ not_found_auto_install = true
 # mise.toml / .tool-versions, so projects that don't use mise still resolve to
 # the right runtime — exactly like the host setup.
 idiomatic_version_file_enable_tools = ["node", "python", "ruby", "go", "java"]
+
+[settings.python]
+# python-build-standalone releases for older pinned patch versions (e.g. the
+# 3.12.3 -> 20240415 build) predate GitHub artifact attestations, which makes
+# mise's attestation verification fail. Skip that check so pinned versions still
+# install. The downloaded tarball's checksum is still generated and verified.
+github_attestations = false
