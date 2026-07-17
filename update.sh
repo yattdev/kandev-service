@@ -2,6 +2,11 @@
 # update.sh — pull latest kandev image and restart only if it changed
 # Safe to run as root (mini-desktop) or as normal user (sfl-desktop).
 #
+# After a local rebuild, also syncs mise language toolchains (node, python, go,
+# java, ruby, php, dotnet) into the persistent /data volume via
+# setup-toolchains.sh — so the toolset stays in sync automatically without a
+# separate manual step. Set SYNC_TOOLCHAINS=0 to disable.
+#
 # Usage:
 #   bash ~/Code/kandev/update.sh
 #
@@ -18,6 +23,8 @@ LOG_FILE="$USER_HOME/logs/kandev-update.log"
 IMAGE="ghcr.io/kdlbs/kandev:latest"
 # Set to 1 to skip local rebuild and use upstream image directly (bypass Dockerfile.local).
 SKIP_LOCAL_BUILD="${SKIP_LOCAL_BUILD:-0}"
+# Set to 0 to skip syncing mise language toolchains after a local rebuild.
+SYNC_TOOLCHAINS="${SYNC_TOOLCHAINS:-1}"
 
 mkdir -p "$(dirname "$LOG_FILE")"
 
@@ -55,3 +62,23 @@ log "Recreating kandev container..."
 docker compose -p kandev up -d --force-recreate
 
 log "Done. Kandev restarted with latest image."
+
+# Sync mise language toolchains (node/python/go/java/ruby/php/dotnet) into the
+# persistent /data volume. Only relevant for the local image (kandev-local:latest),
+# which is the one that ships mise — the bare upstream image (SKIP_LOCAL_BUILD=1)
+# has no mise/build toolchain at all. mise install is idempotent (skips versions
+# already present), so this is cheap on every run and only does real work when
+# mise.default.toml has changed or a toolchain is missing from the volume.
+# Runs in an isolated throwaway container (see setup-toolchains.sh) so a slow
+# Ruby/PHP source build can never starve or stop the just-restarted kandev
+# container. Failures are logged but never abort the update — kandev itself is
+# already up and unaffected either way.
+if [[ "$SYNC_TOOLCHAINS" -eq 1 && "$SKIP_LOCAL_BUILD" -eq 0 && -x "$COMPOSE_DIR/setup-toolchains.sh" ]]; then
+    log "Syncing language toolchains (mise) into persistent volume..."
+    if KANDEV_DATA_DIR="$USER_HOME/.local/share/kandev" \
+        bash "$COMPOSE_DIR/setup-toolchains.sh" >>"$LOG_FILE" 2>&1; then
+        log "Toolchains synced."
+    else
+        log "WARNING: toolchain sync had failures — see $LOG_FILE (kandev itself is unaffected)."
+    fi
+fi
