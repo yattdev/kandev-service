@@ -172,12 +172,16 @@ else
   fail "/data/home/.ssh/config not found (check ~/.ssh mount)"
 fi
 
-# SSH config must resolve github.com to the correct identity file
+# SSH config must resolve github.com to *some* identity file that actually
+# exists on disk. The exact filename is host-specific (each host's ~/.ssh
+# uses its own key names), so this is intentionally not hardcoded to one
+# host's key — it only checks that resolution + the key file both work.
 GH_KEY=$(docker exec -u kandev kandev ssh -G github.com 2>/dev/null | grep '^identityfile' | head -1 | awk '{print $2}')
-if [[ "$GH_KEY" == *"github_yattdev_sfldesktop"* ]]; then
-  ok "github.com resolves to correct key ($GH_KEY)"
+GH_KEY_EXISTS=$(docker exec -u kandev kandev sh -c "[ -n \"$GH_KEY\" ] && eval [ -f $GH_KEY ] && echo yes || echo no" 2>/dev/null)
+if [[ -n "$GH_KEY" && "$GH_KEY_EXISTS" == "yes" ]]; then
+  ok "github.com resolves to an existing identity file ($GH_KEY)"
 else
-  fail "github.com identity file = '$GH_KEY' (expected github_yattdev_sfldesktop)"
+  fail "github.com identity file = '$GH_KEY' (missing or unresolved)"
 fi
 
 # ~/.ssh must be read-only — attempt a write and expect failure

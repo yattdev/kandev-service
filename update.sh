@@ -18,6 +18,14 @@
 set -euo pipefail
 
 USER_HOME="${USER_HOME:-$HOME}"
+# Export HOME so `docker compose` (invoked below) resolves ${HOME} in
+# docker-compose.override.yml to the correct user's home directory. This
+# matters on mini-desktop, where cron runs this script as root: without this
+# export, ${HOME} would resolve to /root, silently remounting the container
+# onto root's ~/.ssh, ~/.gitconfig, and ~/.local/share/kandev instead of the
+# intended user's — a real incident that caused the running container to
+# drift onto /root paths for days until caught manually.
+export HOME="$USER_HOME"
 COMPOSE_DIR="$USER_HOME/Code/kandev"
 LOG_FILE="$USER_HOME/logs/kandev-update.log"
 IMAGE="ghcr.io/kdlbs/kandev:latest"
