@@ -43,6 +43,18 @@ log "--- kandev update check ---"
 # Get digest of currently running image
 OLD_DIGEST=$(docker inspect kandev --format '{{.Image}}' 2>/dev/null || echo "none")
 
+# Snapshot the tag the *currently running* container uses (e.g. kandev-local:latest,
+# or ghcr.io/kdlbs/kandev:latest when SKIP_LOCAL_BUILD=1) as "-previous" *before*
+# pulling/rebuilding. This is a rollback safety net: a rebuild with the same tag
+# (`docker compose build`) overwrites that tag on the new image, so without this
+# extra tag the last known-good image would become untagged/dangling and could be
+# garbage-collected, leaving no fast way back after a bad upstream release.
+RUNNING_IMAGE_TAG=$(docker inspect kandev --format '{{.Config.Image}}' 2>/dev/null || echo "")
+if [[ -n "$RUNNING_IMAGE_TAG" ]] && docker image inspect "$RUNNING_IMAGE_TAG" >/dev/null 2>&1; then
+    docker tag "$RUNNING_IMAGE_TAG" "${RUNNING_IMAGE_TAG}-previous"
+    log "Tagged current image as ${RUNNING_IMAGE_TAG}-previous (rollback safety net)."
+fi
+
 # Pull latest upstream image
 log "Pulling $IMAGE ..."
 PULL_OUT=$(docker pull "$IMAGE" 2>&1)
@@ -69,7 +81,47 @@ fi
 log "Recreating kandev container..."
 docker compose -p kandev up -d --force-recreate
 
-log "Done. Kandev restarted with latest image."
+# Health-gate the update: a successful `docker compose up` only means the
+# container process started, not that the backend came up (e.g. a broken
+# DB migration crash-loops the container forever while `up -d` still exits 0).
+# A prior incident silently left kandev unreachable for hours after an
+# unattended update because nothing checked this. Poll the health endpoint for
+# up to ~60s; on failure, roll back to the pre-update image automatically so
+# the service self-heals, and fail loudly (nonzero exit) so cron surfaces it.
+HEALTH_URL="http://localhost:38429/"
+wait_for_health() {
+    local i
+    for ((i = 0; i < 30; i++)); do
+        if [[ "$(curl -s -o /dev/null -w '%{http_code}' "$HEALTH_URL" 2>/dev/null)" == "200" ]]; then
+            return 0
+        fi
+        sleep 2
+    done
+    return 1
+}
+
+if wait_for_health; then
+    log "Done. Kandev restarted with latest image and passed health check."
+else
+    log "CRITICAL: kandev did not become healthy after update (no HTTP 200 on ${HEALTH_URL} after 60s)."
+    log "--- last container logs ---"
+    docker logs kandev --tail 60 >> "$LOG_FILE" 2>&1
+    log "--- end container logs ---"
+
+    if [[ -n "$RUNNING_IMAGE_TAG" ]] && docker image inspect "${RUNNING_IMAGE_TAG}-previous" >/dev/null 2>&1; then
+        log "Attempting automatic rollback to ${RUNNING_IMAGE_TAG}-previous ..."
+        docker tag "${RUNNING_IMAGE_TAG}-previous" "$RUNNING_IMAGE_TAG"
+        docker compose -p kandev up -d --force-recreate
+        if wait_for_health; then
+            log "Rolled back successfully — kandev is back up on the previous image. Investigate the new image/DB migration before updating again."
+        else
+            log "CRITICAL: rollback ALSO failed to become healthy — kandev is DOWN. Manual intervention required."
+        fi
+    else
+        log "CRITICAL: no previous image tag available for rollback — kandev may be DOWN. Manual intervention required."
+    fi
+    exit 1
+fi
 
 # Sync mise language toolchains (node/python/go/java/ruby/php/dotnet) into the
 # persistent /data volume. Only relevant for the local image (kandev-local:latest),
