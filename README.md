@@ -1,17 +1,20 @@
-# Kandev — Dual-Host Architecture
+# Kandev — Three-Host Architecture
 
-Two **identical** kandev instances, one always-on (mini-desktop), one powerful (sfl-desktop). Data syncs sfl → mini automatically; push mini → sfl manually before switching.
+Three **identical** kandev instances sharing live-replicated data.
+**mini-desktop is the central hub** — it holds the Litestream replica and restic snapshot repo.
+Satellites (sfl-desktop, yattara-pc) restore from the hub on startup and replicate back continuously.
 
 ## Hosts
 
-| Host | IP | User | Role |
-|---|---|---|---|
-| mini-desktop | 10.0.0.182 | alassane | always-on fallback (home dev) |
-| sfl-desktop | 192.168.50.211 | ayattara | powerful, work hours (via SFL VPN) |
+| Host | IP | User | URL | Role |
+|---|---|---|---|---|
+| mini-desktop | 10.0.0.182 | alassane | https://board.home | Hub + always-on home dev |
+| sfl-desktop | 192.168.50.211 | ayattara | http://board.sfl | Powerful workstation, office hours (SFL VPN) |
+| yattara-pc | 127.0.0.1 | yattara | http://board.local | Local dev machine, VPN-independent fallback |
 
-Both hosts use:
-- `~/Code` — projects/workspaces (bind-mounted into container as `/data/home/Code`)
-- `~/.local/share/kandev` — kandev data dir (sqlite + sessions, mounted as `/data`)
+All hosts use:
+- `~/Code` — projects/workspaces (bind-mounted as `/data/home/Code` in container)
+- `~/.local/share/kandev` — kandev data dir (sqlite DB + sessions, mounted as `/data`)
 
 ### Adding a repository in the UI
 
@@ -31,16 +34,23 @@ In the **Add Local Repository** dialog enter:
 
 ```
 ~/Code/kandev/
-├── docker-compose.yml            # Base service definition (upstream image)
-├── docker-compose.override.yml   # Auto-merged: local build + host identity mounts
-├── docker-compose.ssh-agent.yml  # Optional overlay: SSH agent socket forwarding
-├── Dockerfile.local              # Extends upstream image with extra packages
-├── install-mini.sh               # One-time setup for mini-desktop (cron, mountpoints)
-├── install-sfl.sh                # One-time setup for sfl-desktop (systemd, UFW, NAT)
-├── update.sh                     # Pull upstream + rebuild local image + restart
-├── sync-from-sfl.sh              # Rsync sfl → mini (run by cron on mini-desktop)
-├── sync-to-sfl.sh                # Rsync mini → sfl (run manually)
-├── kandev-ssh-agent.sh           # Helper: start ssh-agent and restart kandev with it
+├── docker-compose.yml             # Base service definition (upstream image)
+├── docker-compose.override.yml    # Auto-merged: local build + host identity mounts
+├── docker-compose.litestream.yml  # Litestream sidecar (live SQLite replication to hub)
+├── docker-compose.ssh-agent.yml   # Optional overlay: SSH agent socket forwarding
+├── Dockerfile.local               # Extends upstream image (ssh, gh, glab, git config)
+├── litestream.yml                 # Litestream config template (installed to ~/.config/)
+├── kandev-start.sh                # Start helper: freshest-wins litestream restore → compose up
+├── kandev-start-mini.sh           # Hub start helper: restore from freshest satellite replica
+├── kandev-pull.sh                 # Manual/cron: check for newer data → pull if behind → start
+├── kandev-restic-backup.sh        # Daily restic snapshot → mini-desktop repo
+├── install-mini.sh                # Setup for mini-desktop (hub: replica dir, restic repo, crons)
+├── install-sfl.sh                 # Setup for sfl-desktop (systemd, UFW, NAT, Litestream, crons)
+├── install-yattara.sh             # Setup for yattara-pc (systemd, iptables, board.local, Litestream)
+├── update.sh                      # Pull upstream + rebuild local image + restart + sync toolchains
+├── setup-toolchains.sh            # Install/sync mise language toolchains into persistent volume
+├── mise.default.toml              # Global mise tool versions (baked into image as /etc/mise/config.toml)
+├── kandev-ssh-agent.sh            # Helper: start ssh-agent and restart kandev with it
 └── README.md
 ```
 
@@ -87,7 +97,11 @@ ghcr.io/kdlbs/kandev:latest          (upstream, Debian 12)
 ```
 
 `update.sh` pulls the upstream image daily and, if it changed, automatically rebuilds
-`kandev-local:latest` on top of the new base before restarting the container.
+`kandev-local:latest` on top of the new base before restarting the container. After a
+successful rebuild it also runs `setup-toolchains.sh` to sync the mise language
+toolchains (node, python, go, java, ruby, php, dotnet) into the persistent `/data`
+volume — idempotent and cheap on days nothing changed, so this needs no manual step.
+Set `SYNC_TOOLCHAINS=0` before calling `update.sh` to skip it.
 
 ### Adding more packages
 
@@ -246,18 +260,27 @@ docker exec -it kandev ssh-add -l   # should list loaded key fingerprints
 
 ## Client access (from yattara-pc)
 
-Add to `/etc/hosts`:
+`/etc/hosts` on yattara-pc (already configured):
 
 ```
 10.0.0.182        board.home
 192.168.50.211    board.sfl
 ```
 
-Then open:
-- http://board.home — mini-desktop kandev (always available)
-- http://board.sfl — sfl-desktop kandev (SFL VPN must be up: `sudo nmcli connection up "SFL Montreal VPN"`)
+For `board.local` (yattara-pc's own kandev), `install-yattara.sh` adds:
+```
+127.0.0.1         board.local
+```
 
-Direct backend port is `38429`. On sfl-desktop, port `80` is redirected to `38429` via iptables NAT so `http://board.sfl` (no port) works. On mini-desktop, Caddy handles `board.home` — no port needed.
+| URL | Host | VPN needed |
+|---|---|---|
+| https://board.home | mini-desktop (10.0.0.182) | No — home LAN |
+| http://board.sfl | sfl-desktop (192.168.50.211) | Yes — `sudo nmcli connection up "SFL Montreal VPN"` |
+| http://board.local | yattara-pc (127.0.0.1) | No — local |
+
+> **Fixed bug — `board.sfl`/`board.home` used to show wrong/stale data when browsed from yattara-pc.**
+> Root cause: `install-yattara.sh` set an **unscoped** iptables `OUTPUT` NAT rule (`--dport 80 -j REDIRECT --to-port 38429` with no `-d` filter), so *any* outbound port-80 request from yattara-pc — including to board.sfl, board.home, or any external website — was silently redirected to yattara-pc's own local kandev instead of leaving the machine. Confirmed by stopping yattara-pc's local kandev: `board.sfl:80` then failed outright instead of reaching sfl-desktop.
+> **Fix:** the OUTPUT rule is now scoped to `-d 127.0.0.1/32` (only catches the host's own loopback traffic for `board.local`). Re-run `bash ~/Code/kandev/install-yattara.sh` (needs sudo) to apply on hosts still running the old unscoped rule. See "Common failure modes" in `CLAUDE.md` for full details.
 
 ## Network / iptables (sfl-desktop)
 
@@ -318,10 +341,10 @@ bash ~/Code/kandev/install-sfl.sh
 
 ## Deploy
 
-### mini-desktop
+### mini-desktop (hub)
 
 ```bash
-# 1. Copy compose + scripts (deploy path: ~/Code/kandev)
+# 1. Sync scripts
 rsync -avz stack/kandev/ alassane@10.0.0.182:~/Code/kandev/
 
 # 2. (One-time) migrate existing named volume to bind path
@@ -333,14 +356,11 @@ ssh alassane@10.0.0.182 '
   fi
 '
 
-# 3. Build local image then start
-ssh alassane@10.0.0.182 "cd ~/Code/kandev && docker compose build && docker compose up -d --force-recreate"
-
-# 4. Install sync cron (now runs as root via /etc/cron.d, not user crontab)
+# 3. Setup hub: create litestream-replicas/, init restic repo, fix crons, upgrade image
 ssh alassane@10.0.0.182 "sudo bash ~/Code/kandev/install-mini.sh"
 
-# 5. Verify
-ssh alassane@10.0.0.182 "docker ps --filter name=kandev; ls ~/Code | head"
+# 4. Build + start kandev
+ssh alassane@10.0.0.182 "cd ~/Code/kandev && docker compose build && docker compose up -d --force-recreate"
 ```
 
 ### sfl-desktop (when SFL VPN is up)
@@ -350,70 +370,168 @@ sudo nmcli connection up "SFL Montreal VPN"
 
 rsync -avz stack/kandev/ ayattara@sfl-desktop:~/Code/kandev/
 
-# Setup: systemd auto-start + UFW rules + port 80 → 38429 redirect + start kandev
+# Setup: systemd, UFW, NAT, Litestream config, crons, start with restore
 ssh ayattara@sfl-desktop 'bash ~/Code/kandev/install-sfl.sh'
-
-# One-time push current state from mini to sfl
-sudo bash stack/kandev/sync-to-sfl.sh
 ```
 
-`install-sfl.sh` is idempotent — re-run anytime to re-sync the systemd unit,
-UFW rules and port-80 redirect. It will prompt for sudo when needed.
+> **Note:** `install-sfl.sh` will auto-detect the SSH key that reaches mini-desktop.
+> If it prints a warning, add your key: `ssh-copy-id -i ~/.ssh/KEY alassane@10.0.0.182`
 
-> **After deploy**, authenticate the CLI tools inside the container (once per host):
-> ```bash
-> docker exec -it kandev gh auth login
-> docker exec -it kandev glab auth login
-> ```
+### yattara-pc (local)
 
-## Sync
+```bash
+# 1. Copy password from mini-desktop (one-time, after install-mini.sh has run)
+scp alassane@10.0.0.182:.config/restic/kandev-backup-password \
+    ~/.config/restic/kandev-backup-password
+chmod 600 ~/.config/restic/kandev-backup-password
 
-| Direction | Mode | Trigger |
+# 2. Sync scripts
+rsync -avz stack/kandev/ ~/Code/kandev/
+
+# 3. Setup: systemd, iptables 80→38429, board.local DNS, Litestream, restore + start
+bash ~/Code/kandev/install-yattara.sh
+```
+
+## Sync — Litestream (live) + Restic (history)
+
+### Architecture
+
+```
+kandev.db  ──Litestream──► ~/litestream-replicas/kandev/  on mini-desktop  (live WAL, seconds lag)
+kandev/    ────Restic────► ~/restic-repos/kandev-backup   on mini-desktop  (daily snapshots)
+```
+
+**mini-desktop is the hub.** It stores the Litestream SFTP replica and the restic repo. It does NOT run Litestream itself.
+
+### Litestream (live SQLite replication)
+
+Litestream runs as a sidecar container alongside kandev on sfl-desktop and yattara-pc. It:
+- Streams WAL (write-ahead log) changes to mini-desktop via SFTP — lag is seconds, not hours
+- On container startup (`kandev-start.sh`): restores latest state from mini before kandev starts
+- Is SQLite-native: no need to stop kandev, no corruption risk
+
+```bash
+# Check litestream is replicating (on sfl or yattara)
+docker logs kandev-litestream 2>&1 | tail -5
+
+# Check replica files on mini-desktop
+ssh alassane@10.0.0.182 "ls -lh ~/litestream-replicas/kandev/"
+
+# Manual restore (stop kandev first)
+docker stop kandev
+litestream restore sftp://alassane@10.0.0.182/litestream-replicas/kandev \
+  ~/.local/share/kandev/data/kandev.db
+docker start kandev
+```
+
+### Manual check & pull latest (`kandev-pull.sh`)
+
+Litestream **pushes** the active host's writes to mini within ~1s, but other hosts
+only **pull** that data when kandev restarts. `kandev-pull.sh` lets you pull the
+freshest state on demand — run it when you sit down at a machine to make sure the
+board matches where you left off on another host.
+
+```bash
+# On EITHER host (yattara-pc or sfl-desktop):
+bash ~/Code/kandev/kandev-pull.sh            # check → pull if behind → ensure kandev is up
+bash ~/Code/kandev/kandev-pull.sh --dry-run  # report only, change nothing
+bash ~/Code/kandev/kandev-pull.sh --force    # pull the freshest replica no matter what
+```
+
+What it does:
+1. Asks mini which host's replica is **freshest**, and how fresh **this** host's own
+   push is (both mtimes read from mini's filesystem → no clock-skew guessing).
+2. Reads who holds the **active-writer lock**.
+3. Decides:
+   - **This host is the active writer** → nothing to pull (your data is authoritative).
+     `--force` overrides.
+   - **A peer replica is newer** → you're behind → stops kandev, restores the freshest
+     data (via `kandev-start.sh`), restarts.
+   - **Already current / mini unreachable** → leaves a running kandev untouched.
+
+Safe to run anytime: it no-ops when you're the writer, already current, or offline,
+so it never reverts local edits or strips a live replication sidecar.
+
+> **sfl-desktop only reaches mini when the `sfl-desktop` WireGuard tunnel is up.**
+> If mini is unreachable the script reports it and leaves kandev running as-is —
+> bring the tunnel up (`nmcli connection up sfl-desktop`) first.
+
+This same script runs automatically via cron at **06:00 / 13:00 / 18:00** on both
+satellites (see Cron summary) so cross-host visibility stays near-current without
+manual restarts. Example output:
+
+```
+[pull] host-id=yattara  writer=none
+[pull] freshest replica : 'sfl'  (2026-07-08 21:45:37)
+[pull] our own replica  : 2026-07-08 05:42:27
+[pull] BEHIND by ~57550s vs peer 'sfl' — pulling freshest data.
+```
+
+### Restic (snapshot history)
+
+Daily at 01:30 on each satellite host, `kandev-restic-backup.sh`:
+1. Briefly stops kandev for a consistent SQLite snapshot
+2. Runs `restic backup` → new named snapshot in mini's repo
+3. Prunes old snapshots (keeps 7 daily, 4 weekly, 3 monthly)
+4. Restarts kandev
+
+```bash
+# View snapshot history (like git log)
+~/bin/restic -r sftp:alassane@10.0.0.182:restic-repos/kandev-backup snapshots
+
+# Restore a specific snapshot
+~/bin/restic -r sftp:alassane@10.0.0.182:restic-repos/kandev-backup restore SNAPSHOT_ID \
+  --target / --include ~/.local/share/kandev/
+
+# Manual backup now
+bash ~/Code/kandev/kandev-restic-backup.sh
+```
+
+Restic password file: `~/.config/restic/kandev-backup-password` (same on all hosts, generated by `install-mini.sh`).
+
+### Cron summary
+
+| Host | Cron | What |
 |---|---|---|
-| sfl → mini | automatic | `/etc/cron.d/kandev-sync-from-sfl` runs `*/10 * * * *` as **root** on mini-desktop (only runs if VPN is up + ssh works) |
-| mini → sfl | manual | `sudo bash stack/kandev/sync-to-sfl.sh` (run on mini-desktop) |
+| mini-desktop | `30 3 * * *` (root, `/etc/cron.d/kandev-update`) | Image update |
+| mini-desktop | `30 1 * * *` (root, `/etc/cron.d/kandev-backup`) | Restic snapshot |
+| sfl-desktop | `30 3 * * *` (user crontab) | Image update |
+| sfl-desktop | `30 1 * * *` (user crontab) | Restic snapshot |
+| sfl-desktop | `0 6,13,18 * * *` (user crontab) | **Pull latest** (`kandev-pull.sh`) |
+| yattara-pc | `30 3 * * *` (user crontab) | Image update |
+| yattara-pc | `30 1 * * *` (user crontab) | Restic snapshot |
+| yattara-pc | `0 6,13,18 * * *` (user crontab) | **Pull latest** (`kandev-pull.sh`) |
 
-Logs: `~/logs/kandev-sync.log` on mini-desktop (root writes, alassane owns).
+Litestream replication is continuous (always-on, no cron needed). The periodic pull
+only matters on the non-writer host(s), where it refreshes the board to the latest
+synced state; it no-ops on the active writer.
 
-### Why root?
-
-Some paths under `~/Code/` on mini-desktop are owned by `root:root` (typically `*/.github/mcp.json` created by docker containers writing to bind mounts). A user-cron rsync gets `Permission denied` writing into them and exits rc=23.
-
-The scripts run as **root** so the rsync receiver can write anywhere, but pass `--chown=alassane:alassane` (sfl → mini) and `--chown=ayattara:ayattara` (mini → sfl) so files always end up owned by the **normal user** on the destination — the sync itself never creates root-owned files.
-
-SSH still connects to sfl-desktop as the non-root user `ayattara`, using alassane's key (`-i /home/alassane/.ssh/mini-desk -o User=ayattara -F /home/alassane/.ssh/config`).
-
-### Diagnostic
-
-Each sync logs any paths under `~/Code/` not owned by `alassane` (no auto-fix — silently changing files owned by other processes could break them). Inspect:
+### Logs
 
 ```bash
-ssh alassane@10.0.0.182 "grep -A50 'non-user-owned' ~/logs/kandev-sync.log | tail -60"
+# Litestream replication (sfl or yattara)
+docker logs kandev-litestream --tail 20
+
+# Manual/periodic pull (sfl or yattara)
+tail -30 ~/logs/kandev-sync.log
+
+# Restic backup
+tail -30 ~/logs/kandev-backup.log
+
+# Image update
+tail -30 ~/logs/kandev-update.log
 ```
-
-To normalize ownership of a specific path:
-
-```bash
-ssh alassane@10.0.0.182 "sudo chown -R alassane:alassane ~/Code/<path>"
-```
-
-What gets synced:
-- `~/Code/` — projects (excludes `node_modules`, `.venv`, `__pycache__`, `.next`, `dist`, `build`)
-- `~/.local/share/kandev/` — kandev sqlite DB, sessions, config
-
-Why cron over realtime (Syncthing/inotify):
-- No write conflicts when both hosts edit the same file
-- Auditable log
-- Survives offline periods cleanly
 
 ## Workflow
 
 | Situation | What to do |
 |---|---|
-| Working at home (evenings, weekends) | Use board.home — mini-desktop has latest sfl state (synced every 10min while VPN was up) |
-| About to switch back to office | If you made changes on mini, run `sync-to-sfl.sh` before resuming on sfl |
-| Working at office | Use board.sfl — full power |
-| VPN drops at home | Sync just skips; resumes next cycle automatically |
+| **Working at office (sfl-desktop)** | Use `board.sfl` — SFL VPN required. Litestream replicates changes to mini in seconds |
+| **Switching to home** | Just open `board.home` or `board.local` — Litestream restore on start gives you sfl's latest state |
+| **Working at home on yattara-pc** | Use `board.local` (127.0.0.1) — VPN-independent local instance |
+| **Working on mini-desktop** | Use `board.home` — always available, Caddy serves HTTPS |
+| **sfl-desktop down / VPN not available** | Use `board.home` (mini) or `board.local` (yattara-pc) — same data |
+| **Recover past state** | `restic snapshots` to browse history, `restic restore` to go back |
 
 ## Caveats — `~/Code` on mini-desktop
 
@@ -430,32 +548,31 @@ wipes production services. If you add a new infra service under `~/Code/` on min
 
 Docker images are **not** updated by `apt upgrade` or system updates — they must be pulled explicitly.
 
-Both hosts run a **daily auto-update cron at 03:30** that:
+All three hosts run a **daily auto-update cron at 03:30** that:
 1. Pulls the latest upstream image (`ghcr.io/kdlbs/kandev:latest`)
-2. If the upstream digest changed, **rebuilds `kandev-local:latest`** on top of it (so
-   SSH, gh, glab and git config are always present in the running container)
-3. Restarts the container only if the image actually changed (no unnecessary restarts)
-
-Set `SKIP_LOCAL_BUILD=1` in the environment to bypass the rebuild step and use the upstream
-image directly (useful for debugging).
+2. If the upstream digest changed, **rebuilds `kandev-local:latest`** on top of it
+3. Restarts the container only if the image actually changed
+4. If rebuilt, syncs mise language toolchains into the persistent volume via
+   `setup-toolchains.sh` (idempotent — a no-op on days nothing changed)
 
 | Host | Mechanism | Log |
 |---|---|---|
 | mini-desktop | `/etc/cron.d/kandev-update` (root) | `~/logs/kandev-update.log` |
 | sfl-desktop | user crontab (`ayattara`) | `~/logs/kandev-update.log` |
+| yattara-pc | user crontab (`yattara`) | `~/logs/kandev-update.log` |
 
 ### Manual update
 
 ```bash
-# mini-desktop
-ssh alassane@10.0.0.182 "bash ~/Code/kandev/update.sh"
-# sfl-desktop (with VPN)
-ssh ayattara@sfl-desktop  "bash ~/Code/kandev/update.sh"
+ssh alassane@10.0.0.182 "bash ~/Code/kandev/update.sh"           # mini-desktop
+ssh ayattara@sfl-desktop "bash ~/Code/kandev/update.sh"           # sfl-desktop (VPN)
+bash ~/Code/kandev/update.sh                                       # yattara-pc (local)
 ```
 
 ### Check update log
 
 ```bash
 ssh alassane@10.0.0.182 "tail -20 ~/logs/kandev-update.log"
-ssh ayattara@sfl-desktop  "tail -20 ~/logs/kandev-update.log"
+ssh ayattara@sfl-desktop "tail -20 ~/logs/kandev-update.log"
+tail -20 ~/logs/kandev-update.log                                  # yattara-pc
 ```

@@ -1,20 +1,26 @@
 #!/usr/bin/env bash
-# Install sync-from-sfl as a system cron (/etc/cron.d) running as root.
-# Idempotent. Must run as root.
+# install-mini.sh — Idempotent kandev setup for mini-desktop (hub role).
 #
-# Root cron is needed because some paths under ~USER/Code on mini are
-# root-owned (docker leftovers) -- a user-cron rsync cannot write into them.
-# The script itself uses --chown to keep new files owned by the normal user.
+# mini-desktop is the central hub:
+#   - Stores Litestream SFTP replica (~/litestream-replicas/kandev/)
+#   - Stores restic snapshot repo (~/restic-repos/kandev-backup)
+#   - Does NOT run Litestream itself (satellites replicate TO mini)
+#
+# Must run as root: sudo bash ~/Code/kandev/install-mini.sh
 set -euo pipefail
 
 USER_NAME="${USER_NAME:-alassane}"
 USER_HOME="${USER_HOME:-/home/$USER_NAME}"
-SCRIPT_SRC="$(cd "$(dirname "$0")" && pwd)/sync-from-sfl.sh"
-SCRIPT_DST="/usr/local/sbin/kandev-sync-from-sfl.sh"
-CRON_FILE="/etc/cron.d/kandev-sync-from-sfl"
-UPDATE_SCRIPT_SRC="$(cd "$(dirname "$0")" && pwd)/update.sh"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+UPDATE_SCRIPT_SRC="$SCRIPT_DIR/update.sh"
 UPDATE_SCRIPT_DST="/usr/local/sbin/kandev-update.sh"
 UPDATE_CRON_FILE="/etc/cron.d/kandev-update"
+BACKUP_SCRIPT_SRC="$SCRIPT_DIR/kandev-restic-backup.sh"
+BACKUP_SCRIPT_DST="/usr/local/sbin/kandev-restic-backup.sh"
+BACKUP_CRON_FILE="/etc/cron.d/kandev-backup"
+RESTIC="${RESTIC:-$USER_HOME/bin/restic}"
+RESTIC_REPO="${RESTIC_REPO:-sftp:localhost:restic-repos/kandev-backup}"
+RESTIC_PASSWORD_FILE="${RESTIC_PASSWORD_FILE:-$USER_HOME/.config/restic/kandev-backup-password}"
 
 if [[ $EUID -ne 0 ]]; then
   echo "ERROR: must run as root (sudo $0)" >&2
@@ -22,14 +28,40 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 install -d -o "$USER_NAME" -g "$USER_NAME" -m 755 "$USER_HOME/logs"
-install -m 755 -o root -g root "$SCRIPT_SRC" "$SCRIPT_DST"
+
+# ── Systemd user unit (ExecStart → kandev-start-mini.sh) ────────────────────
+SYSTEMD_DIR="$USER_HOME/.config/systemd/user"
+install -d -o "$USER_NAME" -g "$USER_NAME" -m 755 "$SYSTEMD_DIR"
+
+cat > "$SYSTEMD_DIR/kandev.service" <<'EOF'
+[Unit]
+Description=Kandev — autonomous agent kanban platform (mini-desktop hub)
+After=default.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=%h/Code/kandev
+ExecStart=/bin/bash %h/Code/kandev/kandev-start-mini.sh
+ExecStop=/usr/bin/docker compose -p kandev down
+ExecReload=/bin/bash %h/Code/kandev/kandev-start-mini.sh
+TimeoutStartSec=180
+TimeoutStopSec=60
+
+[Install]
+WantedBy=default.target
+EOF
+chown "$USER_NAME:$USER_NAME" "$SYSTEMD_DIR/kandev.service"
+echo "Systemd unit written (ExecStart → kandev-start-mini.sh)"
+
+# Reload systemd for the user
+sudo -u "$USER_NAME" XDG_RUNTIME_DIR="/run/user/$(id -u "$USER_NAME")" \
+  systemctl --user daemon-reload 2>/dev/null || true
+sudo -u "$USER_NAME" XDG_RUNTIME_DIR="/run/user/$(id -u "$USER_NAME")" \
+  systemctl --user enable kandev 2>/dev/null || true
+echo "kandev.service enabled"
 
 # ── Kandev allowed-roots mountpoint ─────────────────────────────────────────
-# ~/Code is nested-bind-mounted at /data/home/Code in the container (see
-# docker-compose.yml). Ensure the empty mountpoint dir exists on the host
-# inside the /data bind so Docker can apply the nested mount on (re)create.
-# We do NOT use a symlink: kandev's repository discovery scanner does not
-# follow symlinks, so the workspace must be a real directory in-container.
 KANDEV_DATA="$USER_HOME/.local/share/kandev/home"
 mkdir -p "$KANDEV_DATA"
 if [[ -L "$KANDEV_DATA/Code" ]]; then
@@ -38,27 +70,59 @@ if [[ -L "$KANDEV_DATA/Code" ]]; then
 fi
 if [[ ! -d "$KANDEV_DATA/Code" ]]; then
   install -d -o "$USER_NAME" -g "$USER_NAME" -m 755 "$KANDEV_DATA/Code"
-  echo "Created $KANDEV_DATA/Code (empty mountpoint for ~/Code bind)"
+  echo "Created $KANDEV_DATA/Code (mountpoint for ~/Code bind)"
 fi
 
-cat > "$CRON_FILE" <<EOF
-# kandev sfl -> mini auto-sync (runs as root; --chown keeps files user-owned)
-SHELL=/bin/bash
-PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-*/10 * * * * root USER_NAME=$USER_NAME USER_HOME=$USER_HOME $SCRIPT_DST
-EOF
-chmod 644 "$CRON_FILE"
-chown root:root "$CRON_FILE"
+# ── Litestream replica dir (hub storage) ────────────────────────────────────
+# Each satellite host pushes to its OWN dedicated subdir (sfl/, yattara/) —
+# never a shared path. This is required for safe single-leader replication:
+# see kandev-start.sh / kandev-start-mini.sh for the active-writer lock and
+# freshest-replica restore logic that depend on this per-host layout.
+REPLICA_DIR="$USER_HOME/litestream-replicas/kandev"
+if [[ ! -d "$REPLICA_DIR" ]]; then
+  install -d -o "$USER_NAME" -g "$USER_NAME" -m 755 "$REPLICA_DIR"
+  echo "Created Litestream replica dir: $REPLICA_DIR"
+else
+  echo "Litestream replica dir already exists: $REPLICA_DIR"
+fi
+for host_id in sfl yattara; do
+  install -d -o "$USER_NAME" -g "$USER_NAME" -m 755 "$REPLICA_DIR/$host_id"
+done
+echo "Per-host replica subdirs ready: $REPLICA_DIR/{sfl,yattara}"
 
-# Remove any legacy entry from the user's crontab (from the old user-cron install).
-if sudo -u "$USER_NAME" crontab -l 2>/dev/null | grep -qE 'kandev-sync-from-sfl|sync-from-sfl\.sh'; then
-  sudo -u "$USER_NAME" bash -c "crontab -l 2>/dev/null | grep -vE 'kandev-sync-from-sfl|sync-from-sfl\.sh' | crontab -"
-  echo "Removed legacy user-crontab entry for $USER_NAME."
+# ── Restic backup repo ────────────────────────────────────────────────────────
+RESTIC_REPO_DIR="$USER_HOME/restic-repos"
+install -d -o "$USER_NAME" -g "$USER_NAME" -m 755 "$RESTIC_REPO_DIR"
+
+# Generate password file if missing
+if [[ ! -f "$RESTIC_PASSWORD_FILE" ]]; then
+  install -d -o "$USER_NAME" -g "$USER_NAME" -m 700 "$(dirname "$RESTIC_PASSWORD_FILE")"
+  # Generate a random 32-char password
+  openssl rand -base64 24 | tr -d '\n' > "$RESTIC_PASSWORD_FILE"
+  chown "$USER_NAME:$USER_NAME" "$RESTIC_PASSWORD_FILE"
+  chmod 600 "$RESTIC_PASSWORD_FILE"
+  echo "Generated restic password: $RESTIC_PASSWORD_FILE"
+  echo "⚠️  IMPORTANT: copy this password to sfl-desktop and yattara-pc:"
+  echo "   cat $RESTIC_PASSWORD_FILE"
+else
+  echo "Restic password file already exists: $RESTIC_PASSWORD_FILE"
 fi
 
-# Reload cron so the new /etc/cron.d file is picked up immediately.
-if command -v systemctl >/dev/null; then
-  systemctl reload cron 2>/dev/null || systemctl reload crond 2>/dev/null || true
+# Init restic repo if not yet initialized
+if ! sudo -u "$USER_NAME" RESTIC_PASSWORD_FILE="$RESTIC_PASSWORD_FILE" \
+     "$RESTIC" -r "$RESTIC_REPO" snapshots --no-lock >/dev/null 2>&1; then
+  echo "Initializing restic repo: $RESTIC_REPO"
+  sudo -u "$USER_NAME" RESTIC_PASSWORD_FILE="$RESTIC_PASSWORD_FILE" \
+    "$RESTIC" -r "$RESTIC_REPO" init
+  echo "Restic repo initialized"
+else
+  echo "Restic repo already initialized: $RESTIC_REPO"
+fi
+
+# ── Remove legacy sync-from-sfl cron ────────────────────────────────────────
+if [[ -f /etc/cron.d/kandev-sync-from-sfl ]]; then
+  rm -f /etc/cron.d/kandev-sync-from-sfl
+  echo "Removed legacy cron: /etc/cron.d/kandev-sync-from-sfl"
 fi
 
 # ── Auto-update cron (daily 03:30) ───────────────────────────────────────────
@@ -72,18 +136,41 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 EOF
 chmod 644 "$UPDATE_CRON_FILE"
 chown root:root "$UPDATE_CRON_FILE"
+echo "Installed update cron: $UPDATE_CRON_FILE (daily 03:30)"
 
+# ── Restic backup cron (daily 01:30) ─────────────────────────────────────────
+install -m 755 -o root -g root "$BACKUP_SCRIPT_SRC" "$BACKUP_SCRIPT_DST"
+
+cat > "$BACKUP_CRON_FILE" <<EOF
+# kandev daily restic backup — snapshot history for kandev data
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+30 1 * * * root USER_NAME=$USER_NAME USER_HOME=$USER_HOME RESTIC=$RESTIC RESTIC_REPO=$RESTIC_REPO RESTIC_PASSWORD_FILE=$RESTIC_PASSWORD_FILE $BACKUP_SCRIPT_DST
+EOF
+chmod 644 "$BACKUP_CRON_FILE"
+chown root:root "$BACKUP_CRON_FILE"
+echo "Installed backup cron: $BACKUP_CRON_FILE (daily 01:30)"
+
+# Reload cron
 if command -v systemctl >/dev/null; then
   systemctl reload cron 2>/dev/null || systemctl reload crond 2>/dev/null || true
 fi
 
-echo "Installed:"
-echo "  script: $SCRIPT_DST"
-echo "  cron  : $CRON_FILE  (*/10 * * * * as root)"
-echo "  update: $UPDATE_SCRIPT_DST  ($UPDATE_CRON_FILE, daily 03:30 as root)"
-echo "  log   : $USER_HOME/logs/kandev-sync.log"
-echo "  log   : $USER_HOME/logs/kandev-update.log"
-echo
-cat "$CRON_FILE"
-echo
-cat "$UPDATE_CRON_FILE"
+# ── Immediate: upgrade kandev image (v0.65.0 → latest) ─────────────────────
+echo ""
+echo "Upgrading kandev image (currently stale — running update now)..."
+USER_NAME="$USER_NAME" USER_HOME="$USER_HOME" bash "$UPDATE_SCRIPT_DST"
+
+echo ""
+echo "✅  install-mini done"
+echo "   litestream hub : $REPLICA_DIR"
+echo "   restic repo    : $RESTIC_REPO"
+echo "   restic password: $RESTIC_PASSWORD_FILE"
+echo "   update cron    : daily 03:30 → $USER_HOME/logs/kandev-update.log"
+echo "   backup cron    : daily 01:30 → $USER_HOME/logs/kandev-backup.log"
+echo ""
+echo "Next steps:"
+echo "  1. Copy restic password to sfl-desktop + yattara-pc:"
+echo "     cat $RESTIC_PASSWORD_FILE"
+echo "  2. Run install-sfl.sh on sfl-desktop"
+echo "  3. Run install-yattara.sh on yattara-pc"

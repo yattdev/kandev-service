@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
-# Auto-sync sfl-desktop -> mini-desktop (run on mini via /etc/cron.d as root).
-# Pulls ~USER/Code and ~USER/.local/share/kandev from sfl-desktop when reachable.
+# DEPRECATED — replaced by Litestream live replication (kandev-start.sh).
 #
-# Why root: some paths under ~/Code on mini are owned by root (docker-created
-# files such as */.github/mcp.json). A user-cron rsync cannot write into them.
-# We run as root so the rsync RECEIVER can write anywhere, and use
-# --chown=USER:USER so new files always land owned by the normal user --
-# the sync never creates root-owned files itself.
+# This script used to rsync sfl-desktop → mini-desktop every 10 minutes via cron.
+# The cron (/etc/cron.d/kandev-sync-from-sfl) has been removed by install-mini.sh.
+#
+# Current sync: Litestream replicates kandev.db WAL changes in real-time (seconds lag)
+# to ~/litestream-replicas/kandev/ on mini-desktop. On startup, kandev-start.sh
+# restores from this replica automatically.
+#
+# This file is kept as a reference / emergency manual fallback only.
+# To use as emergency fallback (no Litestream):
+#   sudo bash ~/Code/kandev/sync-from-sfl.sh
+
 set -uo pipefail
 
 USER_NAME="${USER_NAME:-alassane}"

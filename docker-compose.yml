@@ -53,6 +53,12 @@ services:
       # on the same network (e.g. http://board.home, http://board.sfl).
       - HOSTNAME=0.0.0.0
 
+      # Tell the React frontend which port the kandev backend API/WebSocket is on.
+      # Without this, the app falls back to ws://localhost:38429 which only works
+      # locally. With this set, the app builds ws://<hostname>:38429/ws, so the
+      # WebSocket connects correctly from any remote host (e.g. board.sfl, board.home).
+      - KANDEV_API_PORT=38429
+
       # Run Node.js (and kandev) in production mode.
       # Effects: disables development-only middleware and verbose error stack traces,
       # enables internal caching and performance optimisations, and reduces log noise.

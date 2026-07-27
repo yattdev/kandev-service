@@ -1,8 +1,20 @@
 #!/usr/bin/env bash
-# Manual push mini-desktop -> sfl-desktop. Run BEFORE working on sfl-desktop.
-# Requires SFL VPN up. Must run as root (same reasoning as sync-from-sfl.sh:
-# some paths under ~/Code on mini are root-owned, root reader is needed).
-# Destination files land owned by SFL_USER on sfl via --chown.
+# DEPRECATED — replaced by Litestream live replication.
+#
+# This script used to manually push mini-desktop → sfl-desktop before switching
+# to the office. It is no longer needed because Litestream continuously replicates
+# kandev.db from any active host to mini-desktop. On startup, kandev-start.sh
+# restores the latest state automatically — no manual push required.
+#
+# The sync workflow is now:
+#   1. Work on any host → Litestream replicates DB to mini-desktop in seconds
+#   2. Switch to another host → kandev-start.sh restores from mini on startup
+#   3. Continue working with up-to-date data
+#
+# This file is kept as a reference / emergency manual fallback only.
+# To push kandev data manually (emergency, no Litestream):
+#   sudo bash ~/Code/kandev/sync-to-sfl.sh
+
 set -euo pipefail
 
 USER_NAME="${USER_NAME:-alassane}"

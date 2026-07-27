@@ -1,0 +1,26 @@
+# docker-compose.litestream.yml — Litestream sidecar for live SQLite replication.
+# Merged with docker-compose.yml via -f flag in kandev-start.sh.
+#
+# Litestream streams kandev.db WAL changes to mini-desktop (hub) in near real-time.
+# On startup, kandev-start.sh runs `litestream restore` BEFORE starting kandev,
+# so the container always begins with the latest data from the hub.
+#
+# To start with Litestream (normal mode):
+#   bash ~/Code/kandev/kandev-start.sh
+#
+# To start without Litestream (debug / offline mode):
+#   docker compose -p kandev up -d
+services:
+  litestream:
+    image: litestream/litestream:latest
+    container_name: kandev-litestream
+    restart: unless-stopped
+    network_mode: host
+    user: "0:0"
+    volumes:
+      - ${HOME}/.local/share/kandev/data:/data
+      - ${HOME}/.config/litestream:/etc/litestream:ro
+      - ${HOME}/.ssh:/root/.ssh:ro
+    command: replicate -config /etc/litestream/litestream.yml
+    depends_on:
+      - kandev
