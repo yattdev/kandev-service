@@ -1,0 +1,76 @@
+# Dockerfile.main-branch — TEMPORARY build of kandev from the upstream `main`
+# branch (https://github.com/kdlbs/kandev), to run ahead of the next tagged
+# release (currently on 0.82.0).
+#
+# This file is intentionally NOT wired into docker-compose.override.yml. It
+# layers a freshly-compiled main-branch `kandev` binary (+ agentctl helpers)
+# on top of the already-built kandev-local:latest image, leaving
+# Dockerfile.local and the normal release-tracking flow completely untouched.
+#
+# Usage:
+#   docker compose build                                   # ensure kandev-local:latest exists (release-based)
+#   docker build --network=host -f Dockerfile.main-branch \
+#     -t kandev-local:latest .
+#   docker compose up -d --force-recreate
+#
+# Revert to the tracked release build at any time (also happens automatically
+# the next time update.sh pulls a new upstream release):
+#   docker compose build && docker compose up -d --force-recreate
+
+ARG BASE_IMAGE=kandev-local:latest
+ARG KANDEV_REF=main
+ARG NODE_MAJOR=24
+ARG GO_VERSION=1.26.0
+
+# ── Builder: compile the backend (+ agentctl helpers) from source ────────────
+FROM debian:bookworm-slim AS builder
+ARG KANDEV_REF
+ARG NODE_MAJOR
+ARG GO_VERSION
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl gnupg git build-essential pkg-config \
+    && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+        | gpg --dearmor -o /usr/share/keyrings/nodesource.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODE_MAJOR}.x nodistro main" \
+        > /etc/apt/sources.list.d/nodesource.list \
+    && apt-get update && apt-get install -y --no-install-recommends nodejs \
+    && npm install -g pnpm@9.15.9 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN ARCH="$(dpkg --print-architecture)" \
+    && curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" -o /tmp/go.tgz \
+    && tar -C /usr/local -xzf /tmp/go.tgz \
+    && rm /tmp/go.tgz
+ENV PATH="/usr/local/go/bin:${PATH}"
+
+WORKDIR /src
+RUN git clone --depth 1 --branch "${KANDEV_REF}" https://github.com/kdlbs/kandev.git .
+
+# Install deps (skip Playwright — not needed to build) then build web + backend.
+RUN make -C apps/backend deps \
+    && cd apps && pnpm install --silent \
+    && cd .. \
+    && make build-web \
+    && make sync-embedded-web \
+    && make build-backend
+
+# ── Final: layer the main-branch binaries onto the existing local image ──────
+FROM ${BASE_IMAGE}
+USER root
+
+COPY --from=builder /src/apps/backend/bin/kandev                /app/apps/backend/bin/kandev
+COPY --from=builder /src/apps/backend/bin/agentctl               /usr/local/bin/agentctl
+COPY --from=builder /src/apps/backend/bin/agentctl-linux-amd64   /app/apps/backend/bin/agentctl-linux-amd64
+COPY --from=builder /src/apps/backend/bin/agentctl-linux-arm64   /app/apps/backend/bin/agentctl-linux-arm64
+COPY --from=builder /src/apps/backend/bin/agentctl-darwin-arm64  /app/apps/backend/bin/agentctl-darwin-arm64
+COPY --from=builder /src/apps/backend/bin/agentctl-darwin-amd64  /app/apps/backend/bin/agentctl-darwin-amd64
+
+RUN chmod +x \
+        /app/apps/backend/bin/kandev \
+        /usr/local/bin/agentctl \
+        /app/apps/backend/bin/agentctl-linux-amd64 \
+        /app/apps/backend/bin/agentctl-linux-arm64 \
+        /app/apps/backend/bin/agentctl-darwin-arm64 \
+        /app/apps/backend/bin/agentctl-darwin-amd64 \
+    && chown -R kandev:kandev /app

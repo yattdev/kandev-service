@@ -39,6 +39,8 @@ In the **Add Local Repository** dialog enter:
 ├── docker-compose.litestream.yml  # Litestream sidecar (live SQLite replication to hub)
 ├── docker-compose.ssh-agent.yml   # Optional overlay: SSH agent socket forwarding
 ├── Dockerfile.local               # Extends upstream image (ssh, gh, glab, git config)
+├── Dockerfile.main-branch         # Temporary: builds kandev from github.com/kdlbs/kandev@main
+├── kandev-build-main.sh           # Helper: build/run/revert the main-branch image (see below)
 ├── litestream.yml                 # Litestream config template (installed to ~/.config/)
 ├── kandev-start.sh                # Start helper: freshest-wins litestream restore → compose up
 ├── kandev-start-mini.sh           # Hub start helper: restore from freshest satellite replica
@@ -102,6 +104,29 @@ successful rebuild it also runs `setup-toolchains.sh` to sync the mise language
 toolchains (node, python, go, java, ruby, php, dotnet) into the persistent `/data`
 volume — idempotent and cheap on days nothing changed, so this needs no manual step.
 Set `SYNC_TOOLCHAINS=0` before calling `update.sh` to skip it.
+
+### Running a fix from `main` ahead of release (`kandev-build-main.sh`)
+
+When a fix has landed on [`kdlbs/kandev@main`](https://github.com/kdlbs/kandev) but
+hasn't shipped in a tagged release yet, `kandev-build-main.sh` builds it from source
+and swaps it in **temporarily**, without touching `Dockerfile.local`,
+`docker-compose.override.yml`, or `update.sh`:
+
+```bash
+bash ~/Code/kandev/kandev-build-main.sh                # build + run main
+bash ~/Code/kandev/kandev-build-main.sh --ref some-branch  # build a specific branch/tag/commit
+bash ~/Code/kandev/kandev-build-main.sh --no-test       # skip the test.sh run at the end
+bash ~/Code/kandev/kandev-build-main.sh --revert        # restore the last release-based backup
+```
+
+It compiles the Go backend + web app from source (`Dockerfile.main-branch`) and layers
+just the resulting binaries onto the existing release-based `kandev-local:latest`,
+health-checking the container afterward and auto-rolling back on failure — mirroring
+`update.sh`'s own rollback safety net. Because the compose build config still points at
+`Dockerfile.local` + the upstream release image, this is self-reverting: the next
+`docker compose build` (run manually, or automatically by `update.sh` once the next
+release ships) rebuilds `kandev-local:latest` from the release again and discards the
+main-branch layer.
 
 ### Adding more packages
 
