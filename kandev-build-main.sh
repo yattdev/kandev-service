@@ -12,7 +12,8 @@
 #
 # Usage:
 #   bash ~/Code/kandev/kandev-build-main.sh                # build+run main
-#   bash ~/Code/kandev/kandev-build-main.sh --ref <branch>  # build a specific branch/tag/commit
+#   bash ~/Code/kandev/kandev-build-main.sh --ref <branch>  # build a specific branch/tag/commit from upstream (kdlbs/kandev)
+#   bash ~/Code/kandev/kandev-build-main.sh --ref <owner>:<branch>  # build a branch from a fork, e.g. yattdev:my-branch
 #   bash ~/Code/kandev/kandev-build-main.sh --no-test       # skip the test.sh run at the end
 #   bash ~/Code/kandev/kandev-build-main.sh --revert        # restore the last release-based backup
 set -euo pipefail
@@ -20,6 +21,7 @@ set -euo pipefail
 COMPOSE_DIR="${COMPOSE_DIR:-$HOME/Code/kandev}"
 LOG_FILE="${LOG_FILE:-$HOME/logs/kandev-build-main.log}"
 KANDEV_REF="${KANDEV_REF:-main}"
+KANDEV_REPO_OWNER="${KANDEV_REPO_OWNER:-kdlbs}"
 RUN_TESTS=1
 REVERT=0
 
@@ -29,10 +31,18 @@ while [[ $# -gt 0 ]]; do
         --no-test)  RUN_TESTS=0; shift ;;
         --revert)   REVERT=1; shift ;;
         -h|--help)
-            sed -n '2,17p' "$0"; exit 0 ;;
+            sed -n '2,18p' "$0"; exit 0 ;;
         *) echo "Unknown option: $1" >&2; exit 2 ;;
     esac
 done
+
+# Support "<owner>:<branch>" as a shorthand for building a branch that only
+# exists on a fork (e.g. --ref yattdev:feature/foo). Plain branch/tag/commit
+# values (the common case) keep cloning from upstream kdlbs/kandev.
+if [[ "$KANDEV_REF" == *:* ]]; then
+    KANDEV_REPO_OWNER="${KANDEV_REF%%:*}"
+    KANDEV_REF="${KANDEV_REF#*:}"
+fi
 
 mkdir -p "$(dirname "$LOG_FILE")"
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [build-main] $*" | tee -a "$LOG_FILE"; }
@@ -71,7 +81,7 @@ if [[ "$REVERT" -eq 1 ]]; then
 fi
 
 # ── Build path ─────────────────────────────────────────────────────────────
-log "--- kandev main-branch build (ref: ${KANDEV_REF}) ---"
+log "--- kandev main-branch build (repo: ${KANDEV_REPO_OWNER}/kandev, ref: ${KANDEV_REF}) ---"
 
 # Make sure a release-based kandev-local:latest exists first — Dockerfile.main-branch
 # layers on top of it. If it's missing (first run ever), build it from Dockerfile.local.
@@ -86,9 +96,10 @@ fi
 log "Backing up current kandev-local:latest as kandev-local:pre-main-backup..."
 docker tag kandev-local:latest kandev-local:pre-main-backup
 
-log "Building kandev from ${KANDEV_REF} (this compiles Go backend + web app — a few minutes)..."
+log "Building kandev from ${KANDEV_REPO_OWNER}/kandev@${KANDEV_REF} (this compiles Go backend + web app — a few minutes)..."
 if ! docker build --network=host \
         --build-arg KANDEV_REF="$KANDEV_REF" \
+        --build-arg KANDEV_REPO_OWNER="$KANDEV_REPO_OWNER" \
         -f Dockerfile.main-branch -t kandev-local:latest . 2>&1 | tee -a "$LOG_FILE"; then
     log "CRITICAL: build failed — kandev-local:latest left untouched (still release-based)."
     exit 1
@@ -98,7 +109,7 @@ log "Recreating kandev container..."
 docker compose -p kandev up -d --force-recreate
 
 if wait_for_health; then
-    log "Done. Kandev is running main branch (ref: ${KANDEV_REF}) and passed health check."
+    log "Done. Kandev is running ${KANDEV_REPO_OWNER}/kandev@${KANDEV_REF} and passed health check."
     log "Revert anytime with: bash $0 --revert  (or: docker compose build && docker compose up -d --force-recreate)"
 else
     log "CRITICAL: kandev did not become healthy after the main-branch build (no HTTP 200 on ${HEALTH_URL} after 60s)."

@@ -10,8 +10,17 @@
 # Usage:
 #   docker compose build                                   # ensure kandev-local:latest exists (release-based)
 #   docker build --network=host -f Dockerfile.main-branch \
+#     --build-arg KANDEV_REF=<branch> \
+#     [--build-arg KANDEV_REPO_OWNER=<github-owner>] \
 #     -t kandev-local:latest .
 #   docker compose up -d --force-recreate
+#
+# KANDEV_REPO_OWNER selects which GitHub account's fork to clone from
+# (default: kdlbs, the upstream repo). Use it to build a branch that only
+# exists on a fork, e.g. a feature branch pushed to your own fork before it's
+# merged upstream. kandev-build-main.sh accepts this as a single
+# "<owner>:<branch>" value passed to --ref (e.g. --ref yattdev:my-branch) and
+# splits it into these two build-args automatically.
 #
 # Revert to the tracked release build at any time (also happens automatically
 # the next time update.sh pulls a new upstream release):
@@ -19,12 +28,14 @@
 
 ARG BASE_IMAGE=kandev-local:latest
 ARG KANDEV_REF=main
+ARG KANDEV_REPO_OWNER=kdlbs
 ARG NODE_MAJOR=24
 ARG GO_VERSION=1.26.0
 
 # ── Builder: compile the backend (+ agentctl helpers) from source ────────────
 FROM debian:bookworm-slim AS builder
 ARG KANDEV_REF
+ARG KANDEV_REPO_OWNER
 ARG NODE_MAJOR
 ARG GO_VERSION
 
@@ -45,7 +56,7 @@ RUN ARCH="$(dpkg --print-architecture)" \
 ENV PATH="/usr/local/go/bin:${PATH}"
 
 WORKDIR /src
-RUN git clone --depth 1 --branch "${KANDEV_REF}" https://github.com/kdlbs/kandev.git .
+RUN git clone --depth 1 --branch "${KANDEV_REF}" "https://github.com/${KANDEV_REPO_OWNER}/kandev.git" .
 
 # Install deps (skip Playwright — not needed to build) then build web + backend.
 RUN make -C apps/backend deps \
