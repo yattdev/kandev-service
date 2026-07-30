@@ -32,9 +32,9 @@ workflows:
           show_in_command_panel: true
           allow_manual_move: true
           agent_profile:
-            agent_name: Claude
-            model: default
-            mode: plan
+            agent_name: Copilot
+            model: claude-opus-4.8
+            mode: https://agentclientprotocol.com/protocol/session-modes#plan
           auto_advance_requires_signal: false
         - name: Todo
           position: 2
@@ -65,9 +65,9 @@ workflows:
           show_in_command_panel: true
           allow_manual_move: true
           agent_profile:
-            agent_name: Claude
-            model: sonnet
-            mode: acceptEdits
+            agent_name: Copilot
+            model: claude-sonnet-5
+            mode: https://agentclientprotocol.com/protocol/session-modes#agent
           auto_advance_requires_signal: false
         - name: Review
           position: 4
@@ -85,9 +85,9 @@ workflows:
           show_in_command_panel: true
           allow_manual_move: true
           agent_profile:
-            agent_name: Claude
-            model: default
-            mode: acceptEdits
+            agent_name: Copilot
+            model: gpt-5.3-codex
+            mode: https://agentclientprotocol.com/protocol/session-modes#plan
           auto_advance_requires_signal: false
         - name: QA
           position: 5
@@ -106,9 +106,9 @@ workflows:
           show_in_command_panel: true
           allow_manual_move: true
           agent_profile:
-            agent_name: Claude
-            model: default
-            mode: acceptEdits
+            agent_name: Copilot
+            model: gpt-5.5
+            mode: https://agentclientprotocol.com/protocol/session-modes#agent
           auto_advance_requires_signal: false
         - name: PR
           position: 6
@@ -125,9 +125,9 @@ workflows:
           show_in_command_panel: true
           allow_manual_move: true
           agent_profile:
-            agent_name: Claude
-            model: sonnet
-            mode: bypassPermissions
+            agent_name: Copilot
+            model: claude-haiku-4.5
+            mode: https://agentclientprotocol.com/protocol/session-modes#agent
           auto_advance_requires_signal: false
         - name: CI Fixup
           position: 7
@@ -144,8 +144,9 @@ workflows:
           show_in_command_panel: true
           allow_manual_move: true
           agent_profile:
-            agent_name: Claude
-            model: sonnet
+            agent_name: Copilot
+            model: claude-sonnet-5
+            mode: https://agentclientprotocol.com/protocol/session-modes#agent
           auto_advance_requires_signal: false
         - name: Human-QA
           position: 8
@@ -160,9 +161,9 @@ workflows:
           show_in_command_panel: false
           allow_manual_move: true
           agent_profile:
-            agent_name: Claude
-            model: sonnet
-            mode: acceptEdits
+            agent_name: Copilot
+            model: claude-sonnet-5
+            mode: https://agentclientprotocol.com/protocol/session-modes#agent
           auto_advance_requires_signal: false
         - name: Done
           position: 9
@@ -178,9 +179,9 @@ workflows:
           allow_manual_move: true
           auto_archive_after_hours: 72
           agent_profile:
-            agent_name: Claude
-            model: haiku
-            mode: acceptEdits
+            agent_name: Copilot
+            model: claude-sonnet-5
+            mode: https://agentclientprotocol.com/protocol/session-modes#agent
           auto_advance_requires_signal: false
     - name: PR Review
       steps:
@@ -205,9 +206,9 @@ workflows:
           show_in_command_panel: true
           allow_manual_move: true
           agent_profile:
-            agent_name: Claude
-            model: opus[1m]
-            mode: bypassPermissions
+            agent_name: Copilot
+            model: gpt-5.3-codex
+            mode: https://agentclientprotocol.com/protocol/session-modes#autopilot
           auto_advance_requires_signal: false
         - name: QA
           position: 2
@@ -222,9 +223,9 @@ workflows:
           show_in_command_panel: true
           allow_manual_move: true
           agent_profile:
-            agent_name: Claude
-            model: default
-            mode: bypassPermissions
+            agent_name: Copilot
+            model: gpt-5.5
+            mode: https://agentclientprotocol.com/protocol/session-modes#autopilot
           auto_advance_requires_signal: false
         - name: Human-QA
           position: 3
@@ -243,9 +244,9 @@ workflows:
           show_in_command_panel: false
           allow_manual_move: true
           agent_profile:
-            agent_name: Claude
-            model: sonnet
-            mode: acceptEdits
+            agent_name: Copilot
+            model: claude-sonnet-5
+            mode: https://agentclientprotocol.com/protocol/session-modes#agent
           auto_advance_requires_signal: false
         - name: Done
           position: 4
@@ -261,7 +262,7 @@ workflows:
           allow_manual_move: true
           auto_archive_after_hours: 72
           agent_profile:
-            agent_name: Claude
-            model: haiku
-            mode: acceptEdits
+            agent_name: Copilot
+            model: claude-sonnet-5
+            mode: https://agentclientprotocol.com/protocol/session-modes#agent
           auto_advance_requires_signal: false
