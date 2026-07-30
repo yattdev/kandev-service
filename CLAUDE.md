@@ -79,7 +79,7 @@ curl -s -o /dev/null -w "HTTP %{http_code}" http://localhost:38429/
 2. Rebuild if Dockerfile.local was modified:  docker compose build
 3. Restart container if compose files changed: docker compose up -d --force-recreate
 4. Run:  bash ~/Code/kandev/test.sh
-5. All 29 tests must be green
+5. All 37 tests must be green
 6. Commit
 7. Only then report the task as complete
 ```
@@ -110,6 +110,7 @@ explicitly passed with `-f`.
 
 `Dockerfile.local` extends `ghcr.io/kdlbs/kandev:latest` (Debian 12) with:
 - `openssh-client`, `gh` (GitHub CLI), `glab` (GitLab CLI)
+- Google Chrome + `chromedriver` for headless browser tests (see below)
 - `git config --system safe.directory '*'` baked into `/etc/gitconfig`
 - A patched `docker-entrypoint.sh` (see below)
 
@@ -177,6 +178,37 @@ Bottom line: adding a project or a new dependency requires **no Dockerfile chang
 the agent just runs the project's own install command (`pip install -r`, `npm install`,
 `go mod download`, `bundle install`), and everything persists in `/data`.
 
+### Headless browser testing (Chrome)
+
+The upstream image ships no browser, so any project with browser tests (karma
+`ChromeHeadless`, jest + puppeteer, Selenium/chromedriver, Rails system tests,
+Laravel Dusk, Playwright) failed inside the container. `Dockerfile.local` now installs:
+
+- **Google Chrome stable** from Google's apt repo on `amd64`; Debian `chromium` +
+  `chromium-driver` on other architectures (Google publishes no arm64 Linux build).
+  Both end up reachable as `google-chrome`, `chromium`, `chromium-browser`, `chrome`.
+- **`chromedriver`**, version-matched to the installed Chrome via the
+  Chrome-for-Testing download endpoint (falls back to "last known good" stable).
+- **Fonts** (`fonts-liberation`, `fonts-noto*`, `fonts-dejavu-core`) — without real
+  font packages headless renders come out as blank "tofu" boxes — plus the
+  X/GTK/NSS libraries Playwright's own browser downloads need.
+
+Two container-specific gotchas are handled so projects need no special config:
+
+| Gotcha | Fix |
+|---|---|
+| Chrome's setuid sandbox needs unprivileged user namespaces, which Docker's default seccomp profile blocks → every launch aborts with `Failed to move to new namespace … Operation not permitted` | `/usr/local/bin/google-chrome` (ahead of `/usr/bin` on `PATH`) is a wrapper that `exec`s the real binary with `--no-sandbox`. Stock `ChromeHeadless` configs work unmodified; the unwrapped binary is still at `/usr/bin/google-chrome`. The alternative — `seccomp=unconfined` / `--cap-add=SYS_ADMIN` on the whole kandev container — was rejected as too broad. |
+| Docker's default `/dev/shm` is 64 MB → Chrome dies mid-suite with `Target closed` / SIGBUS | `shm_size: 2gb` in `docker-compose.override.yml` (needs `docker compose up -d --force-recreate` to take effect, not just a rebuild) |
+
+`CHROME_BIN`, `CHROMIUM_BIN`, `CHROME_PATH`, `PUPPETEER_EXECUTABLE_PATH` all point at
+the wrapper, and `PUPPETEER_SKIP_DOWNLOAD=true` stops every `npm install` from pulling
+a private Chrome copy. Playwright is left to manage its own pinned browsers — they land
+in `~/.cache/ms-playwright`, which is persistent because `HOME=/data/home`
+(`npx playwright install chromium`).
+
+`test.sh` section 9 covers all of this, including a real headless render as user
+`kandev` with **no** extra flags — that test is what proves the wrapper is in place.
+
 ### Transparent proxy (sfl-desktop)
 
 The corporate network uses a transparent proxy that intercepts HTTP/HTTPS and injects
@@ -200,11 +232,11 @@ Use `kandev-ssh-agent.sh` when:
 | `docker-compose.yml` | Base service: upstream image, restart policy, `network_mode: host`, core env vars and volumes |
 | `docker-compose.override.yml` | Local build, `USER`/`LOGNAME` env, SSH/git/gh/glab identity mounts |
 | `docker-compose.ssh-agent.yml` | Optional SSH agent socket overlay |
-| `Dockerfile.local` | Extends upstream: adds SSH, gh, glab, Docker CLI, build toolchain, mise; patches git and entrypoint |
+| `Dockerfile.local` | Extends upstream: adds SSH, gh, glab, Docker CLI, build toolchain, mise, Chrome + chromedriver; patches git and entrypoint |
 | `docker-entrypoint-local.sh` | Upstream entrypoint + `|| true` chown fix for :ro mounts |
 | `mise.default.toml` | System-wide mise config (`/etc/mise/config.toml`): global language versions matched to host |
 | `setup-toolchains.sh` | One-time helper: installs the mise language toolchains into the persistent `/data` volume |
-| `test.sh` | 29 automated tests covering image, container, service, identity, SSH, git, CLI tools, toolchains |
+| `test.sh` | 37 automated tests covering image, container, service, identity, SSH, git, CLI tools, toolchains, headless browser |
 | `update.sh` | Daily cron: pull upstream → rebuild local → restart if changed |
 | `kandev-ssh-agent.sh` | Helper: start/reuse ssh-agent, load keys, restart kandev with socket forwarding |
 | `install-mini.sh` | One-time mini-desktop setup: sync cron, update cron, `/data/home/Code` mountpoint |

@@ -66,6 +66,7 @@ daily development work. A local **`Dockerfile.local`** extends it with:
 | `openssh-client` | `ssh`, `scp`, `ssh-keyscan` |
 | `gh` (GitHub CLI) | `gh pr`, `gh repo`, `gh auth login`, etc. |
 | `glab` (GitLab CLI) | `glab mr`, `glab repo`, `glab auth login`, etc. |
+| Google Chrome + `chromedriver` | Headless browser tests: karma `ChromeHeadless`, puppeteer, Selenium, Dusk (see below) |
 | git system config | `safe.directory = *` — prevents "dubious ownership" errors (see below) |
 
 ### Build
@@ -94,6 +95,8 @@ ghcr.io/kdlbs/kandev:latest          (upstream, Debian 12)
               ├── apt: openssh-client gnupg curl ca-certificates
               ├── apt (cli.github.com repo): gh
               ├── dpkg: glab  (downloaded from gitlab.com packages API)
+              ├── apt (dl.google.com repo): google-chrome-stable + fonts
+              ├── chromedriver (Chrome-for-Testing, version-matched)
               └── git config --system safe.directory '*'
                       └─> kandev-local:latest
 ```
@@ -127,6 +130,45 @@ health-checking the container afterward and auto-rolling back on failure — mir
 `docker compose build` (run manually, or automatically by `update.sh` once the next
 release ships) rebuilds `kandev-local:latest` from the release again and discards the
 main-branch layer.
+
+### Browser tests (headless Chrome)
+
+Chrome, `chromedriver`, and the fonts/libraries headless rendering needs are baked into
+the image, so browser test suites run inside the container with **no project-side
+configuration**:
+
+```bash
+docker exec -u kandev kandev bash -lc 'cd /data/home/Code/<project> && npx ng test --watch=false --browsers=ChromeHeadless'
+```
+
+| Variable | Value | Used by |
+|---|---|---|
+| `CHROME_BIN` / `CHROMIUM_BIN` | `/usr/local/bin/google-chrome` | karma-chrome-launcher, most CI scripts |
+| `CHROME_PATH` | `/usr/local/bin/google-chrome` | lighthouse, chrome-launcher |
+| `PUPPETEER_EXECUTABLE_PATH` | `/usr/local/bin/google-chrome` | puppeteer / jest-puppeteer |
+| `PUPPETEER_SKIP_DOWNLOAD` | `true` | stops every `npm install` re-downloading Chrome |
+
+`/usr/local/bin/google-chrome` is a **wrapper** that adds `--no-sandbox` before exec'ing
+the real binary at `/usr/bin/google-chrome`. Chrome's sandbox needs unprivileged user
+namespaces, which Docker's default seccomp profile blocks — without the wrapper every
+launch aborts with `Failed to move to new namespace … Operation not permitted`, and each
+project would have to define its own `ChromeHeadlessNoSandbox` launcher. `/dev/shm` is
+raised to 2 GB (`shm_size` in `docker-compose.override.yml`) because Chrome crashes
+mid-suite on Docker's 64 MB default.
+
+**Playwright** manages its own pinned browsers; install them once per project —
+they persist in `~/.cache/ms-playwright` (on the `/data` bind mount):
+
+```bash
+docker exec -u kandev kandev bash -lc 'cd /data/home/Code/<project> && npx playwright install chromium'
+```
+
+Quick check that the browser stack is healthy:
+
+```bash
+docker exec -u kandev kandev google-chrome --headless --dump-dom https://example.com | head -3
+docker exec -u kandev kandev chromedriver --version
+```
 
 ### Adding more packages
 

@@ -108,6 +108,125 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libzip-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# ── Headless browser (Chrome / Chromium) + chromedriver ───────────────────────
+# Many projects run browser tests (karma ChromeHeadless, Jest+puppeteer,
+# Playwright, Selenium, Rails system tests, Laravel Dusk). None of that works on
+# the upstream image, which ships no browser at all.
+#
+# Layout:
+#   * amd64  → Google Chrome stable from Google's own apt repo (real Chrome,
+#              matches what CI and developers use).
+#   * others → Debian's `chromium` (Google publishes no arm64 Linux build).
+#   * /usr/bin/google-chrome and /usr/bin/chromium always both resolve to the
+#     installed browser, so tooling finds it under either name.
+#   * chromedriver is version-matched to the installed Chrome via the
+#     Chrome-for-Testing endpoint (Selenium/WebDriver clients).
+#
+# Fonts and X/GTK libraries are installed first: the browser packages pull most
+# of them in, but headless rendering produces blank boxes ("tofu") without real
+# font packages, and Playwright's own browser downloads need the same libs.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    fonts-liberation \
+    fonts-dejavu-core \
+    fonts-noto-core \
+    fonts-noto-color-emoji \
+    fonts-noto-cjk \
+    libnss3 \
+    libnspr4 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libcups2 \
+    libdrm2 \
+    libgbm1 \
+    libgtk-3-0 \
+    libasound2 \
+    libxkbcommon0 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxfixes3 \
+    libxrandr2 \
+    libxshmfence1 \
+    libpango-1.0-0 \
+    libcairo2 \
+    xdg-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN ARCH="$(dpkg --print-architecture)" \
+    && if [ "$ARCH" = "amd64" ]; then \
+        curl -fsSL https://dl.google.com/linux/linux_signing_key.pub \
+          | gpg --dearmor -o /usr/share/keyrings/google-chrome-keyring.gpg \
+        && chmod go+r /usr/share/keyrings/google-chrome-keyring.gpg \
+        && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome-keyring.gpg] \
+            https://dl.google.com/linux/chrome/deb/ stable main" \
+          | tee /etc/apt/sources.list.d/google-chrome.list > /dev/null \
+        && apt-get update \
+        && apt-get install -y --no-install-recommends google-chrome-stable \
+        && ln -sf /usr/bin/google-chrome /usr/bin/chromium \
+        && ln -sf /usr/bin/google-chrome /usr/bin/chromium-browser ; \
+       else \
+        apt-get update \
+        && apt-get install -y --no-install-recommends chromium chromium-driver \
+        && ln -sf /usr/bin/chromium /usr/bin/google-chrome \
+        && ln -sf /usr/bin/chromium /usr/bin/google-chrome-stable ; \
+       fi \
+    && rm -rf /var/lib/apt/lists/*
+
+# chromedriver matching the installed Chrome (amd64 only — the chromium package
+# already ships its own driver on other architectures). Falls back to the
+# current "last known good" stable driver if the exact build isn't published.
+RUN if [ "$(dpkg --print-architecture)" = "amd64" ]; then \
+        CHROME_VER="$(google-chrome --version | awk '{print $3}')" \
+        && DRV_URL="https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VER}/linux64/chromedriver-linux64.zip" \
+        && (curl -fsSL "$DRV_URL" -o /tmp/chromedriver.zip \
+            || { LKG_URL=$(curl -fsSL https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json \
+                    | tr ',' '\n' | grep -o '"url":"[^"]*chromedriver-linux64.zip"' \
+                    | head -1 | sed 's/"url":"//;s/"$//') \
+                 && curl -fsSL "$LKG_URL" -o /tmp/chromedriver.zip; }) \
+        && unzip -jo /tmp/chromedriver.zip 'chromedriver-linux64/chromedriver' -d /usr/local/bin \
+        && chmod +x /usr/local/bin/chromedriver \
+        && rm /tmp/chromedriver.zip ; \
+    fi
+
+# ── --no-sandbox wrapper ──────────────────────────────────────────────────────
+# Chrome's setuid sandbox needs unprivileged user namespaces, which Docker's
+# default seccomp profile blocks — every launch dies with
+#   "Failed to move to new namespace: ... errno = Operation not permitted".
+# The alternatives are seccomp=unconfined / --cap-add=SYS_ADMIN on the whole
+# kandev container (weakens isolation for one feature) or making every project
+# define a custom ChromeHeadlessNoSandbox launcher. Instead, /usr/local/bin
+# (ahead of /usr/bin on PATH) shadows the browser with a wrapper that injects
+# the flag, so stock `ng test --browsers=ChromeHeadless`, puppeteer, lighthouse
+# and chromedriver all work unmodified. The unwrapped binary stays reachable at
+# /usr/bin/google-chrome for anything that wants it.
+RUN printf '%s\n' \
+      '#!/bin/sh' \
+      '# Injects --no-sandbox (Docker seccomp blocks Chrome'"'"'s sandbox).' \
+      '# Unwrapped binary: /usr/bin/google-chrome' \
+      'exec /usr/bin/google-chrome --no-sandbox "$@"' \
+      > /usr/local/bin/google-chrome \
+    && chmod +x /usr/local/bin/google-chrome \
+    && ln -sf /usr/local/bin/google-chrome /usr/local/bin/google-chrome-stable \
+    && ln -sf /usr/local/bin/google-chrome /usr/local/bin/chromium \
+    && ln -sf /usr/local/bin/google-chrome /usr/local/bin/chromium-browser \
+    && ln -sf /usr/local/bin/google-chrome /usr/local/bin/chrome
+
+# Canonical browser paths for the usual test runners:
+#   CHROME_BIN                 karma-chrome-launcher (ChromeHeadless), many CI scripts
+#   CHROMIUM_BIN               karma's ChromiumHeadless launcher
+#   CHROME_PATH                lighthouse, chrome-launcher
+#   PUPPETEER_EXECUTABLE_PATH  puppeteer / jest-puppeteer use the system browser
+#   PUPPETEER_SKIP_DOWNLOAD    don't re-download a private Chrome on every npm install
+# Playwright is deliberately left alone: it pins its own browser builds and
+# installs them to ~/.cache/ms-playwright, which is persistent because
+# HOME=/data/home lives on the bind mount (`npx playwright install chromium`).
+# Playwright passes --no-sandbox itself when it detects it runs as root/in CI;
+# if a run trips over the sandbox, launch with `chromiumSandbox: false`.
+ENV CHROME_BIN=/usr/local/bin/google-chrome \
+    CHROMIUM_BIN=/usr/local/bin/google-chrome \
+    CHROME_PATH=/usr/local/bin/google-chrome \
+    PUPPETEER_EXECUTABLE_PATH=/usr/local/bin/google-chrome \
+    PUPPETEER_SKIP_DOWNLOAD=true
+
 # ── mise (polyglot version manager) ───────────────────────────────────────────
 # mise reads each project's mise.toml / .tool-versions / .nvmrc / .python-version
 # and installs the exact runtime version on demand into the persistent /data

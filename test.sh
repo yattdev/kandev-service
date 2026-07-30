@@ -256,6 +256,71 @@ else
   fail "mise does not list configured toolchains (config not parsed/trusted)"
 fi
 
+# ── 9. Headless browser (Chrome) ──────────────────────────────────────────────
+section "9. Headless browser (Chrome)"
+
+# Browser present, and `google-chrome` on PATH must hit the --no-sandbox wrapper
+WHICH_CHROME=$(docker run --rm kandev-local:latest which google-chrome 2>/dev/null || echo "")
+if [[ "$WHICH_CHROME" == "/usr/local/bin/google-chrome" ]]; then
+  ok "google-chrome on PATH resolves to the --no-sandbox wrapper"
+else
+  fail "google-chrome on PATH = '${WHICH_CHROME}' (expected /usr/local/bin/google-chrome)"
+fi
+
+# Unwrapped browser binary must still be reachable
+if docker run --rm kandev-local:latest test -x /usr/bin/google-chrome; then
+  ok "unwrapped browser binary present at /usr/bin/google-chrome"
+else
+  fail "/usr/bin/google-chrome missing — browser not installed"
+fi
+
+# chromium alias resolves too (tools that look for the other name)
+if docker run --rm kandev-local:latest which chromium &>/dev/null; then
+  ok "chromium alias resolves to the installed browser"
+else
+  fail "chromium alias missing from image"
+fi
+
+CHROME_VERSION=$(docker run --rm kandev-local:latest google-chrome --version 2>/dev/null || echo "")
+if [[ -n "$CHROME_VERSION" ]]; then
+  ok "browser reports a version ($CHROME_VERSION)"
+else
+  fail "google-chrome --version produced no output"
+fi
+
+# chromedriver for Selenium/WebDriver clients
+if docker run --rm kandev-local:latest chromedriver --version &>/dev/null; then
+  ok "chromedriver present and runnable"
+else
+  fail "chromedriver missing or not runnable"
+fi
+
+# CHROME_BIN must be exported in the running container (karma, CI scripts read it)
+CHROME_BIN_ENV=$(docker exec kandev printenv CHROME_BIN 2>/dev/null || echo "")
+if [[ "$CHROME_BIN_ENV" == "/usr/local/bin/google-chrome" ]]; then
+  ok "CHROME_BIN=/usr/local/bin/google-chrome in running container"
+else
+  fail "CHROME_BIN='${CHROME_BIN_ENV}' in container (expected /usr/local/bin/google-chrome)"
+fi
+
+# /dev/shm must be larger than Docker's 64 MB default or Chrome crashes mid-suite
+SHM_MB=$(docker exec kandev sh -c "df -m /dev/shm | awk 'NR==2 {print \$2}'" 2>/dev/null || echo "0")
+if [[ "${SHM_MB:-0}" -ge 512 ]]; then
+  ok "/dev/shm is ${SHM_MB}MB (large enough for Chrome)"
+else
+  fail "/dev/shm is only ${SHM_MB}MB — Chrome will crash; set shm_size in compose"
+fi
+
+# Real headless render as the kandev user, WITHOUT passing --no-sandbox — this
+# is what a stock karma/puppeteer config does, so it proves the wrapper works.
+if docker exec -u kandev kandev sh -c \
+    'google-chrome --headless --disable-gpu --dump-dom about:blank 2>/dev/null' \
+    | grep -qi '<html'; then
+  ok "headless Chrome renders as user kandev with no extra flags"
+else
+  fail "headless Chrome failed to render as kandev (sandbox wrapper not working?)"
+fi
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 TOTAL=$((PASS + FAIL))
 echo ""

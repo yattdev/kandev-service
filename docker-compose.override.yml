@@ -19,6 +19,12 @@ services:
         BASE_IMAGE: ghcr.io/kdlbs/kandev:latest
     image: kandev-local:latest
 
+    # Docker's default /dev/shm is 64 MB, which is far too small for Chrome:
+    # headless runs crash with "Target closed" / SIGBUS partway through a test
+    # suite. 2 GB is the size Google's own CI images use. (The usual workaround,
+    # --disable-dev-shm-usage, is then unnecessary but still harmless.)
+    shm_size: 2gb
+
     # Load secrets from .env (git-ignored). required: false so the container
     # starts even before .env is populated — tools just won't have API access.
     # After filling in .env, restart with: docker compose up -d --force-recreate
