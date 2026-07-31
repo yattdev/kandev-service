@@ -67,6 +67,10 @@ RUN make -C apps/backend deps \
     && make build-backend
 
 # ── Final: layer the main-branch binaries onto the existing local image ──────
+# BASE_IMAGE defaults to kandev-local:latest, so this stage already inherits
+# everything Dockerfile.local baked in — including passwordless sudo for
+# kandev (sudo package + /etc/sudoers.d/kandev). Nothing below touches
+# /etc/sudoers.d or removes sudo, so no extra RUN is needed here to keep that.
 FROM ${BASE_IMAGE}
 USER root
 
