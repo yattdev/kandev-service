@@ -12,7 +12,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     gnupg \
     ca-certificates \
+    sudo \
     && rm -rf /var/lib/apt/lists/*
+
+# ── Passwordless sudo for kandev ───────────────────────────────────────────────
+# Agents running as `kandev` occasionally need root for one-off tasks inside the
+# container (installing a missing apt package, mounting something, adjusting
+# permissions on a path they don't own, etc.) without dropping into `docker exec
+# -u root`. NOPASSWD avoids needing an interactive password prompt (kandev has
+# none set) for every non-interactive agent invocation. Scoped to the kandev
+# user only — it does not change what the docker socket / docker group grants.
+RUN echo 'kandev ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/kandev \
+    && chmod 0440 /etc/sudoers.d/kandev
 
 # ── GitHub CLI (gh) ───────────────────────────────────────────────────────────
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \

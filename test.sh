@@ -321,6 +321,56 @@ else
   fail "headless Chrome failed to render as kandev (sandbox wrapper not working?)"
 fi
 
+# ── 10. sudo / root privileges for kandev ─────────────────────────────────────
+section "10. sudo / root privileges for kandev"
+
+if docker run --rm kandev-local:latest which sudo &>/dev/null; then
+  ok "sudo binary present in image"
+else
+  fail "sudo binary missing from image"
+fi
+
+# /etc/sudoers.d/kandev is 0440 root-only by design. The image's entrypoint
+# always drops privileges to kandev via gosu even when `-u root` is passed, so
+# bypass it with --entrypoint to read the file as the real root user.
+SUDOERS_PATCH=$(docker run --rm --entrypoint sh kandev-local:latest -c 'cat /etc/sudoers.d/kandev 2>/dev/null' || echo "")
+if echo "$SUDOERS_PATCH" | grep -q 'kandev ALL=(ALL) NOPASSWD:ALL'; then
+  ok "/etc/sudoers.d/kandev grants passwordless root to kandev"
+else
+  fail "/etc/sudoers.d/kandev missing or does not grant NOPASSWD root"
+fi
+
+SUDOERS_PERMS=$(docker run --rm --entrypoint stat kandev-local:latest -c '%a' /etc/sudoers.d/kandev 2>/dev/null || echo "")
+if [[ "$SUDOERS_PERMS" == "440" ]]; then
+  ok "/etc/sudoers.d/kandev has correct 0440 permissions"
+else
+  fail "/etc/sudoers.d/kandev permissions = '${SUDOERS_PERMS}' (expected 440)"
+fi
+
+# kandev must be able to become root without a password inside the running container
+SUDO_WHOAMI=$(docker exec -u kandev kandev sudo -n whoami 2>&1 || echo "")
+if [[ "$SUDO_WHOAMI" == "root" ]]; then
+  ok "kandev can 'sudo -n whoami' -> root (no password needed)"
+else
+  fail "kandev could not sudo to root (got: '${SUDO_WHOAMI}')"
+fi
+
+# kandev must own /data (the entrypoint chown, backed by sudo if it ever needs
+# to self-heal permissions on files it doesn't already own)
+DATA_OWNER=$(docker exec kandev stat -c '%U:%G' /data 2>/dev/null || echo "")
+if [[ "$DATA_OWNER" == "kandev:kandev" ]]; then
+  ok "/data is owned by kandev:kandev"
+else
+  fail "/data owner = '${DATA_OWNER}' (expected kandev:kandev)"
+fi
+
+DATA_WRITABLE=$(docker exec -u kandev kandev sh -c 'touch /data/.write-test 2>&1 && rm -f /data/.write-test && echo yes || echo no')
+if [[ "$DATA_WRITABLE" == "yes" ]]; then
+  ok "kandev can write to /data"
+else
+  fail "kandev cannot write to /data"
+fi
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 TOTAL=$((PASS + FAIL))
 echo ""

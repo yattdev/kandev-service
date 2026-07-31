@@ -68,6 +68,7 @@ daily development work. A local **`Dockerfile.local`** extends it with:
 | `glab` (GitLab CLI) | `glab mr`, `glab repo`, `glab auth login`, etc. |
 | Google Chrome + `chromedriver` | Headless browser tests: karma `ChromeHeadless`, puppeteer, Selenium, Dusk (see below) |
 | git system config | `safe.directory = *` — prevents "dubious ownership" errors (see below) |
+| `sudo` (passwordless for `kandev`) | Lets the `kandev` user become root inside the container for one-off tasks (installing a missing package, fixing permissions) without `docker exec -u root` |
 
 ### Build
 
@@ -97,6 +98,7 @@ ghcr.io/kdlbs/kandev:latest          (upstream, Debian 12)
               ├── dpkg: glab  (downloaded from gitlab.com packages API)
               ├── apt (dl.google.com repo): google-chrome-stable + fonts
               ├── chromedriver (Chrome-for-Testing, version-matched)
+              ├── sudo (kandev: NOPASSWD:ALL via /etc/sudoers.d/kandev)
               └── git config --system safe.directory '*'
                       └─> kandev-local:latest
 ```
@@ -169,6 +171,24 @@ Quick check that the browser stack is healthy:
 docker exec -u kandev kandev google-chrome --headless --dump-dom https://example.com | head -3
 docker exec -u kandev kandev chromedriver --version
 ```
+
+### Root privileges for the `kandev` user
+
+`kandev` has passwordless `sudo` inside the container (`/etc/sudoers.d/kandev`, baked
+in by `Dockerfile.local`). Use it for one-off root tasks without switching to
+`docker exec -u root`:
+
+```bash
+docker exec -u kandev kandev sudo apt-get update
+docker exec -u kandev kandev sudo chown -R kandev:kandev /data/some/path
+```
+
+`/data` itself is already owned by `kandev:kandev` on every container start (the
+entrypoint's `chown -R kandev:kandev /data`, see "Entrypoint patch" in `CLAUDE.md`), so
+this is mainly for edge cases — files left behind with another owner, or installing a
+package temporarily to debug something. It does **not** change what the mounted Docker
+socket / `docker` group grants; that access is separate (see the Docker CLI section
+above).
 
 ### Adding more packages
 
