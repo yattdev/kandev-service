@@ -169,7 +169,6 @@ workflows:
           position: 9
           color: bg-green-500
           prompt: |-
-            {{task_prompt}}
             @dw-done
           events:
             on_enter:
@@ -252,7 +251,6 @@ workflows:
           position: 4
           color: bg-green-500
           prompt: |-
-            {{task_prompt}}
             @dw-done
           events:
             on_enter:
