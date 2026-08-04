@@ -26,8 +26,15 @@
 #   bash ~/Code/kandev/kandev-start.sh              # normal (with Litestream)
 #   bash ~/Code/kandev/kandev-start.sh --no-sync    # skip restore + lock (offline / debug)
 #   bash ~/Code/kandev/kandev-start.sh --release-lock  # release this host's lock, then exit
+#   bash ~/Code/kandev/kandev-start.sh --recreate    # force-recreate the container(s)
 #
-# Called by: systemd kandev.service ExecStart (normal), ExecStop (--release-lock).
+# Note on --recreate: `docker compose up -d` is idempotent — it will NOT touch a
+# container that is already running with unchanged config. So a plain start/reload
+# is a no-op for an already-running container. --recreate adds `--force-recreate`
+# so `systemctl --user reload kandev` (ExecReload) actually restarts the container.
+#
+# Called by: systemd kandev.service ExecStart (normal), ExecStop (--release-lock),
+#            ExecReload (--recreate).
 set -euo pipefail
 
 COMPOSE_DIR="${COMPOSE_DIR:-$HOME/Code/kandev}"
@@ -44,6 +51,12 @@ LOCK_STALE_SECS="${LOCK_STALE_SECS:-120}"
 # local edits (the exact failure that stranded sfl's work during the VPN outage).
 RESTORE_MARGIN_SECS="${RESTORE_MARGIN_SECS:-60}"
 ARG="${1:-}"
+
+# --recreate (may be passed alone or alongside another mode) forces
+# `docker compose up` to add --force-recreate so an already-running container
+# is actually restarted (used by systemd ExecReload).
+RECREATE=0
+for _a in "$@"; do [[ "$_a" == "--recreate" ]] && RECREATE=1; done
 
 mkdir -p "$(dirname "$LOG")" "$KANDEV_DATA"
 
@@ -274,16 +287,19 @@ fi
 # ── 3. Start kandev (+ Litestream sidecar, only if we hold the writer lock) ──
 cd "$COMPOSE_DIR"
 
+RECREATE_ARG=""
+[[ "$RECREATE" -eq 1 ]] && RECREATE_ARG="--force-recreate"
+
 if [[ "$WRITER_MODE" -eq 1 ]] && [[ -f "$LITESTREAM_CONFIG" ]] && [[ "$ARG" != "--no-sync" ]]; then
   log "Starting kandev + Litestream sidecar (active writer)..."
   # Explicitly include override.yml so SSH keys, identity mounts, and .env are preserved.
   # docker-compose.override.yml is only auto-merged when no -f flags are used.
   OVERRIDE=""
   [[ -f "$COMPOSE_DIR/docker-compose.override.yml" ]] && OVERRIDE="-f docker-compose.override.yml"
-  docker compose -f docker-compose.yml $OVERRIDE -f docker-compose.litestream.yml -p kandev up -d --remove-orphans
+  docker compose -f docker-compose.yml $OVERRIDE -f docker-compose.litestream.yml -p kandev up -d --remove-orphans $RECREATE_ARG
 else
   log "Starting kandev WITHOUT Litestream sidecar (read-only sync mode or --no-sync)..."
-  docker compose -p kandev up -d --remove-orphans
+  docker compose -p kandev up -d --remove-orphans $RECREATE_ARG
 fi
 
 log "kandev started"

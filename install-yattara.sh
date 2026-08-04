@@ -125,7 +125,7 @@ WorkingDirectory=%h/Code/kandev
 ExecStart=/bin/bash %h/Code/kandev/kandev-start.sh
 ExecStop=/bin/bash %h/Code/kandev/kandev-start.sh --release-lock
 ExecStop=/usr/bin/docker compose -p kandev down
-ExecReload=/bin/bash %h/Code/kandev/kandev-start.sh
+ExecReload=/bin/bash %h/Code/kandev/kandev-start.sh --recreate
 TimeoutStartSec=180
 TimeoutStopSec=60
 

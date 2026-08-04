@@ -44,7 +44,7 @@ RemainAfterExit=yes
 WorkingDirectory=%h/Code/kandev
 ExecStart=/bin/bash %h/Code/kandev/kandev-start-mini.sh
 ExecStop=/usr/bin/docker compose -p kandev down
-ExecReload=/bin/bash %h/Code/kandev/kandev-start-mini.sh
+ExecReload=/bin/bash %h/Code/kandev/kandev-start-mini.sh --recreate
 TimeoutStartSec=180
 TimeoutStopSec=60
 

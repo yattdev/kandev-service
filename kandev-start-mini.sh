@@ -25,6 +25,11 @@
 # Usage:
 #   bash ~/Code/kandev/kandev-start-mini.sh
 #   bash ~/Code/kandev/kandev-start-mini.sh --no-sync   # skip restore
+#   bash ~/Code/kandev/kandev-start-mini.sh --recreate  # force-recreate the container
+#
+# Note on --recreate: `docker compose up -d` is idempotent — it won't touch an
+# already-running container. --recreate adds `--force-recreate` so systemd
+# ExecReload (`systemctl --user reload kandev`) actually restarts it.
 #
 # Called by: systemd kandev.service on mini-desktop.
 set -euo pipefail
@@ -34,6 +39,11 @@ KANDEV_DATA="${KANDEV_DATA:-$HOME/.local/share/kandev/data}"
 REPLICA_ROOT="${REPLICA_ROOT:-$HOME/litestream-replicas/kandev}"
 LOG="${LOG:-$HOME/logs/kandev-sync.log}"
 SKIP_SYNC="${1:-}"
+
+# --recreate (may be passed alone or with --no-sync) forces --force-recreate so
+# an already-running container is actually restarted (used by systemd ExecReload).
+RECREATE=0
+for _a in "$@"; do [[ "$_a" == "--recreate" ]] && RECREATE=1; done
 
 mkdir -p "$(dirname "$LOG")" "$KANDEV_DATA"
 
@@ -127,5 +137,7 @@ fi
 # ── 2. Start kandev (plain, no Litestream sidecar) ──────────────────────────
 log "Starting kandev..."
 cd "$COMPOSE_DIR"
-docker compose -p kandev up -d --remove-orphans
+RECREATE_ARG=""
+[[ "$RECREATE" -eq 1 ]] && RECREATE_ARG="--force-recreate"
+docker compose -p kandev up -d --remove-orphans $RECREATE_ARG
 log "kandev started"
