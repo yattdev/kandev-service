@@ -74,6 +74,14 @@ RUN make -C apps/backend deps \
 FROM ${BASE_IMAGE}
 USER root
 
+# Override the flavor label inherited from kandev-local:latest (release) so
+# update.sh recognises this as a temporary main-branch build and reconciles it
+# back to a clean release build on its next run (even if upstream :latest hasn't
+# moved). KANDEV_REF/KANDEV_REPO_OWNER are recorded for visibility.
+ARG KANDEV_REF
+ARG KANDEV_REPO_OWNER
+LABEL com.kandev.flavor=main-branch
+LABEL com.kandev.main-ref=${KANDEV_REPO_OWNER}/${KANDEV_REF}
 COPY --from=builder /src/apps/backend/bin/kandev                /app/apps/backend/bin/kandev
 COPY --from=builder /src/apps/backend/bin/agentctl               /usr/local/bin/agentctl
 COPY --from=builder /src/apps/backend/bin/agentctl-linux-amd64   /app/apps/backend/bin/agentctl-linux-amd64

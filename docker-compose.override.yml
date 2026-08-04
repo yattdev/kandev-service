@@ -17,6 +17,7 @@ services:
       network: host
       args:
         BASE_IMAGE: ghcr.io/kdlbs/kandev:latest
+        BASE_IMAGE_ID: ${KANDEV_BASE_IMAGE_ID:-unknown}
     image: kandev-local:latest
 
     # Docker's default /dev/shm is 64 MB, which is far too small for Chrome:

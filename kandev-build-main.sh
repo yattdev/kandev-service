@@ -50,9 +50,13 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [build-main] $*" | tee -a "$LOG_FIL
 cd "$COMPOSE_DIR"
 
 HEALTH_URL="http://localhost:38429/"
+# Generous default: first boot after a version/branch change runs DB migrations
+# before binding HTTP (~55s observed), so a 60s gate risks a false rollback.
+HEALTH_TIMEOUT_SECS="${HEALTH_TIMEOUT_SECS:-180}"
 wait_for_health() {
-    local i
-    for ((i = 0; i < 30; i++)); do
+    local deadline
+    deadline=$(( SECONDS + HEALTH_TIMEOUT_SECS ))
+    while (( SECONDS < deadline )); do
         if [[ "$(curl -s -o /dev/null -w '%{http_code}' "$HEALTH_URL" 2>/dev/null)" == "200" ]]; then
             return 0
         fi
@@ -112,7 +116,7 @@ if wait_for_health; then
     log "Done. Kandev is running ${KANDEV_REPO_OWNER}/kandev@${KANDEV_REF} and passed health check."
     log "Revert anytime with: bash $0 --revert  (or: docker compose build && docker compose up -d --force-recreate)"
 else
-    log "CRITICAL: kandev did not become healthy after the main-branch build (no HTTP 200 on ${HEALTH_URL} after 60s)."
+    log "CRITICAL: kandev did not become healthy after the main-branch build (no HTTP 200 on ${HEALTH_URL} after ${HEALTH_TIMEOUT_SECS}s)."
     log "--- last container logs ---"
     docker logs kandev --tail 60 >> "$LOG_FILE" 2>&1
     log "--- end container logs ---"

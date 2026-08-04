@@ -2,6 +2,13 @@
 # update.sh — pull latest kandev image and restart only if it changed
 # Safe to run as root (mini-desktop) or as normal user (sfl-desktop).
 #
+# Reconciles the deployed image back to a clean release build: it rebuilds
+# kandev-local:latest not only when a new upstream :latest is pulled, but also
+# whenever the currently-deployed image is not a clean release build (e.g. a
+# temporary main-branch build left by kandev-build-main.sh) or was built on a
+# now-stale upstream base. This is driven by the com.kandev.flavor /
+# com.kandev.base-id labels stamped by Dockerfile.local.
+#
 # After a local rebuild, also syncs mise language toolchains (node, python, go,
 # java, ruby, php, dotnet) into the persistent /data volume via
 # setup-toolchains.sh — so the toolset stays in sync automatically without a
@@ -60,38 +67,88 @@ log "Pulling $IMAGE ..."
 PULL_OUT=$(docker pull "$IMAGE" 2>&1)
 echo "$PULL_OUT" >> "$LOG_FILE"
 
+PULLED_NEW=1
 if echo "$PULL_OUT" | grep -q "Image is up to date"; then
-    log "Already up to date — no restart needed."
-    exit 0
+    PULLED_NEW=0
 fi
 
-# New upstream image pulled — rebuild local image if Dockerfile.local exists
-NEW_DIGEST=$(docker inspect "$IMAGE" --format '{{.Id}}' 2>/dev/null || echo "unknown")
-log "Upstream image updated: $OLD_DIGEST → $NEW_DIGEST"
+# Resolved ID of the upstream :latest we now have locally. Stamped into the
+# rebuilt local image (com.kandev.base-id) so we can later tell whether the
+# deployed image is still built on the current upstream.
+UPSTREAM_ID=$(docker image inspect "$IMAGE" --format '{{.Id}}' 2>/dev/null || echo "unknown")
 
 cd "$COMPOSE_DIR"
 
+# ── Decide whether the local image must be (re)built ─────────────────────────
+# The old logic only rebuilt when THIS pull downloaded a new upstream base, so
+# it never reconciled a kandev-local:latest that had drifted for any OTHER
+# reason — most importantly a temporary main-branch build from
+# kandev-build-main.sh (which overwrites kandev-local:latest). Result: after a
+# branch build, `update.sh` reported "Already up to date" forever and the
+# container kept running the branch build. We now also rebuild when the
+# deployed image is not a clean release build, or was built on a stale base.
+REBUILD=0
+REBUILD_REASON=""
 if [[ "$SKIP_LOCAL_BUILD" -eq 0 && -f "$COMPOSE_DIR/Dockerfile.local" ]]; then
-    log "Rebuilding local image (Dockerfile.local) on top of new upstream..."
-    docker compose -p kandev build --no-cache 2>&1 | tee -a "$LOG_FILE"
+    TARGET_IMAGE="kandev-local:latest"
+    if [[ "$PULLED_NEW" -eq 1 ]]; then
+        REBUILD=1; REBUILD_REASON="new upstream base pulled ($OLD_DIGEST → $UPSTREAM_ID)"
+    elif ! docker image inspect "$TARGET_IMAGE" >/dev/null 2>&1; then
+        REBUILD=1; REBUILD_REASON="local image $TARGET_IMAGE missing"
+    else
+        FLAVOR=$(docker image inspect "$TARGET_IMAGE" --format '{{index .Config.Labels "com.kandev.flavor"}}' 2>/dev/null || echo "")
+        BASE_ID=$(docker image inspect "$TARGET_IMAGE" --format '{{index .Config.Labels "com.kandev.base-id"}}' 2>/dev/null || echo "")
+        if [[ "$FLAVOR" != "release" ]]; then
+            REBUILD=1; REBUILD_REASON="deployed image flavor='${FLAVOR:-none}' is not a clean release build — reconciling to release"
+        elif [[ "$UPSTREAM_ID" != "unknown" && -n "$BASE_ID" && "$BASE_ID" != "unknown" && "$BASE_ID" != "$UPSTREAM_ID" ]]; then
+            REBUILD=1; REBUILD_REASON="local image built on stale base ($BASE_ID → $UPSTREAM_ID)"
+        fi
+    fi
+else
+    TARGET_IMAGE="$IMAGE"
+fi
+
+if [[ "$REBUILD" -eq 1 ]]; then
+    log "Rebuilding local image (Dockerfile.local): $REBUILD_REASON"
+    # KANDEV_BASE_IMAGE_ID feeds docker-compose.override.yml's BASE_IMAGE_ID
+    # build arg (and thus the com.kandev.base-id label on the built image).
+    KANDEV_BASE_IMAGE_ID="$UPSTREAM_ID" \
+        docker compose -p kandev build --no-cache \
+        --build-arg BASE_IMAGE_ID="$UPSTREAM_ID" 2>&1 | tee -a "$LOG_FILE"
     log "Local image rebuilt."
 fi
 
-# Recreate container with updated image
-log "Recreating kandev container..."
+# ── Recreate only if the running container isn't already the target image ────
+RUNNING_ID=$(docker inspect kandev --format '{{.Image}}' 2>/dev/null || echo "none")
+TARGET_ID=$(docker image inspect "$TARGET_IMAGE" --format '{{.Id}}' 2>/dev/null || echo "unknown")
+
+if [[ "$REBUILD" -eq 0 && "$RUNNING_ID" != "none" && "$RUNNING_ID" == "$TARGET_ID" ]]; then
+    log "Already up to date — container already running $TARGET_IMAGE ($TARGET_ID). No restart needed."
+    exit 0
+fi
+
+# Recreate container with the (possibly rebuilt) target image
+log "Recreating kandev container (target: $TARGET_IMAGE)..."
 docker compose -p kandev up -d --force-recreate
 
 # Health-gate the update: a successful `docker compose up` only means the
 # container process started, not that the backend came up (e.g. a broken
 # DB migration crash-loops the container forever while `up -d` still exits 0).
 # A prior incident silently left kandev unreachable for hours after an
-# unattended update because nothing checked this. Poll the health endpoint for
-# up to ~60s; on failure, roll back to the pre-update image automatically so
-# the service self-heals, and fail loudly (nonzero exit) so cron surfaces it.
+# unattended update because nothing checked this. Poll the health endpoint;
+# on failure, roll back to the pre-update image automatically so the service
+# self-heals, and fail loudly (nonzero exit) so cron surfaces it.
+#
+# Timeout must be generous: the FIRST boot after a version jump runs DB
+# migrations before the HTTP server binds, which was observed to take ~55s on
+# a minor-version upgrade. A too-tight 60s gate caused a spurious rollback of a
+# perfectly healthy new image. Default 180s; override with HEALTH_TIMEOUT_SECS.
 HEALTH_URL="http://localhost:38429/"
+HEALTH_TIMEOUT_SECS="${HEALTH_TIMEOUT_SECS:-180}"
 wait_for_health() {
-    local i
-    for ((i = 0; i < 30; i++)); do
+    local i deadline
+    deadline=$(( SECONDS + HEALTH_TIMEOUT_SECS ))
+    while (( SECONDS < deadline )); do
         if [[ "$(curl -s -o /dev/null -w '%{http_code}' "$HEALTH_URL" 2>/dev/null)" == "200" ]]; then
             return 0
         fi
@@ -103,7 +160,7 @@ wait_for_health() {
 if wait_for_health; then
     log "Done. Kandev restarted with latest image and passed health check."
 else
-    log "CRITICAL: kandev did not become healthy after update (no HTTP 200 on ${HEALTH_URL} after 60s)."
+    log "CRITICAL: kandev did not become healthy after update (no HTTP 200 on ${HEALTH_URL} after ${HEALTH_TIMEOUT_SECS}s)."
     log "--- last container logs ---"
     docker logs kandev --tail 60 >> "$LOG_FILE" 2>&1
     log "--- end container logs ---"

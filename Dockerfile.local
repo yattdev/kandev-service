@@ -6,6 +6,17 @@ FROM ${BASE_IMAGE}
 
 USER root
 
+# ── Provenance labels (read by update.sh to decide when to reconcile) ─────────
+# flavor=release marks this as a clean release-tracking build (as opposed to a
+# temporary main-branch build from Dockerfile.main-branch, which overrides it to
+# flavor=main-branch). base-id records the exact upstream image ID this was built
+# on, so update.sh can rebuild when the deployed image drifts off the current
+# upstream :latest even if `docker pull` reports "up to date". BASE_IMAGE_ID is
+# passed by update.sh; it is only used for labelling and defaults to "unknown".
+ARG BASE_IMAGE_ID=unknown
+LABEL com.kandev.flavor=release
+LABEL com.kandev.base-id=${BASE_IMAGE_ID}
+
 # ── Core tools ────────────────────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
     openssh-client \
