@@ -14,6 +14,7 @@ workflows:
           show_in_command_panel: true
           allow_manual_move: true
           auto_advance_requires_signal: false
+          cancel_triggers_turn_complete: false
         - name: Spec
           position: 1
           color: bg-purple-500
@@ -32,10 +33,11 @@ workflows:
           show_in_command_panel: true
           allow_manual_move: true
           agent_profile:
-            agent_name: Claude
-            model: default
-            mode: bypassPermissions
+            agent_name: Copilot
+            model: claude-sonnet-5
+            mode: https://agentclientprotocol.com/protocol/session-modes#plan
           auto_advance_requires_signal: false
+          cancel_triggers_turn_complete: false
         - name: Todo
           position: 2
           color: bg-slate-500
@@ -48,6 +50,7 @@ workflows:
           show_in_command_panel: false
           allow_manual_move: true
           auto_advance_requires_signal: false
+          cancel_triggers_turn_complete: false
         - name: Work
           position: 3
           color: bg-blue-500
@@ -65,10 +68,11 @@ workflows:
           show_in_command_panel: true
           allow_manual_move: true
           agent_profile:
-            agent_name: Claude
-            model: sonnet
-            mode: bypassPermissions
+            agent_name: Copilot
+            model: claude-sonnet-5
+            mode: https://agentclientprotocol.com/protocol/session-modes#agent
           auto_advance_requires_signal: false
+          cancel_triggers_turn_complete: false
         - name: Review
           position: 4
           color: bg-yellow-500
@@ -85,10 +89,11 @@ workflows:
           show_in_command_panel: true
           allow_manual_move: true
           agent_profile:
-            agent_name: Claude
-            model: default
-            mode: bypassPermissions
+            agent_name: Copilot
+            model: claude-sonnet-5
+            mode: https://agentclientprotocol.com/protocol/session-modes#plan
           auto_advance_requires_signal: false
+          cancel_triggers_turn_complete: false
         - name: QA
           position: 5
           color: bg-orange-500
@@ -106,10 +111,11 @@ workflows:
           show_in_command_panel: true
           allow_manual_move: true
           agent_profile:
-            agent_name: Claude
-            model: default
-            mode: bypassPermissions
+            agent_name: Copilot
+            model: claude-sonnet-5
+            mode: https://agentclientprotocol.com/protocol/session-modes#agent
           auto_advance_requires_signal: false
+          cancel_triggers_turn_complete: false
         - name: PR
           position: 6
           color: bg-indigo-500
@@ -125,10 +131,11 @@ workflows:
           show_in_command_panel: true
           allow_manual_move: true
           agent_profile:
-            agent_name: Claude
-            model: sonnet
-            mode: bypassPermissions
+            agent_name: Copilot
+            model: claude-sonnet-5
+            mode: https://agentclientprotocol.com/protocol/session-modes#agent
           auto_advance_requires_signal: false
+          cancel_triggers_turn_complete: false
         - name: CI Fixup
           position: 7
           color: bg-amber-500
@@ -144,10 +151,11 @@ workflows:
           show_in_command_panel: true
           allow_manual_move: true
           agent_profile:
-            agent_name: Claude
-            model: sonnet
-            mode: bypassPermissions
+            agent_name: Copilot
+            model: claude-sonnet-5
+            mode: https://agentclientprotocol.com/protocol/session-modes#autopilot
           auto_advance_requires_signal: false
+          cancel_triggers_turn_complete: false
         - name: Human-QA
           position: 8
           color: bg-cyan-500
@@ -161,14 +169,16 @@ workflows:
           show_in_command_panel: false
           allow_manual_move: true
           agent_profile:
-            agent_name: Claude
-            model: sonnet
-            mode: bypassPermissions
+            agent_name: Copilot
+            model: claude-sonnet-5
+            mode: https://agentclientprotocol.com/protocol/session-modes#agent
           auto_advance_requires_signal: false
+          cancel_triggers_turn_complete: false
         - name: Done
           position: 9
           color: bg-green-500
           prompt: |-
+            {{task_prompt}}
             @dw-done
           events:
             on_enter:
@@ -178,10 +188,11 @@ workflows:
           allow_manual_move: true
           auto_archive_after_hours: 72
           agent_profile:
-            agent_name: Claude
-            model: haiku
-            mode: bypassPermissions
+            agent_name: Copilot
+            model: claude-sonnet-5
+            mode: https://agentclientprotocol.com/protocol/session-modes#agent
           auto_advance_requires_signal: false
+          cancel_triggers_turn_complete: false
     - name: PR Review
       steps:
         - name: Backlogs
@@ -192,12 +203,11 @@ workflows:
           show_in_command_panel: false
           allow_manual_move: true
           auto_advance_requires_signal: false
+          cancel_triggers_turn_complete: false
         - name: Review
           position: 1
           color: bg-yellow-500
-          prompt: |-
-            {{task_prompt}}
-            @pr-review
+          prompt: '@pr-review'
           events:
             on_enter:
                 - type: auto_start_agent
@@ -205,10 +215,11 @@ workflows:
           show_in_command_panel: true
           allow_manual_move: true
           agent_profile:
-            agent_name: Claude
-            model: opus[1m]
-            mode: bypassPermissions
+            agent_name: Copilot
+            model: claude-sonnet-5
+            mode: https://agentclientprotocol.com/protocol/session-modes#autopilot
           auto_advance_requires_signal: false
+          cancel_triggers_turn_complete: false
         - name: QA
           position: 2
           color: bg-blue-500
@@ -222,10 +233,11 @@ workflows:
           show_in_command_panel: true
           allow_manual_move: true
           agent_profile:
-            agent_name: Claude
-            model: default
-            mode: bypassPermissions
+            agent_name: Copilot
+            model: claude-sonnet-5
+            mode: https://agentclientprotocol.com/protocol/session-modes#autopilot
           auto_advance_requires_signal: false
+          cancel_triggers_turn_complete: false
         - name: Human-QA
           position: 3
           color: bg-cyan-500
@@ -243,15 +255,15 @@ workflows:
           show_in_command_panel: false
           allow_manual_move: true
           agent_profile:
-            agent_name: Claude
-            model: sonnet
-            mode: bypassPermissions
+            agent_name: Copilot
+            model: claude-sonnet-5
+            mode: https://agentclientprotocol.com/protocol/session-modes#agent
           auto_advance_requires_signal: false
+          cancel_triggers_turn_complete: false
         - name: Done
           position: 4
           color: bg-green-500
-          prompt: |-
-            @dw-done
+          prompt: '@dw-done'
           events:
             on_enter:
                 - type: auto_start_agent
@@ -260,7 +272,8 @@ workflows:
           allow_manual_move: true
           auto_archive_after_hours: 72
           agent_profile:
-            agent_name: Claude
-            model: haiku
-            mode: bypassPermissions
+            agent_name: Copilot
+            model: claude-sonnet-5
+            mode: https://agentclientprotocol.com/protocol/session-modes#agent
           auto_advance_requires_signal: false
+          cancel_triggers_turn_complete: false
