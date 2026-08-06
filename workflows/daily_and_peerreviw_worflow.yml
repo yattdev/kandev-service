@@ -34,7 +34,7 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Copilot
-            model: claude-sonnet-5
+            model: claude-opus-4.8
             mode: https://agentclientprotocol.com/protocol/session-modes#plan
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
@@ -90,7 +90,7 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Copilot
-            model: claude-sonnet-5
+            model: gpt-5.3-codex
             mode: https://agentclientprotocol.com/protocol/session-modes#plan
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
@@ -112,7 +112,7 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Copilot
-            model: claude-sonnet-5
+            model: gpt-5.5
             mode: https://agentclientprotocol.com/protocol/session-modes#agent
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
@@ -216,7 +216,7 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Copilot
-            model: claude-sonnet-5
+            model: gpt-5.3-codex
             mode: https://agentclientprotocol.com/protocol/session-modes#autopilot
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
@@ -234,7 +234,7 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Copilot
-            model: claude-sonnet-5
+            model: claude-opus-4.8
             mode: https://agentclientprotocol.com/protocol/session-modes#autopilot
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
