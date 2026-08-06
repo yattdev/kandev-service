@@ -17,7 +17,7 @@
 node   = "22.13.1"        # host: nvm node v22.13.1
 python = "3.12.3"         # host: system Python 3.12.3 (mise uses standalone builds)
 go     = "1.26.0"         # host: go1.26.0
-java   = "temurin-21.0.10" # host: openjdk 21.0.10
+java   = "temurin-21.0.11" # host: openjdk 21.0.11
 dotnet = "8"              # LTS (not installed on host; sane default)
 # Compiled from source (slower first install — build headers baked into image):
 ruby   = "3.2.3"          # host: ruby 3.2.3
