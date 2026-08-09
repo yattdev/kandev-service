@@ -11,8 +11,8 @@
 # Usage:
 #   bash ~/Code/kandev/kandev-restic-backup.sh
 #
-# Cron (all hosts, 01:30 daily):
-#   30 1 * * * bash ~/Code/kandev/kandev-restic-backup.sh >> ~/logs/kandev-backup.log 2>&1
+# Cron (all hosts, 15:00 daily):
+#   0 15 * * * bash ~/Code/kandev/kandev-restic-backup.sh >> ~/logs/kandev-backup.log 2>&1
 #
 # On mini-desktop the cron runs as root via /etc/cron.d/kandev-backup;
 # on sfl-desktop and yattara-pc it runs as the normal user via crontab.

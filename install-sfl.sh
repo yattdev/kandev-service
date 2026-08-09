@@ -169,10 +169,10 @@ if ! crontab -l 2>/dev/null | grep -q "kandev/update.sh"; then
     echo "[install-sfl] cron: daily update added (03:30)"
 fi
 
-BACKUP_ENTRY="30 1 * * * RESTIC_REPO=$RESTIC_REPO bash $USER_HOME/Code/kandev/kandev-restic-backup.sh >> $USER_HOME/logs/kandev-backup.log 2>&1"
+BACKUP_ENTRY="0 15 * * * RESTIC_REPO=$RESTIC_REPO bash $USER_HOME/Code/kandev/kandev-restic-backup.sh >> $USER_HOME/logs/kandev-backup.log 2>&1"
 if ! crontab -l 2>/dev/null | grep -q "kandev-restic-backup.sh"; then
     ( crontab -l 2>/dev/null; echo "$BACKUP_ENTRY" ) | crontab -
-    echo "[install-sfl] cron: daily restic backup added (01:30)"
+    echo "[install-sfl] cron: daily restic backup added (15:00)"
 fi
 
 # Periodic pull: if this host isn't the active writer and a peer is newer,
@@ -189,7 +189,7 @@ echo "   systemd:  systemctl --user status kandev"
 echo "   direct:   http://localhost:38429"
 echo "   web:      http://localhost  (LAN: http://board.sfl)"
 echo "   litestream: replicating kandev.db → ${MINI_USER}@${MINI_HOST}:litestream-replicas/kandev/sfl/"
-echo "   backup:   daily 01:30 → ~/logs/kandev-backup.log"
+echo "   backup:   daily 15:00 → ~/logs/kandev-backup.log"
 echo "   update:   daily 03:30 → ~/logs/kandev-update.log"
 if [[ "$SSH_KEY" == *"REPLACE"* ]]; then
     echo ""
