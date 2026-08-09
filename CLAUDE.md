@@ -79,7 +79,7 @@ curl -s -o /dev/null -w "HTTP %{http_code}" http://localhost:38429/
 2. Rebuild if Dockerfile.local was modified:  docker compose build
 3. Restart container if compose files changed: docker compose up -d --force-recreate
 4. Run:  bash ~/Code/kandev/test.sh
-5. All 37 tests must be green
+5. All 47 tests must be green
 6. Commit
 7. Only then report the task as complete
 ```
@@ -236,7 +236,7 @@ Use `kandev-ssh-agent.sh` when:
 | `docker-entrypoint-local.sh` | Upstream entrypoint + `|| true` chown fix for :ro mounts |
 | `mise.default.toml` | System-wide mise config (`/etc/mise/config.toml`): global language versions matched to host |
 | `setup-toolchains.sh` | One-time helper: installs the mise language toolchains into the persistent `/data` volume |
-| `test.sh` | 37 automated tests covering image, container, service, identity, SSH, git, CLI tools, toolchains, headless browser |
+| `test.sh` | 47 automated tests covering image, container, service, identity, SSH, git, CLI tools, toolchains (incl. Java JDK), headless browser |
 | `update.sh` | Daily cron: pull upstream → rebuild local → restart if changed |
 | `kandev-ssh-agent.sh` | Helper: start/reuse ssh-agent, load keys, restart kandev with socket forwarding |
 | `install-mini.sh` | One-time mini-desktop setup: sync cron, update cron, `/data/home/Code` mountpoint |

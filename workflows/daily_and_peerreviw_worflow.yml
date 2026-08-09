@@ -184,7 +184,9 @@ workflows:
         - name: Done
           position: 9
           color: bg-green-500
-          prompt: '@dw-done'
+          prompt: |-
+            {{task_prompt}}
+            @dw-done
           events:
             on_enter:
                 - type: auto_start_agent
@@ -221,7 +223,7 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Claude
-            model: sonnet
+            model: opus[1m]
             mode: bypassPermissions
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
@@ -239,7 +241,7 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Claude
-            model: default
+            model: opus[1m]
             mode: bypassPermissions
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
@@ -282,3 +284,4 @@ workflows:
             mode: bypassPermissions
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
+
