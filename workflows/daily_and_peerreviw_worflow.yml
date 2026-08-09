@@ -2,6 +2,13 @@ version: 1
 type: kandev_workflow
 workflows:
     - name: Daily workflow
+      prompt: |-
+        ## Orchestration Rules (always apply)
+
+        - **PR merged/closed → Done.** Check PR state on every resume. If terminal, move the task to the Done step (resolve `workflow_step_id` via discovery, never hardcode). Can't move it? Flag then ask.
+        - **≥2 repos or ≥2 PRs → subtasks.** One subtask per repo/PR; this task orchestrates. Submodule changes always use the subtask blocker flow.
+        - **Own your subtasks.** On every resume, poll open subtasks first: review, answer flags, unblock. Never move parent to Done while a subtask is open. Stuck? Flag then ask.
+        - **Sync across tasks.** Any change affecting parent/sibling/subtasks (API, branch, submodule pointer, scope) → post it on each affected task immediately. Read their latest updates before resuming work.
       steps:
         - name: Backlogs
           position: 0
@@ -177,9 +184,7 @@ workflows:
         - name: Done
           position: 9
           color: bg-green-500
-          prompt: |-
-            {{task_prompt}}
-            @dw-done
+          prompt: '@dw-done'
           events:
             on_enter:
                 - type: auto_start_agent
@@ -215,9 +220,9 @@ workflows:
           show_in_command_panel: true
           allow_manual_move: true
           agent_profile:
-            agent_name: Copilot
-            model: gpt-5.3-codex
-            mode: https://agentclientprotocol.com/protocol/session-modes#autopilot
+            agent_name: Claude
+            model: sonnet
+            mode: bypassPermissions
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
         - name: QA
@@ -233,9 +238,9 @@ workflows:
           show_in_command_panel: true
           allow_manual_move: true
           agent_profile:
-            agent_name: Copilot
-            model: claude-opus-4.8
-            mode: https://agentclientprotocol.com/protocol/session-modes#autopilot
+            agent_name: Claude
+            model: default
+            mode: bypassPermissions
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
         - name: Human-QA
@@ -255,9 +260,9 @@ workflows:
           show_in_command_panel: false
           allow_manual_move: true
           agent_profile:
-            agent_name: Copilot
-            model: claude-sonnet-5
-            mode: https://agentclientprotocol.com/protocol/session-modes#agent
+            agent_name: Claude
+            model: sonnet
+            mode: bypassPermissions
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
         - name: Done
@@ -272,8 +277,8 @@ workflows:
           allow_manual_move: true
           auto_archive_after_hours: 72
           agent_profile:
-            agent_name: Copilot
-            model: claude-sonnet-5
-            mode: https://agentclientprotocol.com/protocol/session-modes#agent
+            agent_name: Claude
+            model: sonnet
+            mode: bypassPermissions
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
