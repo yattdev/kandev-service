@@ -184,9 +184,7 @@ workflows:
         - name: Done
           position: 9
           color: bg-green-500
-          prompt: |-
-            {{task_prompt}}
-            @dw-done
+          prompt: '@dw-done'
           events:
             on_enter:
                 - type: auto_start_agent
