@@ -556,11 +556,22 @@ manual restarts. Example output:
 
 ### Restic (snapshot history)
 
-Daily at 01:30 on each satellite host, `kandev-restic-backup.sh`:
-1. Briefly stops kandev for a consistent SQLite snapshot
-2. Runs `restic backup` → new named snapshot in mini's repo
-3. Prunes old snapshots (keeps 7 daily, 4 weekly, 3 monthly)
-4. Restarts kandev
+Daily at 03:00 on each satellite host, `kandev-restic-backup.sh` (runs with
+**zero downtime** — kandev is never stopped):
+1. Takes a transactionally-consistent hot copy of `kandev.db` via SQLite's
+   online-backup API (`sqlite3 .backup`, run in a throwaway container from the
+   kandev image) → `data/kandev.db.backup-snapshot`
+2. Runs `restic backup` → new named snapshot in mini's repo, **excluding** the
+   live `kandev.db`/`-wal`/`-shm` (which would be torn if copied mid-write) and
+   including the consistent snapshot in their place
+3. Removes the local snapshot file and prunes old repo snapshots (keeps 7 daily,
+   4 weekly, 3 monthly)
+
+> Because kandev is an AI-agent orchestrator, stopping it would kill every
+> in-flight agent session/task. This backup therefore never stops it, and it
+> also no longer aborts on a restic error (a prior `set -e` bug left the
+> container stopped whenever restic failed, e.g. the hub repo running out of
+> disk space).
 
 ```bash
 # View snapshot history (like git log)
@@ -569,6 +580,11 @@ Daily at 01:30 on each satellite host, `kandev-restic-backup.sh`:
 # Restore a specific snapshot
 ~/bin/restic -r sftp:alassane@10.0.0.182:restic-repos/kandev-backup restore SNAPSHOT_ID \
   --target / --include ~/.local/share/kandev/
+# The DB is restored as data/kandev.db.backup-snapshot; put it in place with:
+mv ~/.local/share/kandev/data/kandev.db.backup-snapshot \
+   ~/.local/share/kandev/data/kandev.db
+# (Normal recovery uses Litestream via kandev-start.sh, which already yields a
+#  ready-to-use kandev.db — this restic path is the deep-history fallback.)
 
 # Manual backup now
 bash ~/Code/kandev/kandev-restic-backup.sh
@@ -581,12 +597,12 @@ Restic password file: `~/.config/restic/kandev-backup-password` (same on all hos
 | Host | Cron | What |
 |---|---|---|
 | mini-desktop | `30 3 * * *` (root, `/etc/cron.d/kandev-update`) | Image update |
-| mini-desktop | `30 1 * * *` (root, `/etc/cron.d/kandev-backup`) | Restic snapshot |
+| mini-desktop | `0 3 * * *` (root, `/etc/cron.d/kandev-backup`) | Restic snapshot |
 | sfl-desktop | `30 3 * * *` (user crontab) | Image update |
-| sfl-desktop | `30 1 * * *` (user crontab) | Restic snapshot |
+| sfl-desktop | `0 3 * * *` (user crontab) | Restic snapshot |
 | sfl-desktop | `0 6,13,18 * * *` (user crontab) | **Pull latest** (`kandev-pull.sh`) |
 | yattara-pc | `30 3 * * *` (user crontab) | Image update |
-| yattara-pc | `30 1 * * *` (user crontab) | Restic snapshot |
+| yattara-pc | `0 3 * * *` (user crontab) | Restic snapshot |
 | yattara-pc | `0 6,13,18 * * *` (user crontab) | **Pull latest** (`kandev-pull.sh`) |
 
 Litestream replication is continuous (always-on, no cron needed). The periodic pull

@@ -138,18 +138,18 @@ chmod 644 "$UPDATE_CRON_FILE"
 chown root:root "$UPDATE_CRON_FILE"
 echo "Installed update cron: $UPDATE_CRON_FILE (daily 03:30)"
 
-# ── Restic backup cron (daily 01:30) ─────────────────────────────────────────
+# ── Restic backup cron (daily 03:00) ─────────────────────────────────────────
 install -m 755 -o root -g root "$BACKUP_SCRIPT_SRC" "$BACKUP_SCRIPT_DST"
 
 cat > "$BACKUP_CRON_FILE" <<EOF
 # kandev daily restic backup — snapshot history for kandev data
 SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-30 1 * * * root USER_NAME=$USER_NAME USER_HOME=$USER_HOME RESTIC=$RESTIC RESTIC_REPO=$RESTIC_REPO RESTIC_PASSWORD_FILE=$RESTIC_PASSWORD_FILE $BACKUP_SCRIPT_DST
+0 3 * * * root USER_NAME=$USER_NAME USER_HOME=$USER_HOME RESTIC=$RESTIC RESTIC_REPO=$RESTIC_REPO RESTIC_PASSWORD_FILE=$RESTIC_PASSWORD_FILE $BACKUP_SCRIPT_DST
 EOF
 chmod 644 "$BACKUP_CRON_FILE"
 chown root:root "$BACKUP_CRON_FILE"
-echo "Installed backup cron: $BACKUP_CRON_FILE (daily 01:30)"
+echo "Installed backup cron: $BACKUP_CRON_FILE (daily 03:00)"
 
 # Reload cron
 if command -v systemctl >/dev/null; then
@@ -167,7 +167,7 @@ echo "   litestream hub : $REPLICA_DIR"
 echo "   restic repo    : $RESTIC_REPO"
 echo "   restic password: $RESTIC_PASSWORD_FILE"
 echo "   update cron    : daily 03:30 → $USER_HOME/logs/kandev-update.log"
-echo "   backup cron    : daily 01:30 → $USER_HOME/logs/kandev-backup.log"
+echo "   backup cron    : daily 03:00 → $USER_HOME/logs/kandev-backup.log"
 echo ""
 echo "Next steps:"
 echo "  1. Copy restic password to sfl-desktop + yattara-pc:"

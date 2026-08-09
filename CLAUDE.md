@@ -79,7 +79,7 @@ curl -s -o /dev/null -w "HTTP %{http_code}" http://localhost:38429/
 2. Rebuild if Dockerfile.local was modified:  docker compose build
 3. Restart container if compose files changed: docker compose up -d --force-recreate
 4. Run:  bash ~/Code/kandev/test.sh
-5. All 37 tests must be green
+5. All 48 tests must be green
 6. Commit
 7. Only then report the task as complete
 ```
@@ -232,11 +232,11 @@ Use `kandev-ssh-agent.sh` when:
 | `docker-compose.yml` | Base service: upstream image, restart policy, `network_mode: host`, core env vars and volumes |
 | `docker-compose.override.yml` | Local build, `USER`/`LOGNAME` env, SSH/git/gh/glab identity mounts |
 | `docker-compose.ssh-agent.yml` | Optional SSH agent socket overlay |
-| `Dockerfile.local` | Extends upstream: adds SSH, gh, glab, Docker CLI, build toolchain, mise, Chrome + chromedriver; patches git and entrypoint |
+| `Dockerfile.local` | Extends upstream: adds SSH, gh, glab, Docker CLI, build toolchain, mise, Chrome + chromedriver, sqlite3 (for hot DB backup); patches git and entrypoint |
 | `docker-entrypoint-local.sh` | Upstream entrypoint + `|| true` chown fix for :ro mounts |
 | `mise.default.toml` | System-wide mise config (`/etc/mise/config.toml`): global language versions matched to host |
 | `setup-toolchains.sh` | One-time helper: installs the mise language toolchains into the persistent `/data` volume |
-| `test.sh` | 37 automated tests covering image, container, service, identity, SSH, git, CLI tools, toolchains, headless browser |
+| `test.sh` | 48 automated tests covering image, container, service, identity, SSH, git, CLI tools, toolchains (incl. Java JDK), sqlite3, headless browser |
 | `update.sh` | Daily cron: pull upstream → rebuild local → restart if changed |
 | `kandev-ssh-agent.sh` | Helper: start/reuse ssh-agent, load keys, restart kandev with socket forwarding |
 | `install-mini.sh` | One-time mini-desktop setup: sync cron, update cron, `/data/home/Code` mountpoint |

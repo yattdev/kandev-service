@@ -256,6 +256,47 @@ else
   fail "mise does not list configured toolchains (config not parsed/trusted)"
 fi
 
+# Java (JDK) — pinned in the baked system config so every image guarantees it.
+if docker run --rm kandev-local:latest sh -c 'grep -q "^java" /etc/mise/config.toml'; then
+  ok "/etc/mise/config.toml pins a java (JDK) version"
+else
+  fail "/etc/mise/config.toml does not pin a java version"
+fi
+
+# Java installed into the persistent volume (listed by mise in the container).
+if docker exec -u kandev kandev mise ls 2>/dev/null | grep -qi '^java'; then
+  ok "mise reports java toolchain installed in volume"
+else
+  fail "java toolchain not installed in volume — run: bash setup-toolchains.sh java"
+fi
+
+# Java actually RUNS as user kandev the way agents invoke it: a non-login
+# `bash -c` shell. Guards against the shim/PATH regression where `java` resolves
+# in an interactive/login shell but not in the non-interactive shells agents use.
+if docker exec -u kandev kandev java -version >/dev/null 2>&1; then
+  JAVA_VER="$(docker exec -u kandev kandev java -version 2>&1 | head -1)"
+  ok "java runs in container ($JAVA_VER)"
+else
+  fail "java installed but not runnable in container (shim missing / not on PATH)"
+fi
+
+# javac present too — proves a full JDK (compiler), not just a JRE.
+if docker exec -u kandev kandev javac -version >/dev/null 2>&1; then
+  ok "javac (JDK compiler) runs in container"
+else
+  fail "javac not runnable — java runtime present but not a full JDK"
+fi
+
+# sqlite3 in the image — required for the NO-DOWNTIME restic backup, which uses
+# `sqlite3 .backup` (SQLite online-backup API) to snapshot kandev.db live rather
+# than stopping the container. Without it kandev-restic-backup.sh has no way to
+# take a consistent hot copy.
+if docker run --rm kandev-local:latest which sqlite3 &>/dev/null; then
+  ok "sqlite3 present in image (enables hot, no-stop DB backup)"
+else
+  fail "sqlite3 missing from image — hot backup would fall back to a torn live-DB copy"
+fi
+
 # ── 9. Headless browser (Chrome) ──────────────────────────────────────────────
 section "9. Headless browser (Chrome)"
 
