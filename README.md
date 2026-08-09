@@ -556,7 +556,7 @@ manual restarts. Example output:
 
 ### Restic (snapshot history)
 
-Daily at 15:00 on each satellite host, `kandev-restic-backup.sh`:
+Daily at 03:00 on each satellite host, `kandev-restic-backup.sh`:
 1. Briefly stops kandev for a consistent SQLite snapshot
 2. Runs `restic backup` → new named snapshot in mini's repo
 3. Prunes old snapshots (keeps 7 daily, 4 weekly, 3 monthly)
@@ -581,12 +581,12 @@ Restic password file: `~/.config/restic/kandev-backup-password` (same on all hos
 | Host | Cron | What |
 |---|---|---|
 | mini-desktop | `30 3 * * *` (root, `/etc/cron.d/kandev-update`) | Image update |
-| mini-desktop | `0 15 * * *` (root, `/etc/cron.d/kandev-backup`) | Restic snapshot |
+| mini-desktop | `0 3 * * *` (root, `/etc/cron.d/kandev-backup`) | Restic snapshot |
 | sfl-desktop | `30 3 * * *` (user crontab) | Image update |
-| sfl-desktop | `0 15 * * *` (user crontab) | Restic snapshot |
+| sfl-desktop | `0 3 * * *` (user crontab) | Restic snapshot |
 | sfl-desktop | `0 6,13,18 * * *` (user crontab) | **Pull latest** (`kandev-pull.sh`) |
 | yattara-pc | `30 3 * * *` (user crontab) | Image update |
-| yattara-pc | `0 15 * * *` (user crontab) | Restic snapshot |
+| yattara-pc | `0 3 * * *` (user crontab) | Restic snapshot |
 | yattara-pc | `0 6,13,18 * * *` (user crontab) | **Pull latest** (`kandev-pull.sh`) |
 
 Litestream replication is continuous (always-on, no cron needed). The periodic pull

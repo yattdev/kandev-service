@@ -224,10 +224,10 @@ if ! crontab -l 2>/dev/null | grep -q "kandev/update.sh"; then
 fi
 
 if [[ -f "$RESTIC_PASSWORD_FILE" ]]; then
-    BACKUP_ENTRY="0 15 * * * RESTIC_REPO=$RESTIC_REPO bash $USER_HOME/Code/kandev/kandev-restic-backup.sh >> $USER_HOME/logs/kandev-backup.log 2>&1"
+    BACKUP_ENTRY="0 3 * * * RESTIC_REPO=$RESTIC_REPO bash $USER_HOME/Code/kandev/kandev-restic-backup.sh >> $USER_HOME/logs/kandev-backup.log 2>&1"
     if ! crontab -l 2>/dev/null | grep -q "kandev-restic-backup.sh"; then
         ( crontab -l 2>/dev/null; echo "$BACKUP_ENTRY" ) | crontab -
-        echo "[install-yattara] cron: daily restic backup added (15:00)"
+        echo "[install-yattara] cron: daily restic backup added (03:00)"
     fi
 fi
 
@@ -245,5 +245,5 @@ echo "   direct:    http://localhost:38429"
 echo "   web:       http://board.local  (127.0.0.1 via /etc/hosts)"
 echo "   systemd:   systemctl --user status kandev"
 echo "   litestream: replicating kandev.db → ${MINI_USER}@${MINI_HOST}:litestream-replicas/kandev/yattara/"
-echo "   backup:    daily 15:00 → ~/logs/kandev-backup.log"
+echo "   backup:    daily 03:00 → ~/logs/kandev-backup.log"
 echo "   update:    daily 03:30 → ~/logs/kandev-update.log"
