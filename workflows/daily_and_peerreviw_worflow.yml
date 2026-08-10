@@ -34,6 +34,7 @@ workflows:
                 - type: auto_start_agent
             on_turn_complete:
                 - type: disable_plan_mode
+                - type: move_to_next
             on_exit:
                 - type: disable_plan_mode
           is_start_step: false
@@ -42,8 +43,8 @@ workflows:
           agent_profile:
             agent_name: Claude
             model: opus[1m]
-            mode: bypassPermissions
-          auto_advance_requires_signal: false
+            mode: plan
+          auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
         - name: Todo
           position: 2
@@ -78,7 +79,7 @@ workflows:
             agent_name: Claude
             model: sonnet
             mode: bypassPermissions
-          auto_advance_requires_signal: false
+          auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
         - name: Review
           position: 4
@@ -99,7 +100,7 @@ workflows:
             agent_name: Claude
             model: opus[1m]
             mode: bypassPermissions
-          auto_advance_requires_signal: false
+          auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
         - name: QA
           position: 5
@@ -121,7 +122,7 @@ workflows:
             agent_name: Claude
             model: opus[1m]
             mode: bypassPermissions
-          auto_advance_requires_signal: false
+          auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
         - name: PR
           position: 6
@@ -141,7 +142,7 @@ workflows:
             agent_name: Claude
             model: sonnet
             mode: bypassPermissions
-          auto_advance_requires_signal: false
+          auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
         - name: CI Fixup
           position: 7
@@ -161,7 +162,7 @@ workflows:
             agent_name: Claude
             model: sonnet
             mode: bypassPermissions
-          auto_advance_requires_signal: false
+          auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
         - name: Human-QA
           position: 8
