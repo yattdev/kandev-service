@@ -10,3 +10,6 @@ host.env
 .DS_Store
 *.swp
 *~
+
+# ── Local scratch / notes (not for the public repo) ───────────────────────────
+file.txt
