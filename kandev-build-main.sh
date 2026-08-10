@@ -13,7 +13,7 @@
 # Usage:
 #   bash ~/Code/kandev/kandev-build-main.sh                # build+run main
 #   bash ~/Code/kandev/kandev-build-main.sh --ref <branch>  # build a specific branch/tag/commit from upstream (kdlbs/kandev)
-#   bash ~/Code/kandev/kandev-build-main.sh --ref <owner>:<branch>  # build a branch from a fork, e.g. yattdev:my-branch
+#   bash ~/Code/kandev/kandev-build-main.sh --ref <owner>:<branch>  # build a branch from a fork, e.g. myorg:my-branch
 #   bash ~/Code/kandev/kandev-build-main.sh --no-test       # skip the test.sh run at the end
 #   bash ~/Code/kandev/kandev-build-main.sh --revert        # restore the last release-based backup
 set -euo pipefail
@@ -37,7 +37,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Support "<owner>:<branch>" as a shorthand for building a branch that only
-# exists on a fork (e.g. --ref yattdev:feature/foo). Plain branch/tag/commit
+# exists on a fork (e.g. --ref myorg:feature/foo). Plain branch/tag/commit
 # values (the common case) keep cloning from upstream kdlbs/kandev.
 if [[ "$KANDEV_REF" == *:* ]]; then
     KANDEV_REPO_OWNER="${KANDEV_REF%%:*}"

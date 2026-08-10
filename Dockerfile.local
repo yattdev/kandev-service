@@ -79,7 +79,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Docker socket group ────────────────────────────────────────────────────────
-# GID 984 matches the host's docker group (sfl-desktop: getent group docker).
+# GID 984 matches the host's docker group (office-desktop: getent group docker).
 # kandev is added to this group so it can access the mounted /var/run/docker.sock.
 # DOCKER_GID can be overridden at build time if the host GID differs.
 ARG DOCKER_GID=984
@@ -277,7 +277,7 @@ ENV PATH="/data/home/.local/share/mise/shims:${PATH}"
 
 # ── Git: trust all directories ────────────────────────────────────────────────
 # Prevents "dubious ownership" errors for repos owned by root (docker leftovers)
-# or repos where the host path (/home/ayattara/...) differs from the container
+# or repos where the host path (/home/alice/...) differs from the container
 # path (/data/home/...) in the global gitconfig safe.directory entries.
 RUN git config --system safe.directory '*'
 

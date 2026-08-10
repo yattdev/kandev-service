@@ -1,37 +1,37 @@
 #!/usr/bin/env bash
-# kandev-start-mini.sh — Start kandev on mini-desktop (hub role).
+# kandev-start-hub.sh — Start kandev on home-server (hub role).
 #
-# mini-desktop is the central replica hub — it STORES Litestream WAL segments
-# pushed by sfl-desktop and yattara-pc, each into ITS OWN dedicated subdir
-# (never a shared path — see REPLICA_ROOT layout below). mini does NOT run
+# home-server is the central replica hub — it STORES Litestream WAL segments
+# pushed by office-desktop and laptop, each into ITS OWN dedicated subdir
+# (never a shared path — see REPLICA_ROOT layout below). home does NOT run
 # Litestream as a push sidecar itself.
 #
 # On startup, this script picks whichever satellite host's replica has the
 # MOST RECENT WAL activity (freshest LTX segment mtime) and restores from
 # THAT one — this is the authoritative "who edited most recently" signal,
-# entirely local to mini, no cross-host reachability needed. It then starts
+# entirely local to home, no cross-host reachability needed. It then starts
 # kandev standalone (no Litestream sidecar).
 #
 # Replica layout:
-#   ~/litestream-replicas/kandev/sfl/       — pushed by sfl-desktop
-#   ~/litestream-replicas/kandev/yattara/   — pushed by yattara-pc
+#   ~/litestream-replicas/kandev/office/       — pushed by office-desktop
+#   ~/litestream-replicas/kandev/laptop/   — pushed by laptop
 #   ~/litestream-replicas/kandev/active.lock.d/  — active-writer lock (see kandev-start.sh)
 #
 # Flow:
-#   1. Compare freshness of kandev/sfl/ltx vs kandev/yattara/ltx
+#   1. Compare freshness of kandev/office/ltx vs kandev/laptop/ltx
 #   2. Restore from the freshest → ~/.local/share/kandev/data/kandev.db
 #   3. docker compose -p kandev up -d
 #
 # Usage:
-#   bash ~/Code/kandev/kandev-start-mini.sh
-#   bash ~/Code/kandev/kandev-start-mini.sh --no-sync   # skip restore
-#   bash ~/Code/kandev/kandev-start-mini.sh --recreate  # force-recreate the container
+#   bash ~/Code/kandev/kandev-start-hub.sh
+#   bash ~/Code/kandev/kandev-start-hub.sh --no-sync   # skip restore
+#   bash ~/Code/kandev/kandev-start-hub.sh --recreate  # force-recreate the container
 #
 # Note on --recreate: `docker compose up -d` is idempotent — it won't touch an
 # already-running container. --recreate adds `--force-recreate` so systemd
 # ExecReload (`systemctl --user reload kandev`) actually restarts it.
 #
-# Called by: systemd kandev.service on mini-desktop.
+# Called by: systemd kandev.service on home-server.
 set -euo pipefail
 
 COMPOSE_DIR="${COMPOSE_DIR:-$HOME/Code/kandev}"
@@ -49,7 +49,7 @@ mkdir -p "$(dirname "$LOG")" "$KANDEV_DATA"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG"; }
 
-log "--- kandev-start-mini ---"
+log "--- kandev-start-hub ---"
 
 # Return the newest LTX segment mtime (epoch) under a given host's replica dir,
 # or 0 if the dir is missing/empty.
@@ -88,7 +88,7 @@ if [[ "$SKIP_SYNC" != "--no-sync" ]]; then
     fi
 
     # Write a temporary litestream config pointing to the chosen replica dir
-    LITESTREAM_TMP_CFG="/tmp/litestream-mini-$$.yml"
+    LITESTREAM_TMP_CFG="/tmp/litestream-home-$$.yml"
     cat > "$LITESTREAM_TMP_CFG" <<EOF
 dbs:
   - path: /data/kandev.db
@@ -112,7 +112,7 @@ EOF
         -v "${LITESTREAM_TMP_CFG}:/etc/litestream/litestream.yml:ro" \
         litestream/litestream:latest \
         restore -config /etc/litestream/litestream.yml -if-replica-exists -force /data/kandev.db >> "$LOG" 2>&1; then
-      log "Restore complete — mini serving latest synced data (from '$BEST_HOST')"
+      log "Restore complete — home serving latest synced data (from '$BEST_HOST')"
     else
       log "WARNING: local restore failed — keeping existing kandev.db"
       # Rollback if restore left a smaller (partial) file

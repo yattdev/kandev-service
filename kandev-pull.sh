@@ -2,8 +2,8 @@
 # kandev-pull.sh — Manually check for newer kandev data and pull it if behind.
 #
 # What it does:
-#   1. Asks mini-desktop which host's Litestream replica is freshest, and how
-#      fresh THIS host's own replica is (all mtimes come from mini's filesystem,
+#   1. Asks home-server which host's Litestream replica is freshest, and how
+#      fresh THIS host's own replica is (all mtimes come from home's filesystem,
 #      so they're directly comparable — no local-vs-hub clock skew).
 #   2. Reads who currently holds the active-writer lock.
 #   3. Decides:
@@ -25,9 +25,16 @@
 # this host is the active writer or already current, so it won't disturb work.
 set -euo pipefail
 
+# ── Machine-specific overrides ───────────────────────────────────────────────
+# Load real hosts/users/IPs for THIS machine from a gitignored host.env so this
+# public repo stays free of private LAN details. See host.env.example. The
+# ${VAR:-default} placeholders below are only used when host.env is absent.
+_KANDEV_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+[ -f "$_KANDEV_DIR/host.env" ] && . "$_KANDEV_DIR/host.env"
+
 COMPOSE_DIR="${COMPOSE_DIR:-$HOME/Code/kandev}"
-MINI_HOST="${MINI_HOST:-10.0.0.182}"
-MINI_USER="${MINI_USER:-alassane}"
+MINI_HOST="${MINI_HOST:-10.0.0.20}"
+MINI_USER="${MINI_USER:-bob}"
 REPLICA_ROOT="${REPLICA_ROOT:-/home/${MINI_USER}/litestream-replicas/kandev}"
 HOST_ID_FILE="${HOST_ID_FILE:-$HOME/.kandev-host-id}"
 START_SCRIPT="${START_SCRIPT:-$COMPOSE_DIR/kandev-start.sh}"
@@ -80,13 +87,13 @@ restart_and_pull() {
 
 # ── Reachability ─────────────────────────────────────────────────────────────
 if ! ping -c1 -W3 "$MINI_HOST" >/dev/null 2>&1; then
-  log "mini-desktop ($MINI_HOST) unreachable — cannot check for newer data."
+  log "home-server ($MINI_HOST) unreachable — cannot check for newer data."
   log "Ensuring kandev is running with local data..."
   start_kandev
   exit 0
 fi
 
-# ── Query mini: freshest replica + own freshness + lock owner ────────────────
+# ── Query home: freshest replica + own freshness + lock owner ────────────────
 REMOTE_OUT="$(ssh -o ConnectTimeout=8 -o BatchMode=yes "${MINI_USER}@${MINI_HOST}" \
   bash -s -- "$REPLICA_ROOT" "$HOST_ID" 2>>"$LOG" <<'REMOTE'
 set -u

@@ -50,13 +50,13 @@ services:
       # With network_mode: host the container shares the host's network stack.
       # Setting this to 0.0.0.0 tells kandev to accept connections on all
       # interfaces (LAN, loopback), making the UI reachable from other machines
-      # on the same network (e.g. http://board.home, http://board.sfl).
+      # on the same network (e.g. http://board.home, http://board.office).
       - HOSTNAME=0.0.0.0
 
       # Tell the React frontend which port the kandev backend API/WebSocket is on.
       # Without this, the app falls back to ws://localhost:38429 which only works
       # locally. With this set, the app builds ws://<hostname>:38429/ws, so the
-      # WebSocket connects correctly from any remote host (e.g. board.sfl, board.home).
+      # WebSocket connects correctly from any remote host (e.g. board.office, board.home).
       - KANDEV_API_PORT=38429
 
       # Run Node.js (and kandev) in production mode.

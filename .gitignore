@@ -2,6 +2,10 @@
 # Never commit .env — it contains API tokens.
 .env
 
+# Never commit host.env — it holds this machine's real hosts/users/IPs.
+# Share host.env.example instead. See host.env.example for the format.
+host.env
+
 # ── Editor / OS noise ─────────────────────────────────────────────────────────
 .DS_Store
 *.swp

@@ -10,10 +10,19 @@ that share a common workspace:
 
 | Host | Role |
 |---|---|
-| **sfl-desktop** (`192.168.50.211`, user `ayattara`) | Powerful workstation, used during office hours via SFL VPN |
-| **mini-desktop** (`10.0.0.182`, user `alassane`) | Always-on home machine, auto-syncs from sfl every 10 min |
+| **office-desktop** (`192.168.1.10`, user `alice`) | Powerful workstation, used during office hours via Corp VPN |
+| **home-server** (`10.0.0.20`, user `bob`) | Always-on home machine, auto-syncs from office every 10 min |
 
-The kandev UI is reachable at `http://board.sfl` and `http://board.home`.
+The kandev UI is reachable at `http://board.office` and `http://board.home`.
+
+> **Placeholders — this is a sanitized public repo.** All hostnames, usernames, and
+> LAN IPs in the committed files (`office-desktop`/`alice`, `home-server`/`bob`,
+> `laptop`/`carol`, `10.0.0.20`, `192.168.1.10`, `example-corp`, `Code/work-project`, …)
+> are **generic examples**. The real values for THIS machine live in a git-ignored
+> **`host.env`** at the repo root, which every script sources (falling back to the
+> placeholders when it is absent). **Read `host.env` first** — its header maps each
+> placeholder to the real host/user/IP so you don't act on the example values. If
+> `host.env` is missing, copy it from `host.env.example`.
 
 ---
 
@@ -26,7 +35,7 @@ cd ~/Code/kandev
 docker compose build           # uses docker-compose.override.yml automatically
 ```
 
-> **Network (sfl-desktop):** A transparent corporate proxy intercepts connections.
+> **Network (office-desktop):** A transparent corporate proxy intercepts connections.
 > `build.network: host` is already set in `docker-compose.override.yml` to work around it.
 > If you add new `RUN` steps with `curl` or `apt-get`, they inherit this setting automatically.
 
@@ -132,7 +141,7 @@ be re-verified. `test.sh` section 1 checks this automatically.
 
 | | UID | GID |
 |---|---|---|
-| Host user `ayattara` | 1000 | 1000 |
+| Host user `alice` | 1000 | 1000 |
 | Container user `kandev` | 1000 | 999 |
 
 UIDs match → all bind-mounted files (owned by UID 1000 on the host) are
@@ -148,8 +157,8 @@ The container's home is `/data/home`, not `/home/kandev`. This is intentional:
 
 ### git `safe.directory = *`
 
-The host `~/.gitconfig` contains `safe.directory = /home/ayattara/Code/scsl` (an absolute
-host path). Inside the container the same repo is at `/data/home/Code/scsl`. Additionally,
+The host `~/.gitconfig` contains `safe.directory = /home/alice/Code/work-project` (an absolute
+host path). Inside the container the same repo is at `/data/home/Code/work-project`. Additionally,
 docker-leftover root-owned files under `~/Code/` trigger git ownership errors.
 `git config --system safe.directory '*'` in `/etc/gitconfig` bypasses all of this.
 
@@ -209,7 +218,7 @@ in `~/.cache/ms-playwright`, which is persistent because `HOME=/data/home`
 `test.sh` section 9 covers all of this, including a real headless render as user
 `kandev` with **no** extra flags — that test is what proves the wrapper is in place.
 
-### Transparent proxy (sfl-desktop)
+### Transparent proxy (office-desktop)
 
 The corporate network uses a transparent proxy that intercepts HTTP/HTTPS and injects
 its own TLS certificate. This causes `apt-get` and `curl` to fail during Docker builds
@@ -238,11 +247,13 @@ Use `kandev-ssh-agent.sh` when:
 | `setup-toolchains.sh` | One-time helper: installs the mise language toolchains into the persistent `/data` volume |
 | `test.sh` | 48 automated tests covering image, container, service, identity, SSH, git, CLI tools, toolchains (incl. Java JDK), sqlite3, headless browser |
 | `update.sh` | Daily cron: pull upstream → rebuild local → restart if changed |
+| `host.env` | **Git-ignored.** Real hosts/users/IPs for this machine + placeholder→real map (agent reference). Sourced by every script. |
+| `host.env.example` | Committed template for `host.env`; copy and fill in per host. |
 | `kandev-ssh-agent.sh` | Helper: start/reuse ssh-agent, load keys, restart kandev with socket forwarding |
-| `install-mini.sh` | One-time mini-desktop setup: sync cron, update cron, `/data/home/Code` mountpoint |
-| `install-sfl.sh` | One-time sfl-desktop setup: systemd unit, UFW rules, port 80 → 38429 NAT |
-| `sync-from-sfl.sh` | Rsync sfl → mini (run by root cron on mini-desktop every 10 min) |
-| `sync-to-sfl.sh` | Rsync mini → sfl (run manually before switching to office) |
+| `install-hub.sh` | One-time home-server setup: sync cron, update cron, `/data/home/Code` mountpoint |
+| `install-office.sh` | One-time office-desktop setup: systemd unit, UFW rules, port 80 → 38429 NAT |
+| `sync-from-office.sh` | Rsync office → home (run by root cron on home-server every 10 min) |
+| `sync-to-office.sh` | Rsync home → office (run manually before switching to office) |
 
 ---
 
@@ -254,10 +265,10 @@ Use `kandev-ssh-agent.sh` when:
 | `apt-get` fails with `NOSPLIT` during build | Transparent proxy, missing `network: host` | Ensure `build.network: host` in `docker-compose.override.yml` |
 | `git` reports "dubious ownership" inside container | `safe.directory` not set in system config | Rebuild image; check `git config --system safe.directory` = `*` |
 | `gh`/`glab` not authenticated after rebuild | Config mount missing or wrong path | Check `~/.config/gh` and `~/.config/glab-cli` are mounted rw |
-| `$USER` = `kandev` instead of `ayattara` | `USER` env missing from override | Check `docker-compose.override.yml` `environment:` block |
+| `$USER` = `kandev` instead of `alice` | `USER` env missing from override | Check `docker-compose.override.yml` `environment:` block |
 | SSH uses wrong key for a host | `~/.ssh` not mounted or `HOME` wrong | Verify mount and `HOME=/data/home` |
-| `http://board.sfl` unreachable | iptables NAT rules missing after reboot | Re-run `install-sfl.sh` or apply rules via privileged container (see README) |
-| `http://board.sfl` unreachable after our changes | Container crash-loop | Check `docker inspect kandev --format '{{.RestartCount}}'`; run `test.sh` |
-| `http://board.sfl` (or `board.home`, or literally any `http://` site) shows the **wrong data** or a stale/empty "Default Workspace" **when browsed from yattara-pc** | `install-yattara.sh` set an **unscoped** iptables `OUTPUT` NAT redirect — `-A OUTPUT -p tcp --dport 80 -j REDIRECT --to-port 38429` has no `-d` filter, so it matches port-80 packets to **any destination**, silently rewriting them to yattara-pc's own local kandev (127.0.0.1:38429) instead of letting them leave the host. Confirmed by stopping yattara-pc's local kandev container: `board.sfl:80` then failed outright (connection refused) instead of reaching sfl-desktop — proving the request never left the machine. (Earlier guess blaming the SFL corporate VPN was wrong — ruled out once the local-redirect rule was found.) | Fixed in `install-yattara.sh`: the OUTPUT rule is now scoped with `-d 127.0.0.1/32` so it only catches the host's own loopback traffic (browser on yattara-pc → `board.local`), and the old unscoped rule is actively removed (live + persisted in `/etc/ufw/before.rules`). Re-run `bash ~/Code/kandev/install-yattara.sh` (needs sudo) to apply after pulling this fix. |
-| **mini-desktop only:** kandev container silently mounts `/root/...` (`~/.ssh`, `~/.gitconfig`, `~/.local/share/kandev`) instead of `/home/alassane/...` after a nightly cron rebuild — DB, `master.key`, and toolchains end up on the wrong path, invisible to any manual `docker compose` command run as `alassane` | `/etc/cron.d/kandev-update` runs `update.sh` **as root** (by design, for privileged ops), passing `USER_NAME=alassane USER_HOME=/home/alassane`. `update.sh` used `$USER_HOME` for its own `cd`/log paths but never did `export HOME="$USER_HOME"` — so `docker compose`'s own `${HOME}` substitution in `docker-compose.override.yml` independently resolved to root's real `$HOME=/root`, diverging silently. Confirmed via `~/logs/kandev-update.log`: the 2026-07-21 03:30 cron run flipped the mount; live DB + `master.key` were found only under `/root/.local/share/kandev/data/` (different `master.key` hash than alassane's stale copy — the two data trees are not interchangeable, since `master.key` decrypts secrets stored inside the otherwise-plain SQLite `kandev.db`) | Fixed in `update.sh`: added `export HOME="$USER_HOME"` right after computing `USER_HOME`, on all three hosts, so `${HOME}`-based compose mounts always resolve consistently regardless of which user/cron context invokes the script. If this recurs: compare `docker inspect kandev --format '{{range .Mounts}}{{.Source}}{{println}}{{end}}'` against the expected user's home; if wrong, back up the current (possibly stale) target path, `docker exec kandev tar -C /data/data -cf - . \| tar -C <correct-path>/data -xf -` to migrate the live DB/key/backups out of the container before recreating it as the correct user. **`/usr/local/sbin/kandev-update.sh`** (the actual root-cron target on mini-desktop) is a **static copy** made by `install-mini.sh` — it does NOT auto-update when `~/Code/kandev/update.sh` changes. Re-run `sudo bash ~/Code/kandev/install-mini.sh` on mini-desktop to refresh it after any `update.sh` change. |
-| **yattara-pc:** `./update.sh` pulls a new upstream image, container crash-loops forever, `board.sfl`/`localhost:38429` unreachable; `docker logs kandev` shows `Failed to initialize repositories ... no such column: agent_execution_id` during the `task_sessions` migration | This host's live `kandev.db` had a divergent schema history (recorded as a non-release version like `f95d061d-dirty`, from an earlier dev/CI build): `agent_execution_id`/`container_id` had already been dropped from `task_sessions`, but the older `workflow_step_id` column was still present. Upstream's `migrateSessionsRemoveWorkflowStepID` migration (apps/backend/internal/task/repository/sqlite/base_migrations.go) is gated only on `workflow_step_id` being present, and unconditionally `SELECT`s `agent_execution_id, container_id` when rebuilding the table — it assumes those columns are always still there at that point, which isn't true for this DB's history. `update.sh` also had no post-restart health check, so the outage was silent. | One-time DB fix (safe/idempotent, matches upstream's final schema either way): `ALTER TABLE task_sessions ADD COLUMN agent_execution_id TEXT NOT NULL DEFAULT ''; ALTER TABLE task_sessions ADD COLUMN container_id TEXT NOT NULL DEFAULT '';` on the stopped container's `kandev.db`, then restart — lets the migration chain run to completion and drop the columns again correctly. **Permanent fix:** `update.sh` now (1) tags the running image as `<tag>-previous` before rebuilding, as a rollback safety net, and (2) polls `http://localhost:38429/` for HTTP 200 after `--force-recreate`; on failure it logs the crash logs, auto-rolls back to the `-previous` image, re-checks health, and exits non-zero either way so cron surfaces the failure instead of it going unnoticed. |
+| `http://board.office` unreachable | iptables NAT rules missing after reboot | Re-run `install-office.sh` or apply rules via privileged container (see README) |
+| `http://board.office` unreachable after our changes | Container crash-loop | Check `docker inspect kandev --format '{{.RestartCount}}'`; run `test.sh` |
+| `http://board.office` (or `board.home`, or literally any `http://` site) shows the **wrong data** or a stale/empty "Default Workspace" **when browsed from laptop** | `install-laptop.sh` set an **unscoped** iptables `OUTPUT` NAT redirect — `-A OUTPUT -p tcp --dport 80 -j REDIRECT --to-port 38429` has no `-d` filter, so it matches port-80 packets to **any destination**, silently rewriting them to laptop's own local kandev (127.0.0.1:38429) instead of letting them leave the host. Confirmed by stopping laptop's local kandev container: `board.office:80` then failed outright (connection refused) instead of reaching office-desktop — proving the request never left the machine. (Earlier guess blaming the Corp corporate VPN was wrong — ruled out once the local-redirect rule was found.) | Fixed in `install-laptop.sh`: the OUTPUT rule is now scoped with `-d 127.0.0.1/32` so it only catches the host's own loopback traffic (browser on laptop → `board.local`), and the old unscoped rule is actively removed (live + persisted in `/etc/ufw/before.rules`). Re-run `bash ~/Code/kandev/install-laptop.sh` (needs sudo) to apply after pulling this fix. |
+| **home-server only:** kandev container silently mounts `/root/...` (`~/.ssh`, `~/.gitconfig`, `~/.local/share/kandev`) instead of `/home/bob/...` after a nightly cron rebuild — DB, `master.key`, and toolchains end up on the wrong path, invisible to any manual `docker compose` command run as `bob` | `/etc/cron.d/kandev-update` runs `update.sh` **as root** (by design, for privileged ops), passing `USER_NAME=bob USER_HOME=/home/bob`. `update.sh` used `$USER_HOME` for its own `cd`/log paths but never did `export HOME="$USER_HOME"` — so `docker compose`'s own `${HOME}` substitution in `docker-compose.override.yml` independently resolved to root's real `$HOME=/root`, diverging silently. Confirmed via `~/logs/kandev-update.log`: the 2026-07-21 03:30 cron run flipped the mount; live DB + `master.key` were found only under `/root/.local/share/kandev/data/` (different `master.key` hash than bob's stale copy — the two data trees are not interchangeable, since `master.key` decrypts secrets stored inside the otherwise-plain SQLite `kandev.db`) | Fixed in `update.sh`: added `export HOME="$USER_HOME"` right after computing `USER_HOME`, on all three hosts, so `${HOME}`-based compose mounts always resolve consistently regardless of which user/cron context invokes the script. If this recurs: compare `docker inspect kandev --format '{{range .Mounts}}{{.Source}}{{println}}{{end}}'` against the expected user's home; if wrong, back up the current (possibly stale) target path, `docker exec kandev tar -C /data/data -cf - . \| tar -C <correct-path>/data -xf -` to migrate the live DB/key/backups out of the container before recreating it as the correct user. **`/usr/local/sbin/kandev-update.sh`** (the actual root-cron target on home-server) is a **static copy** made by `install-hub.sh` — it does NOT auto-update when `~/Code/kandev/update.sh` changes. Re-run `sudo bash ~/Code/kandev/install-hub.sh` on home-server to refresh it after any `update.sh` change. |
+| **laptop:** `./update.sh` pulls a new upstream image, container crash-loops forever, `board.office`/`localhost:38429` unreachable; `docker logs kandev` shows `Failed to initialize repositories ... no such column: agent_execution_id` during the `task_sessions` migration | This host's live `kandev.db` had a divergent schema history (recorded as a non-release version like `f95d061d-dirty`, from an earlier dev/CI build): `agent_execution_id`/`container_id` had already been dropped from `task_sessions`, but the older `workflow_step_id` column was still present. Upstream's `migrateSessionsRemoveWorkflowStepID` migration (apps/backend/internal/task/repository/sqlite/base_migrations.go) is gated only on `workflow_step_id` being present, and unconditionally `SELECT`s `agent_execution_id, container_id` when rebuilding the table — it assumes those columns are always still there at that point, which isn't true for this DB's history. `update.sh` also had no post-restart health check, so the outage was silent. | One-time DB fix (safe/idempotent, matches upstream's final schema either way): `ALTER TABLE task_sessions ADD COLUMN agent_execution_id TEXT NOT NULL DEFAULT ''; ALTER TABLE task_sessions ADD COLUMN container_id TEXT NOT NULL DEFAULT '';` on the stopped container's `kandev.db`, then restart — lets the migration chain run to completion and drop the columns again correctly. **Permanent fix:** `update.sh` now (1) tags the running image as `<tag>-previous` before rebuilding, as a rollback safety net, and (2) polls `http://localhost:38429/` for HTTP 200 after `--force-recreate`; on failure it logs the crash logs, auto-rolls back to the `-previous` image, re-checks health, and exits non-zero either way so cron surfaces the failure instead of it going unnoticed. |

@@ -19,7 +19,7 @@
 # (default: kdlbs, the upstream repo). Use it to build a branch that only
 # exists on a fork, e.g. a feature branch pushed to your own fork before it's
 # merged upstream. kandev-build-main.sh accepts this as a single
-# "<owner>:<branch>" value passed to --ref (e.g. --ref yattdev:my-branch) and
+# "<owner>:<branch>" value passed to --ref (e.g. --ref myorg:my-branch) and
 # splits it into these two build-args automatically.
 #
 # Revert to the tracked release build at any time (also happens automatically

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # kandev-restic-backup.sh — Daily restic snapshot of kandev data.
 #
-# Creates a named, deduplicated snapshot in mini-desktop's restic repo.
+# Creates a named, deduplicated snapshot in home-server's restic repo.
 # Snapshots are browsable with `restic snapshots` — like `git log` for your data.
 # Retention: 7 daily + 4 weekly + 3 monthly (pruned automatically).
 #
@@ -11,7 +11,7 @@
 # SQLite's online-backup API (`sqlite3 .backup`, safe against a live WAL-mode
 # DB), then lets restic back up that snapshot instead of the live DB file.
 #
-# Repo location (on mini-desktop): ~/restic-repos/kandev-backup
+# Repo location (on home-server): ~/restic-repos/kandev-backup
 # Password file: ~/.config/restic/kandev-backup-password (same on all hosts)
 #
 # Usage:
@@ -20,8 +20,8 @@
 # Cron (all hosts, 03:00 daily):
 #   0 3 * * * bash ~/Code/kandev/kandev-restic-backup.sh >> ~/logs/kandev-backup.log 2>&1
 #
-# On mini-desktop the cron runs as root via /etc/cron.d/kandev-backup;
-# on sfl-desktop and yattara-pc it runs as the normal user via crontab.
+# On home-server the cron runs as root via /etc/cron.d/kandev-backup;
+# on office-desktop and laptop it runs as the normal user via crontab.
 #
 # Error handling: we deliberately do NOT use `set -e`. The previous version did,
 # which meant a non-zero `restic backup` (e.g. rc=3 unreadable files, or rc=1
@@ -30,10 +30,17 @@
 # never stops kandev at all, and also handles restic's exit code explicitly.
 set -uo pipefail
 
+# ── Machine-specific overrides ───────────────────────────────────────────────
+# Load real hosts/users/IPs for THIS machine from a gitignored host.env so this
+# public repo stays free of private LAN details. See host.env.example. The
+# ${VAR:-default} placeholders below are only used when host.env is absent.
+_KANDEV_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+[ -f "$_KANDEV_DIR/host.env" ] && . "$_KANDEV_DIR/host.env"
+
 USER_HOME="${USER_HOME:-$HOME}"
 USER_NAME="${USER_NAME:-$(whoami)}"
-MINI_HOST="${MINI_HOST:-10.0.0.182}"
-MINI_USER="${MINI_USER:-alassane}"
+MINI_HOST="${MINI_HOST:-10.0.0.20}"
+MINI_USER="${MINI_USER:-bob}"
 RESTIC="${RESTIC:-$(command -v restic 2>/dev/null || echo "$USER_HOME/bin/restic")}"
 RESTIC_REPO="${RESTIC_REPO:-sftp:${MINI_USER}@${MINI_HOST}:restic-repos/kandev-backup}"
 RESTIC_PASSWORD_FILE="${RESTIC_PASSWORD_FILE:-$USER_HOME/.config/restic/kandev-backup-password}"
@@ -54,9 +61,9 @@ fi
 
 log "--- kandev restic backup start (host: $(hostname)) ---"
 
-# ── Preflight: mini-desktop reachable? ──────────────────────────────────────
+# ── Preflight: home-server reachable? ──────────────────────────────────────
 if ! ping -c1 -W3 "$MINI_HOST" >/dev/null 2>&1; then
-  log "mini-desktop ($MINI_HOST) unreachable — skipping backup"
+  log "home-server ($MINI_HOST) unreachable — skipping backup"
   exit 0
 fi
 

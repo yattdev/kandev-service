@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # update.sh — pull latest kandev image and restart only if it changed
-# Safe to run as root (mini-desktop) or as normal user (sfl-desktop).
+# Safe to run as root (home-server) or as normal user (office-desktop).
 #
 # Reconciles the deployed image back to a clean release build: it rebuilds
 # kandev-local:latest not only when a new upstream :latest is pulled, but also
@@ -17,17 +17,17 @@
 # Usage:
 #   bash ~/Code/kandev/update.sh
 #
-# Cron (mini-desktop, /etc/cron.d/kandev-update):
-#   30 3 * * * root USER_NAME=alassane USER_HOME=/home/alassane /usr/local/sbin/kandev-update.sh
+# Cron (home-server, /etc/cron.d/kandev-update):
+#   30 3 * * * root USER_NAME=bob USER_HOME=/home/bob /usr/local/sbin/kandev-update.sh
 #
-# Cron (sfl-desktop, user crontab):
+# Cron (office-desktop, user crontab):
 #   30 3 * * * bash ~/Code/kandev/update.sh
 set -euo pipefail
 
 USER_HOME="${USER_HOME:-$HOME}"
 # Export HOME so `docker compose` (invoked below) resolves ${HOME} in
 # docker-compose.override.yml to the correct user's home directory. This
-# matters on mini-desktop, where cron runs this script as root: without this
+# matters on home-server, where cron runs this script as root: without this
 # export, ${HOME} would resolve to /root, silently remounting the container
 # onto root's ~/.ssh, ~/.gitconfig, and ~/.local/share/kandev instead of the
 # intended user's — a real incident that caused the running container to

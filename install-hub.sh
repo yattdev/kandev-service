@@ -1,15 +1,22 @@
 #!/usr/bin/env bash
-# install-mini.sh — Idempotent kandev setup for mini-desktop (hub role).
+# install-hub.sh — Idempotent kandev setup for home-server (hub role).
 #
-# mini-desktop is the central hub:
+# home-server is the central hub:
 #   - Stores Litestream SFTP replica (~/litestream-replicas/kandev/)
 #   - Stores restic snapshot repo (~/restic-repos/kandev-backup)
-#   - Does NOT run Litestream itself (satellites replicate TO mini)
+#   - Does NOT run Litestream itself (satellites replicate TO home)
 #
-# Must run as root: sudo bash ~/Code/kandev/install-mini.sh
+# Must run as root: sudo bash ~/Code/kandev/install-hub.sh
 set -euo pipefail
 
-USER_NAME="${USER_NAME:-alassane}"
+# ── Machine-specific overrides ───────────────────────────────────────────────
+# Load real hosts/users/IPs for THIS machine from a gitignored host.env so this
+# public repo stays free of private LAN details. See host.env.example. The
+# ${VAR:-default} placeholders below are only used when host.env is absent.
+_KANDEV_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+[ -f "$_KANDEV_DIR/host.env" ] && . "$_KANDEV_DIR/host.env"
+
+USER_NAME="${USER_NAME:-bob}"
 USER_HOME="${USER_HOME:-/home/$USER_NAME}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 UPDATE_SCRIPT_SRC="$SCRIPT_DIR/update.sh"
@@ -29,22 +36,22 @@ fi
 
 install -d -o "$USER_NAME" -g "$USER_NAME" -m 755 "$USER_HOME/logs"
 
-# ── Systemd user unit (ExecStart → kandev-start-mini.sh) ────────────────────
+# ── Systemd user unit (ExecStart → kandev-start-hub.sh) ────────────────────
 SYSTEMD_DIR="$USER_HOME/.config/systemd/user"
 install -d -o "$USER_NAME" -g "$USER_NAME" -m 755 "$SYSTEMD_DIR"
 
 cat > "$SYSTEMD_DIR/kandev.service" <<'EOF'
 [Unit]
-Description=Kandev — autonomous agent kanban platform (mini-desktop hub)
+Description=Kandev — autonomous agent kanban platform (home-server hub)
 After=default.target
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=%h/Code/kandev
-ExecStart=/bin/bash %h/Code/kandev/kandev-start-mini.sh
+ExecStart=/bin/bash %h/Code/kandev/kandev-start-hub.sh
 ExecStop=/usr/bin/docker compose -p kandev down
-ExecReload=/bin/bash %h/Code/kandev/kandev-start-mini.sh --recreate
+ExecReload=/bin/bash %h/Code/kandev/kandev-start-hub.sh --recreate
 TimeoutStartSec=180
 TimeoutStopSec=60
 
@@ -52,7 +59,7 @@ TimeoutStopSec=60
 WantedBy=default.target
 EOF
 chown "$USER_NAME:$USER_NAME" "$SYSTEMD_DIR/kandev.service"
-echo "Systemd unit written (ExecStart → kandev-start-mini.sh)"
+echo "Systemd unit written (ExecStart → kandev-start-hub.sh)"
 
 # Reload systemd for the user
 sudo -u "$USER_NAME" XDG_RUNTIME_DIR="/run/user/$(id -u "$USER_NAME")" \
@@ -74,9 +81,9 @@ if [[ ! -d "$KANDEV_DATA/Code" ]]; then
 fi
 
 # ── Litestream replica dir (hub storage) ────────────────────────────────────
-# Each satellite host pushes to its OWN dedicated subdir (sfl/, yattara/) —
+# Each satellite host pushes to its OWN dedicated subdir (office/, carol/) —
 # never a shared path. This is required for safe single-leader replication:
-# see kandev-start.sh / kandev-start-mini.sh for the active-writer lock and
+# see kandev-start.sh / kandev-start-hub.sh for the active-writer lock and
 # freshest-replica restore logic that depend on this per-host layout.
 REPLICA_DIR="$USER_HOME/litestream-replicas/kandev"
 if [[ ! -d "$REPLICA_DIR" ]]; then
@@ -85,10 +92,10 @@ if [[ ! -d "$REPLICA_DIR" ]]; then
 else
   echo "Litestream replica dir already exists: $REPLICA_DIR"
 fi
-for host_id in sfl yattara; do
+for host_id in office carol; do
   install -d -o "$USER_NAME" -g "$USER_NAME" -m 755 "$REPLICA_DIR/$host_id"
 done
-echo "Per-host replica subdirs ready: $REPLICA_DIR/{sfl,yattara}"
+echo "Per-host replica subdirs ready: $REPLICA_DIR/{office,carol}"
 
 # ── Restic backup repo ────────────────────────────────────────────────────────
 RESTIC_REPO_DIR="$USER_HOME/restic-repos"
@@ -102,7 +109,7 @@ if [[ ! -f "$RESTIC_PASSWORD_FILE" ]]; then
   chown "$USER_NAME:$USER_NAME" "$RESTIC_PASSWORD_FILE"
   chmod 600 "$RESTIC_PASSWORD_FILE"
   echo "Generated restic password: $RESTIC_PASSWORD_FILE"
-  echo "⚠️  IMPORTANT: copy this password to sfl-desktop and yattara-pc:"
+  echo "⚠️  IMPORTANT: copy this password to office-desktop and laptop:"
   echo "   cat $RESTIC_PASSWORD_FILE"
 else
   echo "Restic password file already exists: $RESTIC_PASSWORD_FILE"
@@ -119,10 +126,10 @@ else
   echo "Restic repo already initialized: $RESTIC_REPO"
 fi
 
-# ── Remove legacy sync-from-sfl cron ────────────────────────────────────────
-if [[ -f /etc/cron.d/kandev-sync-from-sfl ]]; then
-  rm -f /etc/cron.d/kandev-sync-from-sfl
-  echo "Removed legacy cron: /etc/cron.d/kandev-sync-from-sfl"
+# ── Remove legacy sync-from-office cron ────────────────────────────────────────
+if [[ -f /etc/cron.d/kandev-sync-from-office ]]; then
+  rm -f /etc/cron.d/kandev-sync-from-office
+  echo "Removed legacy cron: /etc/cron.d/kandev-sync-from-office"
 fi
 
 # ── Auto-update cron (daily 03:30) ───────────────────────────────────────────
@@ -145,7 +152,9 @@ cat > "$BACKUP_CRON_FILE" <<EOF
 # kandev daily restic backup — snapshot history for kandev data
 SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-0 3 * * * root USER_NAME=$USER_NAME USER_HOME=$USER_HOME RESTIC=$RESTIC RESTIC_REPO=$RESTIC_REPO RESTIC_PASSWORD_FILE=$RESTIC_PASSWORD_FILE $BACKUP_SCRIPT_DST
+# MINI_HOST=127.0.0.1: on the hub the "hub" reachability preflight is just localhost
+# (the static /usr/local/sbin copy of the backup script can't read the repo's host.env).
+0 3 * * * root USER_NAME=$USER_NAME USER_HOME=$USER_HOME MINI_HOST=127.0.0.1 RESTIC=$RESTIC RESTIC_REPO=$RESTIC_REPO RESTIC_PASSWORD_FILE=$RESTIC_PASSWORD_FILE $BACKUP_SCRIPT_DST
 EOF
 chmod 644 "$BACKUP_CRON_FILE"
 chown root:root "$BACKUP_CRON_FILE"
@@ -162,7 +171,7 @@ echo "Upgrading kandev image (currently stale — running update now)..."
 USER_NAME="$USER_NAME" USER_HOME="$USER_HOME" bash "$UPDATE_SCRIPT_DST"
 
 echo ""
-echo "✅  install-mini done"
+echo "✅  install-home done"
 echo "   litestream hub : $REPLICA_DIR"
 echo "   restic repo    : $RESTIC_REPO"
 echo "   restic password: $RESTIC_PASSWORD_FILE"
@@ -170,7 +179,7 @@ echo "   update cron    : daily 03:30 → $USER_HOME/logs/kandev-update.log"
 echo "   backup cron    : daily 03:00 → $USER_HOME/logs/kandev-backup.log"
 echo ""
 echo "Next steps:"
-echo "  1. Copy restic password to sfl-desktop + yattara-pc:"
+echo "  1. Copy restic password to office-desktop + laptop:"
 echo "     cat $RESTIC_PASSWORD_FILE"
-echo "  2. Run install-sfl.sh on sfl-desktop"
-echo "  3. Run install-yattara.sh on yattara-pc"
+echo "  2. Run install-office.sh on office-desktop"
+echo "  3. Run install-laptop.sh on laptop"

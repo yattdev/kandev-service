@@ -2,19 +2,19 @@
 # Installed to ~/.config/litestream/litestream.yml on each satellite host.
 #
 # key-path MUST be set per host (see install scripts):
-#   sfl-desktop  → key that reaches alassane@10.0.0.182
-#   yattara-pc   → ~/.ssh/yattara-pc
+#   office-desktop  → key that reaches bob@10.0.0.20
+#   laptop   → ~/.ssh/laptop
 #
-# mini-desktop is the hub — it stores the replica but does NOT run Litestream.
+# home-server is the hub — it stores the replica but does NOT run Litestream.
 #
-# Replica path on mini: ~/litestream-replicas/kandev/
-# (must exist before first replication; created by install-mini.sh)
+# Replica path on home: ~/litestream-replicas/kandev/
+# (must exist before first replication; created by install-hub.sh)
 dbs:
   - path: /data/kandev.db
     replicas:
       - type: sftp
-        host: "10.0.0.182"
-        user: alassane
+        host: "10.0.0.20"
+        user: bob
         key-path: /root/.ssh/REPLACE_WITH_KEY_NAME
         known-hosts-path: /root/.ssh/known_hosts
-        path: /home/alassane/litestream-replicas/kandev
+        path: /home/bob/litestream-replicas/kandev

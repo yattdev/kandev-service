@@ -3,12 +3,12 @@
 #
 # Flow:
 #   1. Restore kandev.db from the FRESHEST Litestream replica across ALL hosts
-#      on mini-desktop (mirrors kandev-start-mini.sh's freshest-wins logic, but
+#      on home-server (mirrors kandev-start-hub.sh's freshest-wins logic, but
 #      queried over SSH). This is what lets you leave one host and continue on
 #      another with the same board state. A data-loss GUARD skips the restore
 #      when the local DB is newer than the freshest peer replica (i.e. this host
 #      has unpushed local edits) — never silently revert real local work.
-#   2. Acquire the single-active-writer lock on mini-desktop. Only the lock
+#   2. Acquire the single-active-writer lock on home-server. Only the lock
 #      holder is allowed to run the Litestream push sidecar. If another host
 #      is still actively pushing (checked via freshness of ITS replica, not
 #      ICMP/SSH reachability — avoids VPN/routing false negatives), this host
@@ -37,10 +37,17 @@
 #            ExecReload (--recreate).
 set -euo pipefail
 
+# ── Machine-specific overrides ───────────────────────────────────────────────
+# Load real hosts/users/IPs for THIS machine from a gitignored host.env so this
+# public repo stays free of private LAN details. See host.env.example. The
+# ${VAR:-default} placeholders below are only used when host.env is absent.
+_KANDEV_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+[ -f "$_KANDEV_DIR/host.env" ] && . "$_KANDEV_DIR/host.env"
+
 COMPOSE_DIR="${COMPOSE_DIR:-$HOME/Code/kandev}"
 KANDEV_DATA="${KANDEV_DATA:-$HOME/.local/share/kandev/data}"
-MINI_HOST="${MINI_HOST:-10.0.0.182}"
-MINI_USER="${MINI_USER:-alassane}"
+MINI_HOST="${MINI_HOST:-10.0.0.20}"
+MINI_USER="${MINI_USER:-bob}"
 REPLICA_ROOT="${REPLICA_ROOT:-/home/${MINI_USER}/litestream-replicas/kandev}"
 HOST_ID_FILE="${HOST_ID_FILE:-$HOME/.kandev-host-id}"
 LITESTREAM_CONFIG="${LITESTREAM_CONFIG:-$HOME/.config/litestream/litestream.yml}"
@@ -48,7 +55,7 @@ LOG="${LOG:-$HOME/logs/kandev-sync.log}"
 LOCK_STALE_SECS="${LOCK_STALE_SECS:-120}"
 # Margin (seconds) the freshest peer replica must beat the local DB's mtime by
 # before we overwrite local data on restore. Guards against reverting unpushed
-# local edits (the exact failure that stranded sfl's work during the VPN outage).
+# local edits (the exact failure that stranded office's work during the VPN outage).
 RESTORE_MARGIN_SECS="${RESTORE_MARGIN_SECS:-60}"
 ARG="${1:-}"
 
@@ -69,18 +76,18 @@ else
   log "WARNING: $HOST_ID_FILE missing — falling back to hostname '$HOST_ID' as host-id"
 fi
 
-# SFTP private key used to reach mini for restore. Auto-detect the first that
-# exists (yattara uses ~/.config/litestream/litestream-key, sfl uses
-# ~/.ssh/ayattara_key). Override with LITESTREAM_KEY=/path.
+# SFTP private key used to reach home for restore. Auto-detect the first that
+# exists (carol uses ~/.config/litestream/litestream-key, office uses
+# ~/.ssh/id_ed25519). Override with LITESTREAM_KEY=/path.
 LITESTREAM_KEY="${LITESTREAM_KEY:-}"
 if [[ -z "$LITESTREAM_KEY" ]]; then
-  for _k in "$HOME/.config/litestream/litestream-key" "$HOME/.ssh/ayattara_key" \
+  for _k in "$HOME/.config/litestream/litestream-key" "$HOME/.ssh/id_ed25519" \
             "$HOME/.ssh/id_ed25519" "$HOME/.ssh/id_rsa"; do
     [[ -f "$_k" ]] && { LITESTREAM_KEY="$_k"; break; }
   done
 fi
 
-# Ask mini (over SSH) which host's replica is freshest across ALL host dirs, and
+# Ask home (over SSH) which host's replica is freshest across ALL host dirs, and
 # how fresh THIS host's own replica is. Echoes: "<best_host> <best_mtime> <own_mtime>"
 # (mtimes are epoch seconds; 0 when absent). Empty best_host = no replicas yet.
 pick_freshest_replica() {
@@ -106,11 +113,11 @@ REMOTE
 }
 
 # ── lock helpers ─────────────────────────────────────────────────────────────
-# The lock lives on mini-desktop as a directory (mkdir is atomic) containing an
+# The lock lives on home-server as a directory (mkdir is atomic) containing an
 # "owner" file: "<host-id> <iso-timestamp>". Staleness is judged NOT by ping
 # but by how recently the claimed owner's OWN replica dir received a push —
 # this sidesteps all VPN/routing ambiguity, since it's answered entirely by
-# mini (which both hosts already reach reliably for restore/push).
+# home (which both hosts already reach reliably for restore/push).
 release_lock() {
   ssh -o ConnectTimeout=8 -o BatchMode=yes "${MINI_USER}@${MINI_HOST}" \
     bash -s -- "$HOST_ID" "$REPLICA_ROOT" <<'REMOTE' 2>>"$LOG" || true
@@ -190,7 +197,7 @@ WRITER_MODE=1  # 1 = we may run the litestream sidecar, 0 = read-only (no sideca
 #     replica (i.e. this host has unpushed edits). --no-sync skips entirely.
 if [[ "$ARG" != "--no-sync" ]]; then
   if ping -c1 -W3 "$MINI_HOST" >/dev/null 2>&1; then
-    log "Querying mini for freshest replica (host-id: $HOST_ID)..."
+    log "Querying home for freshest replica (host-id: $HOST_ID)..."
     FRESHEST="$(pick_freshest_replica || true)"
     BEST_HOST="$(awk '{print $1}' <<<"$FRESHEST")"
     BEST_MTIME="$(awk '{print $2}' <<<"$FRESHEST")"; [[ -z "$BEST_MTIME" ]] && BEST_MTIME=0
@@ -209,7 +216,7 @@ if [[ "$ARG" != "--no-sync" ]]; then
       log "Restoring from freshest peer '$BEST_HOST': sftp://${MINI_USER}@${MINI_HOST}${REPLICA_PATH_BEST}"
 
       if [[ -z "$LITESTREAM_KEY" ]]; then
-        log "WARNING: no SFTP key found (looked for litestream-key / ayattara_key / id_*) — skipping restore"
+        log "WARNING: no SFTP key found (looked for litestream-key / id_ed25519 / id_*) — skipping restore"
       else
         # Safety: back up current DB before any restore attempt
         if [[ -f "${KANDEV_DATA}/kandev.db" ]]; then
@@ -275,7 +282,7 @@ EOF
       log "⚠   will NOT be replicated until the other host goes offline or its lock expires."
     fi
   else
-    log "mini-desktop ($MINI_HOST) unreachable — skipping restore and lock, using local data"
+    log "home-server ($MINI_HOST) unreachable — skipping restore and lock, using local data"
     log "⚠ Litestream sidecar will NOT start this run (no reachable hub) — edits won't sync until reconnected."
     WRITER_MODE=0
   fi

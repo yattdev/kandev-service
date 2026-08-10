@@ -37,7 +37,7 @@ services:
       # Propagate the host username into the container.
       # The container OS user is named "kandev" but tools like git, ssh, gh, and
       # glab inspect $USER to display or record the current user's identity.
-      # Without this, they would report "kandev" instead of "ayattara".
+      # Without this, they would report "kandev" instead of "alice".
       - USER=${USER}
 
       # Same identity propagation via the POSIX fallback variable.

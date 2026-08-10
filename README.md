@@ -1,20 +1,31 @@
 # Kandev — Three-Host Architecture
 
 Three **identical** kandev instances sharing live-replicated data.
-**mini-desktop is the central hub** — it holds the Litestream replica and restic snapshot repo.
-Satellites (sfl-desktop, yattara-pc) restore from the hub on startup and replicate back continuously.
+**home-server is the central hub** — it holds the Litestream replica and restic snapshot repo.
+Satellites (office-desktop, laptop) restore from the hub on startup and replicate back continuously.
 
 ## Hosts
 
 | Host | IP | User | URL | Role |
 |---|---|---|---|---|
-| mini-desktop | 10.0.0.182 | alassane | https://board.home | Hub + always-on home dev |
-| sfl-desktop | 192.168.50.211 | ayattara | http://board.sfl | Powerful workstation, office hours (SFL VPN) |
-| yattara-pc | 127.0.0.1 | yattara | http://board.local | Local dev machine, VPN-independent fallback |
+| home-server | 10.0.0.20 | bob | https://board.home | Hub + always-on home dev |
+| office-desktop | 192.168.1.10 | alice | http://board.office | Powerful workstation, office hours (Corp VPN) |
+| laptop | 127.0.0.1 | carol | http://board.local | Local dev machine, VPN-independent fallback |
 
 All hosts use:
 - `~/Code` — projects/workspaces (bind-mounted as `/data/home/Code` in container)
 - `~/.local/share/kandev` — kandev data dir (sqlite DB + sessions, mounted as `/data`)
+
+> **Placeholders — sanitized public repo.** Every hostname, username, LAN IP, and
+> path in this repo (`office-desktop`/`alice`, `home-server`/`bob`, `laptop`/`carol`,
+> `10.0.0.20`, `192.168.1.10`, `example-corp`, `Code/work-project`, …) is a **generic
+> example**. Put your real values in a git-ignored **`host.env`** at the repo root —
+> every script sources it and falls back to these placeholders when it is absent:
+> ```bash
+> cp host.env.example host.env   # then edit host.env with your real hosts/users/IPs
+> ```
+> `host.env` is listed in `.gitignore`, so it never gets pushed. See `host.env.example`
+> for the full list of overridable values.
 
 ### Adding a repository in the UI
 
@@ -26,9 +37,9 @@ In the **Add Local Repository** dialog enter:
 /data/home/Code/<project-name>
 ```
 
-(Not the host path like `/home/alassane/Code/<project>` — that path doesn't exist inside the container.)
+(Not the host path like `/home/bob/Code/<project>` — that path doesn't exist inside the container.)
 
-> The mountpoint `~/.local/share/kandev/home/Code` is created as an empty directory by `install-mini.sh` / `install-sfl.sh` so Docker can apply the nested bind on container (re)create.
+> The mountpoint `~/.local/share/kandev/home/Code` is created as an empty directory by `install-hub.sh` / `install-office.sh` so Docker can apply the nested bind on container (re)create.
 
 ## File structure
 
@@ -43,16 +54,17 @@ In the **Add Local Repository** dialog enter:
 ├── kandev-build-main.sh           # Helper: build/run/revert the main-branch image (see below)
 ├── litestream.yml                 # Litestream config template (installed to ~/.config/)
 ├── kandev-start.sh                # Start helper: freshest-wins litestream restore → compose up
-├── kandev-start-mini.sh           # Hub start helper: restore from freshest satellite replica
+├── kandev-start-hub.sh           # Hub start helper: restore from freshest satellite replica
 ├── kandev-pull.sh                 # Manual/cron: check for newer data → pull if behind → start
-├── kandev-restic-backup.sh        # Daily restic snapshot → mini-desktop repo
-├── install-mini.sh                # Setup for mini-desktop (hub: replica dir, restic repo, crons)
-├── install-sfl.sh                 # Setup for sfl-desktop (systemd, UFW, NAT, Litestream, crons)
-├── install-yattara.sh             # Setup for yattara-pc (systemd, iptables, board.local, Litestream)
+├── kandev-restic-backup.sh        # Daily restic snapshot → home-server repo
+├── install-hub.sh                # Setup for home-server (hub: replica dir, restic repo, crons)
+├── install-office.sh                 # Setup for office-desktop (systemd, UFW, NAT, Litestream, crons)
+├── install-laptop.sh             # Setup for laptop (systemd, iptables, board.local, Litestream)
 ├── update.sh                      # Pull upstream + rebuild local image + restart + sync toolchains
 ├── setup-toolchains.sh            # Install/sync mise language toolchains into persistent volume
 ├── mise.default.toml              # Global mise tool versions (baked into image as /etc/mise/config.toml)
 ├── kandev-ssh-agent.sh            # Helper: start ssh-agent and restart kandev with it
+├── host.env.example               # Template for git-ignored host.env (real hosts/users/IPs)
 └── README.md
 ```
 
@@ -83,7 +95,7 @@ docker compose build          # builds kandev-local:latest
 docker compose up -d --force-recreate
 ```
 
-> **Network note (sfl-desktop / transparent proxy):** the build must use `--network=host`
+> **Network note (office-desktop / transparent proxy):** the build must use `--network=host`
 > (already set in `docker-compose.override.yml` under `build.network`) so `apt-get` and
 > `curl` can reach the internet through the corporate proxy.
 
@@ -215,14 +227,14 @@ cd ~/Code/kandev && docker compose build && docker compose up -d --force-recreat
 | `KANDEV_DOCKER_ENABLED` | `false` | Disables kandev's built-in per-project Docker container spawning. We run with `network_mode: host` and manage containers separately. The Docker socket is still mounted for manual use. |
 | `HOME` | `/data/home` | Overrides the container user's home directory. All tools that expand `~` or read `$HOME` resolve config files here: `~/.ssh → /data/home/.ssh`, `~/.gitconfig → /data/home/.gitconfig`, etc. This is the anchor that makes all host identity mounts work. |
 | `NPM_CONFIG_PREFIX` | `/data/.npm-global` | Redirects `npm install -g` to the persistent data volume. Without this, global npm packages land in the container's ephemeral root filesystem and are lost on every rebuild. With it, they survive in `~/.local/share/kandev/.npm-global`. |
-| `HOSTNAME` | `0.0.0.0` | Bind address reported and used by the kandev server. With `network_mode: host` the container shares the host's network stack. `0.0.0.0` makes the UI reachable on all interfaces (LAN, loopback), enabling access from `http://board.home` and `http://board.sfl`. |
+| `HOSTNAME` | `0.0.0.0` | Bind address reported and used by the kandev server. With `network_mode: host` the container shares the host's network stack. `0.0.0.0` makes the UI reachable on all interfaces (LAN, loopback), enabling access from `http://board.home` and `http://board.office`. |
 | `NODE_ENV` | `production` | Runs Node.js in production mode: disables dev-only middleware and verbose stack traces, enables caching and performance optimisations, and reduces log noise. Change to `development` only when debugging kandev itself. |
 
 #### `docker-compose.override.yml` (host identity)
 
 | Variable | Value | Purpose |
 |---|---|---|
-| `USER` | `${USER}` (host shell) | Propagates the host username into the container. The container OS user is `kandev`, but `git`, `ssh`, `gh`, `glab`, and shell scripts inspect `$USER` for identity. Without this they report `kandev` instead of `ayattara`. |
+| `USER` | `${USER}` (host shell) | Propagates the host username into the container. The container OS user is `kandev`, but `git`, `ssh`, `gh`, `glab`, and shell scripts inspect `$USER` for identity. Without this they report `kandev` instead of `alice`. |
 | `LOGNAME` | `${USER}` (host shell) | POSIX fallback for `$USER`. Some tools (older Unix utilities, certain git hooks, shell scripts) read `$LOGNAME` exclusively. Must match `$USER` for consistent identity across all tooling. |
 
 #### `docker-compose.ssh-agent.yml` (optional SSH agent overlay)
@@ -231,7 +243,7 @@ cd ~/Code/kandev && docker compose build && docker compose up -d --force-recreat
 |---|---|---|
 | `SSH_AUTH_SOCK` | `/run/ssh-agent.sock` | Points SSH and any libssh/libssh2-based tool to the forwarded agent socket. Without this variable, SSH ignores the bind-mounted socket entirely and falls back to key-file auth only — defeating the purpose of agent forwarding. The path must match the container-side path in the volume mount. |
 
-> **UID matching:** The container user is `kandev` (UID 1000). The host user is `ayattara`
+> **UID matching:** The container user is `kandev` (UID 1000). The host user is `alice`
 > (UID 1000). Because the UIDs are identical, all bind-mounted files (SSH keys, gitconfig,
 > CLI tokens) are accessible inside the container without any `chmod` or `chown`.
 
@@ -248,13 +260,13 @@ cd ~/Code/kandev && docker compose build && docker compose up -d --force-recreat
 | `~/.config/glab-cli` | `/data/home/.config/glab-cli` | rw | GitLab CLI auth tokens |
 
 > `~/.ssh/config` uses `~` for `IdentityFile` paths. Inside the container `HOME=/data/home`,
-> so `~/.ssh/github_yattdev_sfldesktop` resolves to `/data/home/.ssh/github_yattdev_sfldesktop`
+> so `~/.ssh/github_office` resolves to `/data/home/.ssh/github_office`
 > — all host SSH host aliases and key mappings work as-is.
 
 ### Git `safe.directory`
 
-`~/.gitconfig` contains `safe.directory = /home/ayattara/Code/scsl` (a host absolute path).
-Inside the container the same repo lives at `/data/home/Code/scsl`. Rather than patching the
+`~/.gitconfig` contains `safe.directory = /home/alice/Code/work-project` (a host absolute path).
+Inside the container the same repo lives at `/data/home/Code/work-project`. Rather than patching the
 gitconfig, `Dockerfile.local` injects `git config --system safe.directory '*'` into
 `/etc/gitconfig` so every directory is trusted. This also covers repos that Docker previously
 created with `root` ownership.
@@ -291,12 +303,12 @@ docker exec -u kandev kandev sh -c "
 Expected output:
 
 ```
-USER=ayattara
-ayattara
-alassane.yattara@savoirfairelinux.com
+USER=alice
+alice
+dev@example.com
 *
 hostname github.com
-identityfile ~/.ssh/github_yattdev_sfldesktop
+identityfile ~/.ssh/github_office
 ✓ Logged in to github.com as ...
 ✓ Logged in to gitlab.com as ...
 ```
@@ -317,7 +329,7 @@ bash ~/Code/kandev/kandev-ssh-agent.sh
 
 This script:
 1. Reuses an already-running `ssh-agent` if `SSH_AUTH_SOCK` is valid; otherwise starts one
-2. Loads `~/.ssh/ayattara_key` and `~/.ssh/github_yattdev_sfldesktop` (edit the script to add/remove keys)
+2. Loads `~/.ssh/id_ed25519` and `~/.ssh/github_office` (edit the script to add/remove keys)
 3. Restarts the kandev container with `docker-compose.ssh-agent.yml` layered in, which:
    - Bind-mounts the host agent socket at `/run/ssh-agent.sock` inside the container
    - Sets `SSH_AUTH_SOCK=/run/ssh-agent.sock` in the container environment
@@ -325,13 +337,13 @@ This script:
 To load a different or extra key:
 
 ```bash
-bash ~/Code/kandev/kandev-ssh-agent.sh ~/.ssh/socodevi
+bash ~/Code/kandev/kandev-ssh-agent.sh ~/.ssh/work-client
 ```
 
 ### Manual agent forwarding
 
 ```bash
-eval $(ssh-agent) && ssh-add ~/.ssh/ayattara_key
+eval $(ssh-agent) && ssh-add ~/.ssh/id_ed25519
 SSH_AUTH_SOCK=$SSH_AUTH_SOCK docker compose \
   -f docker-compose.yml \
   -f docker-compose.override.yml \
@@ -345,31 +357,31 @@ SSH_AUTH_SOCK=$SSH_AUTH_SOCK docker compose \
 docker exec -it kandev ssh-add -l   # should list loaded key fingerprints
 ```
 
-## Client access (from yattara-pc)
+## Client access (from laptop)
 
-`/etc/hosts` on yattara-pc (already configured):
+`/etc/hosts` on laptop (already configured):
 
 ```
-10.0.0.182        board.home
-192.168.50.211    board.sfl
+10.0.0.20        board.home
+192.168.1.10    board.office
 ```
 
-For `board.local` (yattara-pc's own kandev), `install-yattara.sh` adds:
+For `board.local` (laptop's own kandev), `install-laptop.sh` adds:
 ```
 127.0.0.1         board.local
 ```
 
 | URL | Host | VPN needed |
 |---|---|---|
-| https://board.home | mini-desktop (10.0.0.182) | No — home LAN |
-| http://board.sfl | sfl-desktop (192.168.50.211) | Yes — `sudo nmcli connection up "SFL Montreal VPN"` |
-| http://board.local | yattara-pc (127.0.0.1) | No — local |
+| https://board.home | home-server (10.0.0.20) | No — home LAN |
+| http://board.office | office-desktop (192.168.1.10) | Yes — `sudo nmcli connection up "Corp VPN"` |
+| http://board.local | laptop (127.0.0.1) | No — local |
 
-> **Fixed bug — `board.sfl`/`board.home` used to show wrong/stale data when browsed from yattara-pc.**
-> Root cause: `install-yattara.sh` set an **unscoped** iptables `OUTPUT` NAT rule (`--dport 80 -j REDIRECT --to-port 38429` with no `-d` filter), so *any* outbound port-80 request from yattara-pc — including to board.sfl, board.home, or any external website — was silently redirected to yattara-pc's own local kandev instead of leaving the machine. Confirmed by stopping yattara-pc's local kandev: `board.sfl:80` then failed outright instead of reaching sfl-desktop.
-> **Fix:** the OUTPUT rule is now scoped to `-d 127.0.0.1/32` (only catches the host's own loopback traffic for `board.local`). Re-run `bash ~/Code/kandev/install-yattara.sh` (needs sudo) to apply on hosts still running the old unscoped rule. See "Common failure modes" in `CLAUDE.md` for full details.
+> **Fixed bug — `board.office`/`board.home` used to show wrong/stale data when browsed from laptop.**
+> Root cause: `install-laptop.sh` set an **unscoped** iptables `OUTPUT` NAT rule (`--dport 80 -j REDIRECT --to-port 38429` with no `-d` filter), so *any* outbound port-80 request from laptop — including to board.office, board.home, or any external website — was silently redirected to laptop's own local kandev instead of leaving the machine. Confirmed by stopping laptop's local kandev: `board.office:80` then failed outright instead of reaching office-desktop.
+> **Fix:** the OUTPUT rule is now scoped to `-d 127.0.0.1/32` (only catches the host's own loopback traffic for `board.local`). Re-run `bash ~/Code/kandev/install-laptop.sh` (needs sudo) to apply on hosts still running the old unscoped rule. See "Common failure modes" in `CLAUDE.md` for full details.
 
-## Network / iptables (sfl-desktop)
+## Network / iptables (office-desktop)
 
 ### Port map
 
@@ -380,14 +392,14 @@ For `board.local` (yattara-pc's own kandev), `install-yattara.sh` adds:
 
 ### Why two iptables rules are required
 
-Linux iptables NAT has two chains that must both be set for `http://board.sfl` to work everywhere:
+Linux iptables NAT has two chains that must both be set for `http://board.office` to work everywhere:
 
 | Chain | Applies to | Use case |
 |---|---|---|
-| `PREROUTING` | Packets arriving **from outside** the machine | Other PCs on the network (yattara-pc, mini-desktop) |
-| `OUTPUT` | Packets generated **locally** on sfl-desktop | Browser/curl running on sfl-desktop itself |
+| `PREROUTING` | Packets arriving **from outside** the machine | Other PCs on the network (laptop, home-server) |
+| `OUTPUT` | Packets generated **locally** on office-desktop | Browser/curl running on office-desktop itself |
 
-**Classic symptom of a missing OUTPUT rule:** `http://board.sfl` works from yattara-pc but gives *Connection refused* from a browser or `curl` on sfl-desktop itself.
+**Classic symptom of a missing OUTPUT rule:** `http://board.office` works from laptop but gives *Connection refused* from a browser or `curl` on office-desktop itself.
 
 Both rules must be present:
 
@@ -406,7 +418,7 @@ sudo iptables -t nat -L PREROUTING -n | grep 38429   # should show a line
 sudo iptables -t nat -L OUTPUT     -n | grep 38429   # should show a line
 
 # Quick connectivity test
-curl -o /dev/null -w "%{http_code}" http://board.sfl/   # expect 200
+curl -o /dev/null -w "%{http_code}" http://board.office/   # expect 200
 curl -o /dev/null -w "%{http_code}" http://localhost:38429/  # direct, no NAT
 ```
 
@@ -423,19 +435,19 @@ docker run --rm --net=host --cap-add=NET_ADMIN --privileged alpine \
          echo OK'
 
 # Or simply re-run the idempotent install script (will prompt for sudo):
-bash ~/Code/kandev/install-sfl.sh
+bash ~/Code/kandev/install-office.sh
 ```
 
 ## Deploy
 
-### mini-desktop (hub)
+### home-server (hub)
 
 ```bash
 # 1. Sync scripts
-rsync -avz stack/kandev/ alassane@10.0.0.182:~/Code/kandev/
+rsync -avz stack/kandev/ bob@10.0.0.20:~/Code/kandev/
 
 # 2. (One-time) migrate existing named volume to bind path
-ssh alassane@10.0.0.182 '
+ssh bob@10.0.0.20 '
   mkdir -p ~/.local/share/kandev ~/Code
   if docker volume inspect kandev_kandev-data >/dev/null 2>&1; then
     docker run --rm -v kandev_kandev-data:/from -v ~/.local/share/kandev:/to alpine \
@@ -444,31 +456,31 @@ ssh alassane@10.0.0.182 '
 '
 
 # 3. Setup hub: create litestream-replicas/, init restic repo, fix crons, upgrade image
-ssh alassane@10.0.0.182 "sudo bash ~/Code/kandev/install-mini.sh"
+ssh bob@10.0.0.20 "sudo bash ~/Code/kandev/install-hub.sh"
 
 # 4. Build + start kandev
-ssh alassane@10.0.0.182 "cd ~/Code/kandev && docker compose build && docker compose up -d --force-recreate"
+ssh bob@10.0.0.20 "cd ~/Code/kandev && docker compose build && docker compose up -d --force-recreate"
 ```
 
-### sfl-desktop (when SFL VPN is up)
+### office-desktop (when Corp VPN is up)
 
 ```bash
-sudo nmcli connection up "SFL Montreal VPN"
+sudo nmcli connection up "Corp VPN"
 
-rsync -avz stack/kandev/ ayattara@sfl-desktop:~/Code/kandev/
+rsync -avz stack/kandev/ alice@office-desktop:~/Code/kandev/
 
 # Setup: systemd, UFW, NAT, Litestream config, crons, start with restore
-ssh ayattara@sfl-desktop 'bash ~/Code/kandev/install-sfl.sh'
+ssh alice@office-desktop 'bash ~/Code/kandev/install-office.sh'
 ```
 
-> **Note:** `install-sfl.sh` will auto-detect the SSH key that reaches mini-desktop.
-> If it prints a warning, add your key: `ssh-copy-id -i ~/.ssh/KEY alassane@10.0.0.182`
+> **Note:** `install-office.sh` will auto-detect the SSH key that reaches home-server.
+> If it prints a warning, add your key: `ssh-copy-id -i ~/.ssh/KEY bob@10.0.0.20`
 
-### yattara-pc (local)
+### laptop (local)
 
 ```bash
-# 1. Copy password from mini-desktop (one-time, after install-mini.sh has run)
-scp alassane@10.0.0.182:.config/restic/kandev-backup-password \
+# 1. Copy password from home-server (one-time, after install-hub.sh has run)
+scp bob@10.0.0.20:.config/restic/kandev-backup-password \
     ~/.config/restic/kandev-backup-password
 chmod 600 ~/.config/restic/kandev-backup-password
 
@@ -476,7 +488,7 @@ chmod 600 ~/.config/restic/kandev-backup-password
 rsync -avz stack/kandev/ ~/Code/kandev/
 
 # 3. Setup: systemd, iptables 80→38429, board.local DNS, Litestream, restore + start
-bash ~/Code/kandev/install-yattara.sh
+bash ~/Code/kandev/install-laptop.sh
 ```
 
 ## Sync — Litestream (live) + Restic (history)
@@ -484,74 +496,74 @@ bash ~/Code/kandev/install-yattara.sh
 ### Architecture
 
 ```
-kandev.db  ──Litestream──► ~/litestream-replicas/kandev/  on mini-desktop  (live WAL, seconds lag)
-kandev/    ────Restic────► ~/restic-repos/kandev-backup   on mini-desktop  (daily snapshots)
+kandev.db  ──Litestream──► ~/litestream-replicas/kandev/  on home-server  (live WAL, seconds lag)
+kandev/    ────Restic────► ~/restic-repos/kandev-backup   on home-server  (daily snapshots)
 ```
 
-**mini-desktop is the hub.** It stores the Litestream SFTP replica and the restic repo. It does NOT run Litestream itself.
+**home-server is the hub.** It stores the Litestream SFTP replica and the restic repo. It does NOT run Litestream itself.
 
 ### Litestream (live SQLite replication)
 
-Litestream runs as a sidecar container alongside kandev on sfl-desktop and yattara-pc. It:
-- Streams WAL (write-ahead log) changes to mini-desktop via SFTP — lag is seconds, not hours
-- On container startup (`kandev-start.sh`): restores latest state from mini before kandev starts
+Litestream runs as a sidecar container alongside kandev on office-desktop and laptop. It:
+- Streams WAL (write-ahead log) changes to home-server via SFTP — lag is seconds, not hours
+- On container startup (`kandev-start.sh`): restores latest state from home before kandev starts
 - Is SQLite-native: no need to stop kandev, no corruption risk
 
 ```bash
-# Check litestream is replicating (on sfl or yattara)
+# Check litestream is replicating (on office or carol)
 docker logs kandev-litestream 2>&1 | tail -5
 
-# Check replica files on mini-desktop
-ssh alassane@10.0.0.182 "ls -lh ~/litestream-replicas/kandev/"
+# Check replica files on home-server
+ssh bob@10.0.0.20 "ls -lh ~/litestream-replicas/kandev/"
 
 # Manual restore (stop kandev first)
 docker stop kandev
-litestream restore sftp://alassane@10.0.0.182/litestream-replicas/kandev \
+litestream restore sftp://bob@10.0.0.20/litestream-replicas/kandev \
   ~/.local/share/kandev/data/kandev.db
 docker start kandev
 ```
 
 ### Manual check & pull latest (`kandev-pull.sh`)
 
-Litestream **pushes** the active host's writes to mini within ~1s, but other hosts
+Litestream **pushes** the active host's writes to home within ~1s, but other hosts
 only **pull** that data when kandev restarts. `kandev-pull.sh` lets you pull the
 freshest state on demand — run it when you sit down at a machine to make sure the
 board matches where you left off on another host.
 
 ```bash
-# On EITHER host (yattara-pc or sfl-desktop):
+# On EITHER host (laptop or office-desktop):
 bash ~/Code/kandev/kandev-pull.sh            # check → pull if behind → ensure kandev is up
 bash ~/Code/kandev/kandev-pull.sh --dry-run  # report only, change nothing
 bash ~/Code/kandev/kandev-pull.sh --force    # pull the freshest replica no matter what
 ```
 
 What it does:
-1. Asks mini which host's replica is **freshest**, and how fresh **this** host's own
-   push is (both mtimes read from mini's filesystem → no clock-skew guessing).
+1. Asks home which host's replica is **freshest**, and how fresh **this** host's own
+   push is (both mtimes read from home's filesystem → no clock-skew guessing).
 2. Reads who holds the **active-writer lock**.
 3. Decides:
    - **This host is the active writer** → nothing to pull (your data is authoritative).
      `--force` overrides.
    - **A peer replica is newer** → you're behind → stops kandev, restores the freshest
      data (via `kandev-start.sh`), restarts.
-   - **Already current / mini unreachable** → leaves a running kandev untouched.
+   - **Already current / home unreachable** → leaves a running kandev untouched.
 
 Safe to run anytime: it no-ops when you're the writer, already current, or offline,
 so it never reverts local edits or strips a live replication sidecar.
 
-> **sfl-desktop only reaches mini when the `sfl-desktop` WireGuard tunnel is up.**
-> If mini is unreachable the script reports it and leaves kandev running as-is —
-> bring the tunnel up (`nmcli connection up sfl-desktop`) first.
+> **office-desktop only reaches home when the `office-desktop` WireGuard tunnel is up.**
+> If home is unreachable the script reports it and leaves kandev running as-is —
+> bring the tunnel up (`nmcli connection up office-desktop`) first.
 
 This same script runs automatically via cron at **06:00 / 13:00 / 18:00** on both
 satellites (see Cron summary) so cross-host visibility stays near-current without
 manual restarts. Example output:
 
 ```
-[pull] host-id=yattara  writer=none
-[pull] freshest replica : 'sfl'  (2026-07-08 21:45:37)
+[pull] host-id=laptop  writer=none
+[pull] freshest replica : 'office'  (2026-07-08 21:45:37)
 [pull] our own replica  : 2026-07-08 05:42:27
-[pull] BEHIND by ~57550s vs peer 'sfl' — pulling freshest data.
+[pull] BEHIND by ~57550s vs peer 'office' — pulling freshest data.
 ```
 
 ### Restic (snapshot history)
@@ -561,7 +573,7 @@ Daily at 03:00 on each satellite host, `kandev-restic-backup.sh` (runs with
 1. Takes a transactionally-consistent hot copy of `kandev.db` via SQLite's
    online-backup API (`sqlite3 .backup`, run in a throwaway container from the
    kandev image) → `data/kandev.db.backup-snapshot`
-2. Runs `restic backup` → new named snapshot in mini's repo, **excluding** the
+2. Runs `restic backup` → new named snapshot in home's repo, **excluding** the
    live `kandev.db`/`-wal`/`-shm` (which would be torn if copied mid-write) and
    including the consistent snapshot in their place
 3. Removes the local snapshot file and prunes old repo snapshots (keeps 7 daily,
@@ -575,10 +587,10 @@ Daily at 03:00 on each satellite host, `kandev-restic-backup.sh` (runs with
 
 ```bash
 # View snapshot history (like git log)
-~/bin/restic -r sftp:alassane@10.0.0.182:restic-repos/kandev-backup snapshots
+~/bin/restic -r sftp:bob@10.0.0.20:restic-repos/kandev-backup snapshots
 
 # Restore a specific snapshot
-~/bin/restic -r sftp:alassane@10.0.0.182:restic-repos/kandev-backup restore SNAPSHOT_ID \
+~/bin/restic -r sftp:bob@10.0.0.20:restic-repos/kandev-backup restore SNAPSHOT_ID \
   --target / --include ~/.local/share/kandev/
 # The DB is restored as data/kandev.db.backup-snapshot; put it in place with:
 mv ~/.local/share/kandev/data/kandev.db.backup-snapshot \
@@ -590,20 +602,20 @@ mv ~/.local/share/kandev/data/kandev.db.backup-snapshot \
 bash ~/Code/kandev/kandev-restic-backup.sh
 ```
 
-Restic password file: `~/.config/restic/kandev-backup-password` (same on all hosts, generated by `install-mini.sh`).
+Restic password file: `~/.config/restic/kandev-backup-password` (same on all hosts, generated by `install-hub.sh`).
 
 ### Cron summary
 
 | Host | Cron | What |
 |---|---|---|
-| mini-desktop | `30 3 * * *` (root, `/etc/cron.d/kandev-update`) | Image update |
-| mini-desktop | `0 3 * * *` (root, `/etc/cron.d/kandev-backup`) | Restic snapshot |
-| sfl-desktop | `30 3 * * *` (user crontab) | Image update |
-| sfl-desktop | `0 3 * * *` (user crontab) | Restic snapshot |
-| sfl-desktop | `0 6,13,18 * * *` (user crontab) | **Pull latest** (`kandev-pull.sh`) |
-| yattara-pc | `30 3 * * *` (user crontab) | Image update |
-| yattara-pc | `0 3 * * *` (user crontab) | Restic snapshot |
-| yattara-pc | `0 6,13,18 * * *` (user crontab) | **Pull latest** (`kandev-pull.sh`) |
+| home-server | `30 3 * * *` (root, `/etc/cron.d/kandev-update`) | Image update |
+| home-server | `0 3 * * *` (root, `/etc/cron.d/kandev-backup`) | Restic snapshot |
+| office-desktop | `30 3 * * *` (user crontab) | Image update |
+| office-desktop | `0 3 * * *` (user crontab) | Restic snapshot |
+| office-desktop | `0 6,13,18 * * *` (user crontab) | **Pull latest** (`kandev-pull.sh`) |
+| laptop | `30 3 * * *` (user crontab) | Image update |
+| laptop | `0 3 * * *` (user crontab) | Restic snapshot |
+| laptop | `0 6,13,18 * * *` (user crontab) | **Pull latest** (`kandev-pull.sh`) |
 
 Litestream replication is continuous (always-on, no cron needed). The periodic pull
 only matters on the non-writer host(s), where it refreshes the board to the latest
@@ -612,10 +624,10 @@ synced state; it no-ops on the active writer.
 ### Logs
 
 ```bash
-# Litestream replication (sfl or yattara)
+# Litestream replication (office or carol)
 docker logs kandev-litestream --tail 20
 
-# Manual/periodic pull (sfl or yattara)
+# Manual/periodic pull (office or carol)
 tail -30 ~/logs/kandev-sync.log
 
 # Restic backup
@@ -629,23 +641,23 @@ tail -30 ~/logs/kandev-update.log
 
 | Situation | What to do |
 |---|---|
-| **Working at office (sfl-desktop)** | Use `board.sfl` — SFL VPN required. Litestream replicates changes to mini in seconds |
-| **Switching to home** | Just open `board.home` or `board.local` — Litestream restore on start gives you sfl's latest state |
-| **Working at home on yattara-pc** | Use `board.local` (127.0.0.1) — VPN-independent local instance |
-| **Working on mini-desktop** | Use `board.home` — always available, Caddy serves HTTPS |
-| **sfl-desktop down / VPN not available** | Use `board.home` (mini) or `board.local` (yattara-pc) — same data |
+| **Working at office (office-desktop)** | Use `board.office` — Corp VPN required. Litestream replicates changes to home in seconds |
+| **Switching to home** | Just open `board.home` or `board.local` — Litestream restore on start gives you office's latest state |
+| **Working at home on laptop** | Use `board.local` (127.0.0.1) — VPN-independent local instance |
+| **Working on home-server** | Use `board.home` — always available, Caddy serves HTTPS |
+| **office-desktop down / VPN not available** | Use `board.home` (home) or `board.local` (laptop) — same data |
 | **Recover past state** | `restic snapshots` to browse history, `restic restore` to go back |
 
-## Caveats — `~/Code` on mini-desktop
+## Caveats — `~/Code` on home-server
 
-mini-desktop's `~/Code/` is **shared** between user workspaces AND production service dirs
+home-server's `~/Code/` is **shared** between user workspaces AND production service dirs
 referenced by systemd units (`~/Code/kandev/`, `~/Code/vpn/`, `~/Code/reverse-proxy/`,
 `~/Code/nextcloud-data/`, `~/Code/agent-os/`, `~/Code/vaultwarden/`, `~/Code/nanoclaw/`,
 `~/Code/onecli/`, `~/Code/vibe-kanban/`).
 
 Sync scripts **explicitly exclude** these top-level dirs so the rsync `--delete` never
-wipes production services. If you add a new infra service under `~/Code/` on mini-desktop,
-**add it to the excludes** in both `sync-from-sfl.sh` and `sync-to-sfl.sh`.
+wipes production services. If you add a new infra service under `~/Code/` on home-server,
+**add it to the excludes** in both `sync-from-office.sh` and `sync-to-office.sh`.
 
 ## Update kandev
 
@@ -660,22 +672,22 @@ All three hosts run a **daily auto-update cron at 03:30** that:
 
 | Host | Mechanism | Log |
 |---|---|---|
-| mini-desktop | `/etc/cron.d/kandev-update` (root) | `~/logs/kandev-update.log` |
-| sfl-desktop | user crontab (`ayattara`) | `~/logs/kandev-update.log` |
-| yattara-pc | user crontab (`yattara`) | `~/logs/kandev-update.log` |
+| home-server | `/etc/cron.d/kandev-update` (root) | `~/logs/kandev-update.log` |
+| office-desktop | user crontab (`alice`) | `~/logs/kandev-update.log` |
+| laptop | user crontab (`carol`) | `~/logs/kandev-update.log` |
 
 ### Manual update
 
 ```bash
-ssh alassane@10.0.0.182 "bash ~/Code/kandev/update.sh"           # mini-desktop
-ssh ayattara@sfl-desktop "bash ~/Code/kandev/update.sh"           # sfl-desktop (VPN)
-bash ~/Code/kandev/update.sh                                       # yattara-pc (local)
+ssh bob@10.0.0.20 "bash ~/Code/kandev/update.sh"           # home-server
+ssh alice@office-desktop "bash ~/Code/kandev/update.sh"           # office-desktop (VPN)
+bash ~/Code/kandev/update.sh                                       # laptop (local)
 ```
 
 ### Check update log
 
 ```bash
-ssh alassane@10.0.0.182 "tail -20 ~/logs/kandev-update.log"
-ssh ayattara@sfl-desktop "tail -20 ~/logs/kandev-update.log"
-tail -20 ~/logs/kandev-update.log                                  # yattara-pc
+ssh bob@10.0.0.20 "tail -20 ~/logs/kandev-update.log"
+ssh alice@office-desktop "tail -20 ~/logs/kandev-update.log"
+tail -20 ~/logs/kandev-update.log                                  # laptop
 ```

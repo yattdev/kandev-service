@@ -49,7 +49,7 @@ if [[ ! -d "$DATA_DIR" ]]; then
 fi
 
 # Run mise in a disposable container that mounts the shared persistent volume.
-# --network host matches the kandev service (works behind the sfl transparent
+# --network host matches the kandev service (works behind the office transparent
 # proxy); the non-root entrypoint just exec's the command.
 mise_run() {
   docker run --rm --network host \

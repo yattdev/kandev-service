@@ -1,28 +1,35 @@
 #!/usr/bin/env bash
 # DEPRECATED — replaced by Litestream live replication.
 #
-# This script used to manually push mini-desktop → sfl-desktop before switching
+# This script used to manually push home-server → office-desktop before switching
 # to the office. It is no longer needed because Litestream continuously replicates
-# kandev.db from any active host to mini-desktop. On startup, kandev-start.sh
+# kandev.db from any active host to home-server. On startup, kandev-start.sh
 # restores the latest state automatically — no manual push required.
 #
 # The sync workflow is now:
-#   1. Work on any host → Litestream replicates DB to mini-desktop in seconds
-#   2. Switch to another host → kandev-start.sh restores from mini on startup
+#   1. Work on any host → Litestream replicates DB to home-server in seconds
+#   2. Switch to another host → kandev-start.sh restores from home on startup
 #   3. Continue working with up-to-date data
 #
 # This file is kept as a reference / emergency manual fallback only.
 # To push kandev data manually (emergency, no Litestream):
-#   sudo bash ~/Code/kandev/sync-to-sfl.sh
+#   sudo bash ~/Code/kandev/sync-to-office.sh
 
 set -euo pipefail
 
-USER_NAME="${USER_NAME:-alassane}"
+# ── Machine-specific overrides ───────────────────────────────────────────────
+# Load real hosts/users/IPs for THIS machine from a gitignored host.env so this
+# public repo stays free of private LAN details. See host.env.example. The
+# ${VAR:-default} placeholders below are only used when host.env is absent.
+_KANDEV_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+[ -f "$_KANDEV_DIR/host.env" ] && . "$_KANDEV_DIR/host.env"
+
+USER_NAME="${USER_NAME:-bob}"
 USER_HOME="${USER_HOME:-/home/$USER_NAME}"
-SFL_HOST="${SFL_HOST:-sfl-desktop}"
-SFL_USER="${SFL_USER:-ayattara}"
-SFL_PING_IP="${SFL_PING_IP:-192.168.50.211}"
-SSH_KEY="${SSH_KEY:-$USER_HOME/.ssh/mini-desk}"
+OFFICE_HOST="${OFFICE_HOST:-office-desktop}"
+OFFICE_USER="${OFFICE_USER:-alice}"
+OFFICE_PING_IP="${OFFICE_PING_IP:-192.168.1.10}"
+SSH_KEY="${SSH_KEY:-$USER_HOME/.ssh/home-key}"
 CODE_DIR="${CODE_DIR:-$USER_HOME/Code}"
 KANDEV_DIR="${KANDEV_DIR:-$USER_HOME/.local/share/kandev}"
 
@@ -31,25 +38,25 @@ if [[ $EUID -ne 0 ]]; then
   exit 2
 fi
 
-if ! ping -c1 -W3 "$SFL_PING_IP" >/dev/null 2>&1; then
-  echo "ERROR: sfl-desktop ($SFL_PING_IP) unreachable. Is SFL VPN up?" >&2
-  echo "  sudo nmcli connection up 'SFL Montreal VPN'" >&2
+if ! ping -c1 -W3 "$OFFICE_PING_IP" >/dev/null 2>&1; then
+  echo "ERROR: office-desktop ($OFFICE_PING_IP) unreachable. Is Corp VPN up?" >&2
+  echo "  sudo nmcli connection up 'Corp VPN'" >&2
   exit 1
 fi
 
-SSH_CMD="ssh -F $USER_HOME/.ssh/config -i $SSH_KEY -o User=$SFL_USER -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new"
+SSH_CMD="ssh -F $USER_HOME/.ssh/config -i $SSH_KEY -o User=$OFFICE_USER -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new"
 
-echo "About to push (as root, ssh as $SFL_USER, --chown=$SFL_USER:$SFL_USER on dest):"
-echo "  $CODE_DIR/        -> $SFL_HOST:Code/                        (with --delete)"
-echo "  $KANDEV_DIR/      -> $SFL_HOST:.local/share/kandev/         (no --delete)"
+echo "About to push (as root, ssh as $OFFICE_USER, --chown=$OFFICE_USER:$OFFICE_USER on dest):"
+echo "  $CODE_DIR/        -> $OFFICE_HOST:Code/                        (with --delete)"
+echo "  $KANDEV_DIR/      -> $OFFICE_HOST:.local/share/kandev/         (no --delete)"
 read -r -p "Continue? [y/N] " ans
 [[ "$ans" =~ ^[Yy]$ ]] || { echo "aborted"; exit 1; }
 
-echo ">> stopping kandev on sfl-desktop (avoid sqlite write during sync)..."
-$SSH_CMD "$SFL_HOST" "cd ~/Code/kandev 2>/dev/null && docker compose stop kandev 2>/dev/null || docker stop kandev 2>/dev/null || true"
+echo ">> stopping kandev on office-desktop (avoid sqlite write during sync)..."
+$SSH_CMD "$OFFICE_HOST" "cd ~/Code/kandev 2>/dev/null && docker compose stop kandev 2>/dev/null || docker stop kandev 2>/dev/null || true"
 
 RSYNC_EXCLUDES=(
-  # ── mini-desktop infra service dirs (systemd-managed, not workspace projects) ──
+  # ── home-server infra service dirs (systemd-managed, not workspace projects) ──
   --exclude '/kandev' --exclude '/vpn' --exclude '/reverse-proxy'
   --exclude '/nextcloud-data' --exclude '/nanoclaw' --exclude '/vaultwarden'
   --exclude '/agent-os' --exclude '/onecli' --exclude '/vibe-kanban'
@@ -90,17 +97,17 @@ RSYNC_EXCLUDES=(
 echo ">> rsync Code/ ..."
 rsync -avz --delete \
   -e "$SSH_CMD" \
-  --chown="$SFL_USER:$SFL_USER" \
+  --chown="$OFFICE_USER:$OFFICE_USER" \
   "${RSYNC_EXCLUDES[@]}" \
-  "$CODE_DIR/" "$SFL_HOST:Code/"
+  "$CODE_DIR/" "$OFFICE_HOST:Code/"
 
 echo ">> rsync kandev data ..."
 rsync -avz \
   -e "$SSH_CMD" \
-  --chown="$SFL_USER:$SFL_USER" \
-  "$KANDEV_DIR/" "$SFL_HOST:.local/share/kandev/"
+  --chown="$OFFICE_USER:$OFFICE_USER" \
+  "$KANDEV_DIR/" "$OFFICE_HOST:.local/share/kandev/"
 
-echo ">> restarting kandev on sfl-desktop ..."
-$SSH_CMD "$SFL_HOST" "cd ~/Code/kandev 2>/dev/null && docker compose up -d kandev 2>/dev/null || docker start kandev 2>/dev/null || true"
+echo ">> restarting kandev on office-desktop ..."
+$SSH_CMD "$OFFICE_HOST" "cd ~/Code/kandev 2>/dev/null && docker compose up -d kandev 2>/dev/null || docker start kandev 2>/dev/null || true"
 
-echo "Done. sfl-desktop is now in sync with mini-desktop."
+echo "Done. office-desktop is now in sync with home-server."

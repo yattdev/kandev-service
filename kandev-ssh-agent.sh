@@ -9,6 +9,13 @@
 #   bash ~/Code/kandev/kandev-ssh-agent.sh ~/.ssh/other_key   # add extra key
 set -euo pipefail
 
+# ── Machine-specific overrides ───────────────────────────────────────────────
+# Load real hosts/users/IPs for THIS machine from a gitignored host.env so this
+# public repo stays free of private LAN details. See host.env.example. The
+# ${VAR:-default} placeholders below are only used when host.env is absent.
+_KANDEV_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+[ -f "$_KANDEV_DIR/host.env" ] && . "$_KANDEV_DIR/host.env"
+
 COMPOSE_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # ── Ensure an ssh-agent is running ───────────────────────────────────────────
@@ -22,8 +29,8 @@ fi
 KEYS=("$@")
 if [[ ${#KEYS[@]} -eq 0 ]]; then
     KEYS=(
-        "$HOME/.ssh/ayattara_key"
-        "$HOME/.ssh/github_yattdev_sfldesktop"
+        "$HOME/.ssh/id_ed25519"
+        "$HOME/.ssh/github_office"
     )
 fi
 

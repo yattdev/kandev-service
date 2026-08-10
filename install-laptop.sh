@@ -1,33 +1,41 @@
 #!/usr/bin/env bash
-# install-yattara.sh — Idempotent kandev setup for yattara-pc.
+# install-laptop.sh — Idempotent kandev setup for laptop.
 #
-# Sets up a full kandev instance identical to sfl-desktop:
+# Sets up a full kandev instance identical to office-desktop:
 #   - Systemd user unit (autostart on login/boot via linger)
 #   - iptables NAT: port 80 → 38429 (persisted across reboots)
 #   - DNS: 127.0.0.1 board.local in /etc/hosts
-#   - Litestream: restore from mini-desktop replica on start
-#   - Restic: daily backup snapshot to mini-desktop repo
+#   - Litestream: restore from home-server replica on start
+#   - Restic: daily backup snapshot to home-server repo
 #
-# Run as the normal user (yattara):  bash ~/Code/kandev/install-yattara.sh
+# Run as the normal user (carol):  bash ~/Code/kandev/install-laptop.sh
 # Will prompt for sudo password when needed.
 set -euo pipefail
+
+# ── Machine-specific overrides ───────────────────────────────────────────────
+# Load real hosts/users/IPs for THIS machine from a gitignored host.env so this
+# public repo stays free of private LAN details. See host.env.example. The
+# ${VAR:-default} placeholders below are only used when host.env is absent.
+_KANDEV_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+[ -f "$_KANDEV_DIR/host.env" ] && . "$_KANDEV_DIR/host.env"
 
 USER_HOME="$HOME"
 USER_NAME="$(whoami)"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-MINI_HOST="${MINI_HOST:-10.0.0.182}"
-MINI_USER="${MINI_USER:-alassane}"
-SSH_KEY="${SSH_KEY:-$USER_HOME/.ssh/yattara-pc}"
+MINI_HOST="${MINI_HOST:-10.0.0.20}"
+MINI_USER="${MINI_USER:-bob}"
+SSH_KEY="${SSH_KEY:-$USER_HOME/.ssh/laptop}"
 RESTIC_REPO="${RESTIC_REPO:-sftp:${MINI_USER}@${MINI_HOST}:restic-repos/kandev-backup}"
 
-echo "[install-yattara] user=$USER_NAME home=$USER_HOME"
+echo "[install-laptop] user=$USER_NAME home=$USER_HOME"
 
 # ── 0. Host identity for Litestream replica path + active-writer lock ───────
-# Each satellite host gets its OWN replica subdir on mini (never shared —
+# Each satellite host gets its OWN replica subdir on home (never shared —
 # sharing one path across multiple writers is what caused the 2026-07-07/08
 # data-loss incidents). kandev-start.sh reads this file to pick its path.
-echo "yattara" > "$USER_HOME/.kandev-host-id"
-echo "[install-yattara] host-id set to 'yattara' ($USER_HOME/.kandev-host-id)"
+HOST_ID="${KANDEV_HOST_ID:-laptop}"
+echo "$HOST_ID" > "$USER_HOME/.kandev-host-id"
+echo "[install-laptop] host-id set to '$HOST_ID' ($USER_HOME/.kandev-host-id)"
 
 # ── 1. Required directories ──────────────────────────────────────────────────
 mkdir -p "$USER_HOME/logs" \
@@ -42,36 +50,36 @@ if [[ -L "$KANDEV_DATA/Code" ]]; then
 fi
 if [[ ! -d "$KANDEV_DATA/Code" ]]; then
     mkdir -p "$KANDEV_DATA/Code"
-    echo "[install-yattara] created $KANDEV_DATA/Code (mountpoint for ~/Code bind)"
+    echo "[install-laptop] created $KANDEV_DATA/Code (mountpoint for ~/Code bind)"
 fi
 
 # ── 2. Litestream config ─────────────────────────────────────────────────────
 LITESTREAM_CFG="$USER_HOME/.config/litestream/litestream.yml"
 
-# Verify SSH key reaches mini-desktop
+# Verify SSH key reaches home-server
 if [[ -f "$SSH_KEY" ]]; then
     if ! ssh -i "$SSH_KEY" -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new \
          "${MINI_USER}@${MINI_HOST}" true 2>/dev/null; then
-        echo "[install-yattara] WARNING: $SSH_KEY cannot reach ${MINI_USER}@${MINI_HOST}"
-        echo "  Ensure your public key is in mini-desktop's authorized_keys:"
+        echo "[install-laptop] WARNING: $SSH_KEY cannot reach ${MINI_USER}@${MINI_HOST}"
+        echo "  Ensure your public key is in home-server's authorized_keys:"
         echo "  ssh-copy-id -i ${SSH_KEY}.pub ${MINI_USER}@${MINI_HOST}"
     else
-        echo "[install-yattara] SSH to mini-desktop OK (key: $SSH_KEY)"
-        # Ensure public key is in mini's authorized_keys (needed for Litestream container)
+        echo "[install-laptop] SSH to home-server OK (key: $SSH_KEY)"
+        # Ensure public key is in home's authorized_keys (needed for Litestream container)
         PUBKEY_CONTENT=$(ssh-keygen -y -f "$SSH_KEY" 2>/dev/null || cat "${SSH_KEY}.pub" 2>/dev/null || true)
         if [[ -n "$PUBKEY_CONTENT" ]]; then
             if ! ssh -i "$SSH_KEY" -o BatchMode=yes -o ConnectTimeout=5 \
                  "${MINI_USER}@${MINI_HOST}" "grep -qF '$(echo $PUBKEY_CONTENT | awk '{print $2}')' ~/.ssh/authorized_keys" 2>/dev/null; then
                 ssh -i "$SSH_KEY" -o BatchMode=yes -o ConnectTimeout=5 \
                     "${MINI_USER}@${MINI_HOST}" "echo '$PUBKEY_CONTENT' >> ~/.ssh/authorized_keys"
-                echo "[install-yattara] Public key added to mini-desktop authorized_keys"
+                echo "[install-laptop] Public key added to home-server authorized_keys"
             else
-                echo "[install-yattara] Public key already in mini-desktop authorized_keys"
+                echo "[install-laptop] Public key already in home-server authorized_keys"
             fi
         fi
     fi
 else
-    echo "[install-yattara] WARNING: SSH key not found: $SSH_KEY"
+    echo "[install-laptop] WARNING: SSH key not found: $SSH_KEY"
 fi
 
 # Copy SSH key and known_hosts into litestream config dir (world-readable for container)
@@ -91,22 +99,22 @@ dbs:
         user: "${MINI_USER}"
         key-path: /etc/litestream/litestream-key
         known-hosts-path: /etc/litestream/known_hosts
-        path: /home/${MINI_USER}/litestream-replicas/kandev/yattara
+        path: /home/${MINI_USER}/litestream-replicas/kandev/${HOST_ID}
 EOF
-echo "[install-yattara] Litestream config written: $LITESTREAM_CFG (replica path: kandev/yattara — dedicated, not shared)"
+echo "[install-laptop] Litestream config written: $LITESTREAM_CFG (replica path: kandev/${HOST_ID} — dedicated, not shared)"
 
 # ── 3. Restic password ───────────────────────────────────────────────────────
 RESTIC_PASSWORD_FILE="$USER_HOME/.config/restic/kandev-backup-password"
 if [[ ! -f "$RESTIC_PASSWORD_FILE" ]]; then
-    echo "[install-yattara] ⚠️  Restic password file missing: $RESTIC_PASSWORD_FILE"
-    echo "  Copy it from mini-desktop:"
+    echo "[install-laptop] ⚠️  Restic password file missing: $RESTIC_PASSWORD_FILE"
+    echo "  Copy it from home-server:"
     echo "  scp ${MINI_USER}@${MINI_HOST}:.config/restic/kandev-backup-password $RESTIC_PASSWORD_FILE"
     echo "  chmod 600 $RESTIC_PASSWORD_FILE"
     echo ""
     echo "  Then re-run this script."
     echo "  (Continuing without restic backup...)"
 else
-    echo "[install-yattara] Restic password file found: $RESTIC_PASSWORD_FILE"
+    echo "[install-laptop] Restic password file found: $RESTIC_PASSWORD_FILE"
 fi
 
 # ── 4. Systemd user unit ─────────────────────────────────────────────────────
@@ -135,15 +143,15 @@ EOF
 
 systemctl --user daemon-reload
 systemctl --user enable kandev
-echo "[install-yattara] systemd unit written + enabled"
+echo "[install-laptop] systemd unit written + enabled"
 
 # ── 5. Enable lingering ───────────────────────────────────────────────────────
 if ! loginctl show-user "$USER_NAME" 2>/dev/null | grep -q "Linger=yes"; then
-    echo "[install-yattara] enabling linger (requires sudo)..."
+    echo "[install-laptop] enabling linger (requires sudo)..."
     sudo loginctl enable-linger "$USER_NAME"
-    echo "[install-yattara] linger enabled"
+    echo "[install-laptop] linger enabled"
 else
-    echo "[install-yattara] linger already enabled"
+    echo "[install-laptop] linger already enabled"
 fi
 
 # ── 6. UFW: open ports ───────────────────────────────────────────────────────
@@ -151,37 +159,37 @@ if command -v ufw &>/dev/null; then
     UFW_STATUS=$(sudo ufw status 2>/dev/null || true)
     if ! echo "$UFW_STATUS" | grep -q "38429"; then
         sudo ufw allow 38429/tcp comment "kandev"
-        echo "[install-yattara] ufw: 38429/tcp opened"
+        echo "[install-laptop] ufw: 38429/tcp opened"
     fi
     if ! echo "$UFW_STATUS" | grep -qE ' 80[/ ]'; then
         sudo ufw allow 80/tcp comment "kandev-web"
-        echo "[install-yattara] ufw: 80/tcp opened"
+        echo "[install-laptop] ufw: 80/tcp opened"
     fi
 fi
 
 # ── 7. Port 80 → 38429 NAT redirect ──────────────────────────────────────────
 # PREROUTING: external traffic (other LAN devices)
-# OUTPUT:     localhost traffic (browser on yattara-pc itself → board.local)
+# OUTPUT:     localhost traffic (browser on laptop itself → board.local)
 
 if ! sudo iptables -t nat -C PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 38429 2>/dev/null; then
     sudo iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 38429
-    echo "[install-yattara] iptables: PREROUTING redirect added (80 → 38429)"
+    echo "[install-laptop] iptables: PREROUTING redirect added (80 → 38429)"
 fi
 
 # IMPORTANT: scope to -d 127.0.0.1/32 only. An unscoped OUTPUT rule matches
-# ANY destination on port 80 (board.sfl, board.home, even unrelated websites),
+# ANY destination on port 80 (board.office, board.home, even unrelated websites),
 # silently redirecting them all to this host's own local kandev instead of the
-# real remote host. This caused board.sfl/board.home to appear to load but
-# show local/stale data when browsed from yattara-pc.
+# real remote host. This caused board.office/board.home to appear to load but
+# show local/stale data when browsed from laptop.
 if ! sudo iptables -t nat -C OUTPUT -d 127.0.0.1/32 -p tcp --dport 80 -j REDIRECT --to-port 38429 2>/dev/null; then
     sudo iptables -t nat -A OUTPUT -d 127.0.0.1/32 -p tcp --dport 80 -j REDIRECT --to-port 38429
-    echo "[install-yattara] iptables: OUTPUT redirect added (80 → 38429, scoped to 127.0.0.1 only)"
+    echo "[install-laptop] iptables: OUTPUT redirect added (80 → 38429, scoped to 127.0.0.1 only)"
 fi
 
 # Remove any pre-existing unscoped OUTPUT rule from a previous (buggy) run
 if sudo iptables -t nat -C OUTPUT -p tcp --dport 80 -j REDIRECT --to-port 38429 2>/dev/null; then
     sudo iptables -t nat -D OUTPUT -p tcp --dport 80 -j REDIRECT --to-port 38429
-    echo "[install-yattara] iptables: removed unscoped OUTPUT redirect (security/correctness fix)"
+    echo "[install-laptop] iptables: removed unscoped OUTPUT redirect (security/correctness fix)"
 fi
 
 # Persist: prefer UFW before.rules if present, else iptables-persistent
@@ -192,42 +200,42 @@ if [[ -f "$BEFORE_RULES" ]]; then
     # Remove any previously-persisted unscoped OUTPUT rule (buggy — matches all destinations)
     if sudo grep -q '^-A OUTPUT -p tcp --dport 80 -j REDIRECT --to-port 38429$' "$BEFORE_RULES" 2>/dev/null; then
         sudo sed -i '/^-A OUTPUT -p tcp --dport 80 -j REDIRECT --to-port 38429$/d' "$BEFORE_RULES"
-        echo "[install-yattara] removed unscoped OUTPUT redirect from before.rules"
+        echo "[install-laptop] removed unscoped OUTPUT redirect from before.rules"
     fi
     if ! sudo grep -q "REDIRECT.*38429" "$BEFORE_RULES" 2>/dev/null; then
         sudo sed -i '/^\*filter/i # kandev: port 80 → 38429\n*nat\n:PREROUTING ACCEPT [0:0]\n:OUTPUT ACCEPT [0:0]\n-A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 38429\n-A OUTPUT -d 127.0.0.1/32 -p tcp --dport 80 -j REDIRECT --to-port 38429\nCOMMIT\n' "$BEFORE_RULES"
         sudo ufw reload
-        echo "[install-yattara] redirects persisted in ufw/before.rules"
+        echo "[install-laptop] redirects persisted in ufw/before.rules"
     fi
 elif command -v iptables-save &>/dev/null; then
     sudo iptables-save | sudo tee "$IPTABLES_RULES" > /dev/null
-    echo "[install-yattara] redirects persisted via iptables-save"
+    echo "[install-laptop] redirects persisted via iptables-save"
 fi
 
 # ── 8. DNS: board.local → localhost ──────────────────────────────────────────
 if ! grep -q "board.local" /etc/hosts 2>/dev/null; then
     echo "127.0.0.1 board.local" | sudo tee -a /etc/hosts > /dev/null
-    echo "[install-yattara] Added 127.0.0.1 board.local to /etc/hosts"
+    echo "[install-laptop] Added 127.0.0.1 board.local to /etc/hosts"
 else
-    echo "[install-yattara] board.local already in /etc/hosts"
+    echo "[install-laptop] board.local already in /etc/hosts"
 fi
 
 # ── 9. Initial restore + start ───────────────────────────────────────────────
-echo "[install-yattara] Starting kandev (restoring from mini-desktop replica)..."
+echo "[install-laptop] Starting kandev (restoring from home-server replica)..."
 bash "$SCRIPT_DIR/kandev-start.sh"
 
 # ── 10. Crons ────────────────────────────────────────────────────────────────
 UPDATE_ENTRY="30 3 * * * bash $USER_HOME/Code/kandev/update.sh >> $USER_HOME/logs/kandev-update.log 2>&1"
 if ! crontab -l 2>/dev/null | grep -q "kandev/update.sh"; then
     ( crontab -l 2>/dev/null; echo "$UPDATE_ENTRY" ) | crontab -
-    echo "[install-yattara] cron: daily update added (03:30)"
+    echo "[install-laptop] cron: daily update added (03:30)"
 fi
 
 if [[ -f "$RESTIC_PASSWORD_FILE" ]]; then
     BACKUP_ENTRY="0 3 * * * RESTIC_REPO=$RESTIC_REPO bash $USER_HOME/Code/kandev/kandev-restic-backup.sh >> $USER_HOME/logs/kandev-backup.log 2>&1"
     if ! crontab -l 2>/dev/null | grep -q "kandev-restic-backup.sh"; then
         ( crontab -l 2>/dev/null; echo "$BACKUP_ENTRY" ) | crontab -
-        echo "[install-yattara] cron: daily restic backup added (03:00)"
+        echo "[install-laptop] cron: daily restic backup added (03:00)"
     fi
 fi
 
@@ -236,14 +244,14 @@ fi
 PULL_ENTRY="0 6,13,18 * * * bash $USER_HOME/Code/kandev/kandev-pull.sh >> $USER_HOME/logs/kandev-sync.log 2>&1"
 if ! crontab -l 2>/dev/null | grep -q "kandev-pull.sh"; then
     ( crontab -l 2>/dev/null; echo "$PULL_ENTRY" ) | crontab -
-    echo "[install-yattara] cron: periodic pull added (06:00/13:00/18:00)"
+    echo "[install-laptop] cron: periodic pull added (06:00/13:00/18:00)"
 fi
 
 echo ""
-echo "✅  install-yattara done"
+echo "✅  install-laptop done"
 echo "   direct:    http://localhost:38429"
 echo "   web:       http://board.local  (127.0.0.1 via /etc/hosts)"
 echo "   systemd:   systemctl --user status kandev"
-echo "   litestream: replicating kandev.db → ${MINI_USER}@${MINI_HOST}:litestream-replicas/kandev/yattara/"
+echo "   litestream: replicating kandev.db → ${MINI_USER}@${MINI_HOST}:litestream-replicas/kandev/${HOST_ID}/"
 echo "   backup:    daily 03:00 → ~/logs/kandev-backup.log"
 echo "   update:    daily 03:30 → ~/logs/kandev-update.log"

@@ -2,7 +2,7 @@
 # /etc/mise/config.toml by Dockerfile.local.
 #
 # Purpose: give the container the SAME language toolset as the host
-# (sfl-desktop) without editing the Dockerfile for every project. The versions
+# (office-desktop) without editing the Dockerfile for every project. The versions
 # below are the global defaults (matched to the host at setup time); any
 # project can override them with its own mise.toml / .tool-versions / .nvmrc /
 # .python-version / .ruby-version file and mise will auto-install the requested
