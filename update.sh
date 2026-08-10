@@ -109,12 +109,89 @@ else
 fi
 
 if [[ "$REBUILD" -eq 1 ]]; then
+    # ── Preflight: free disk space ───────────────────────────────────────────
+    # A full disk does NOT fail the build with an obvious "out of space" error.
+    # apt inside `docker build` writes truncated repository index files and then
+    # rejects them with
+    #     "At least one invalid signature was encountered"
+    #     "E: The repository '...' is not signed"
+    # which reads like a GPG/keyring or transparent-proxy problem and sends
+    # debugging in completely the wrong direction. Real incident: / filled up
+    # with containerd image layers (89G) and every nightly rebuild failed this
+    # way, looking like repo corruption.
+    #
+    # Both filesystems matter and they are often NOT the same one: this daemon
+    # uses the containerd image store, so layers land in /var/lib/containerd
+    # (on /) while the docker data root may be a separate partition.
+    MIN_FREE_GB="${MIN_FREE_GB:-15}"
+    free_gb() {
+        df -BG --output=avail "$1" 2>/dev/null | tail -1 | tr -dc '0-9'
+    }
+    SPACE_OK=1
+    DOCKER_ROOT=$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo "/var/lib/docker")
+    for path in "/" "$DOCKER_ROOT"; do
+        avail=$(free_gb "$path")
+        if [[ -z "$avail" ]]; then
+            log "WARNING: could not determine free space for $path — continuing anyway."
+            continue
+        fi
+        log "Free space on $path: ${avail}G"
+        if (( avail < MIN_FREE_GB )); then
+            log "CRITICAL: only ${avail}G free on $path; need >= ${MIN_FREE_GB}G to rebuild."
+            SPACE_OK=0
+        fi
+    done
+    if [[ "$SPACE_OK" -eq 0 ]]; then
+        log "Aborting BEFORE the build: a full disk makes 'docker build' fail with"
+        log "misleading apt GPG/'not signed' errors rather than a disk-space error."
+        log "Reclaim space, e.g.:"
+        log "    docker system prune            # unused images/containers/build cache"
+        log "    sudo journalctl --vacuum-size=200M"
+        log "    sudo du -xh --max-depth=1 /var/lib | sort -rh | head"
+        log "Override the threshold with MIN_FREE_GB=<n> if you know better."
+        exit 1
+    fi
+
     log "Rebuilding local image (Dockerfile.local): $REBUILD_REASON"
+
+    # Retry transient build failures. A nightly --no-cache rebuild re-downloads
+    # every apt package and every curl'd artifact, so a single bad CDN node or a
+    # momentary proxy hiccup fails the entire update. Observed in practice:
+    # deb.debian.org served a 5.7 kB HTML error page instead of the .deb,
+    # yielding "Hash Sum mismatch" / "Unable to fetch some archives"; the exact
+    # same build succeeded minutes later with no changes at all. Without a retry
+    # the cron run just dies and kandev silently stays on the old image.
+    #
     # KANDEV_BASE_IMAGE_ID feeds docker-compose.override.yml's BASE_IMAGE_ID
     # build arg (and thus the com.kandev.base-id label on the built image).
-    KANDEV_BASE_IMAGE_ID="$UPSTREAM_ID" \
-        docker compose -p kandev build --no-cache \
-        --build-arg BASE_IMAGE_ID="$UPSTREAM_ID" 2>&1 | tee -a "$LOG_FILE"
+    BUILD_RETRIES="${BUILD_RETRIES:-3}"
+    BUILD_RETRY_DELAY="${BUILD_RETRY_DELAY:-30}"
+    build_ok=0
+    for attempt in $(seq 1 "$BUILD_RETRIES"); do
+        log "Build attempt ${attempt}/${BUILD_RETRIES} ..."
+        # `set +e` + PIPESTATUS: the exit status of the pipeline is tee's, not
+        # docker's, so the build result must be read from PIPESTATUS[0].
+        set +e
+        KANDEV_BASE_IMAGE_ID="$UPSTREAM_ID" \
+            docker compose -p kandev build --no-cache \
+            --build-arg BASE_IMAGE_ID="$UPSTREAM_ID" 2>&1 | tee -a "$LOG_FILE"
+        rc=${PIPESTATUS[0]}
+        set -e
+        if [[ "$rc" -eq 0 ]]; then
+            build_ok=1
+            break
+        fi
+        log "Build attempt ${attempt} failed (exit $rc)."
+        if [[ "$attempt" -lt "$BUILD_RETRIES" ]]; then
+            log "Retrying in ${BUILD_RETRY_DELAY}s — transient mirror/proxy failures are common here."
+            sleep "$BUILD_RETRY_DELAY"
+        fi
+    done
+    if [[ "$build_ok" -ne 1 ]]; then
+        log "CRITICAL: local image build failed after ${BUILD_RETRIES} attempts — aborting update."
+        log "The running container is left untouched on its current image."
+        exit 1
+    fi
     log "Local image rebuilt."
 fi
 

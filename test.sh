@@ -176,7 +176,10 @@ fi
 # exists on disk. The exact filename is host-specific (each host's ~/.ssh
 # uses its own key names), so this is intentionally not hardcoded to one
 # host's key — it only checks that resolution + the key file both work.
-GH_KEY=$(docker exec -u kandev kandev ssh -G github.com 2>/dev/null | grep '^identityfile' | head -1 | awk '{print $2}')
+# Same SIGPIPE hazard as the java check below: `head -1` closing the pipe can
+# kill the upstream `docker exec` with 141 and abort the suite under pipefail.
+# This awk prints only the first match but still drains the whole stream.
+GH_KEY=$(docker exec -u kandev kandev ssh -G github.com 2>/dev/null | awk '/^identityfile/ { if (!seen++) print $2 }')
 GH_KEY_EXISTS=$(docker exec -u kandev kandev sh -c "[ -n \"$GH_KEY\" ] && eval [ -f $GH_KEY ] && echo yes || echo no" 2>/dev/null)
 if [[ -n "$GH_KEY" && "$GH_KEY_EXISTS" == "yes" ]]; then
   ok "github.com resolves to an existing identity file ($GH_KEY)"
@@ -274,7 +277,13 @@ fi
 # `bash -c` shell. Guards against the shim/PATH regression where `java` resolves
 # in an interactive/login shell but not in the non-interactive shells agents use.
 if docker exec -u kandev kandev java -version >/dev/null 2>&1; then
-  JAVA_VER="$(docker exec -u kandev kandev java -version 2>&1 | head -1)"
+  # NB: no `| head -1` here. Under `set -euo pipefail`, head closing the pipe
+  # after one line sends SIGPIPE to `docker exec`, which exits 141 and aborts
+  # the whole suite. That is a race — it only fires when the producer is still
+  # writing as head exits — so it made the run non-deterministic. Capture the
+  # full output, then take the first line with parameter expansion instead.
+  JAVA_VER="$(docker exec -u kandev kandev java -version 2>&1)"
+  JAVA_VER="${JAVA_VER%%$'\n'*}"
   ok "java runs in container ($JAVA_VER)"
 else
   fail "java installed but not runnable in container (shim missing / not on PATH)"
