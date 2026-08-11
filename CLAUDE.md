@@ -88,7 +88,7 @@ curl -s -o /dev/null -w "HTTP %{http_code}" http://localhost:38429/
 2. Rebuild if Dockerfile.local was modified:  docker compose build
 3. Restart container if compose files changed: docker compose up -d --force-recreate
 4. Run:  bash ~/Code/kandev/test.sh
-5. All 48 tests must be green
+5. All 56 tests must be green
 6. Commit
 7. Only then report the task as complete
 ```
@@ -218,6 +218,70 @@ in `~/.cache/ms-playwright`, which is persistent because `HOME=/data/home`
 `test.sh` section 9 covers all of this, including a real headless render as user
 `kandev` with **no** extra flags — that test is what proves the wrapper is in place.
 
+### Docker-out-of-Docker and the host-path wrapper
+
+`docker-compose.yml` bind-mounts `/var/run/docker.sock`. The container runs **no daemon
+of its own** — the `docker` CLI is just an HTTP client, so every command it issues is
+serviced by the **host's** daemon and every container it starts is a **sibling on the
+host**, not a nested child. (`docker ps` inside the container lists the host's containers,
+including `kandev` itself.) Three things make it work, and all three are required:
+
+1. `docker-ce-cli` + the compose/buildx plugins in `Dockerfile.local` — client only.
+2. The socket mount.
+3. **Matching group GID.** The socket is `srw-rw---- root:docker`, so `Dockerfile.local`
+   forces the container's `docker` group to the host's GID (`DOCKER_GID`, default 984)
+   and adds `kandev` to it. The kernel checks the *number*, not the name — a mismatch
+   gives `permission denied` on every command.
+
+**The trap this creates.** The host daemon resolves every bind-mount source against the
+**host** filesystem. Container-only paths do not exist there:
+
+| Inside the container | On the host |
+|---|---|
+| `/data/tasks/<task>/<repo>` | `~/.local/share/kandev/tasks/<task>/<repo>` |
+| `/data/home/Code/<project>` | `~/Code/<project>` |
+
+Docker does **not** error on a missing bind source — it creates an empty root-owned
+directory and mounts that. The sibling container comes up with an empty `/app`, the agent
+concludes "my changes aren't showing up", and stray root-owned trees accumulate under the
+host's `/data`. Nothing in the output hints at it. This bit twice in practice: a leftover
+`/data/tasks/we-have-been-worked_yvbdlyql/performcoop` on the host, and the
+`kandev-plugin-notes-docker-qa` container running for two days on an orphaned empty mount.
+
+**The fix.** `docker-host-path-wrapper.sh` is installed as `/usr/local/bin/docker`, ahead
+of `/usr/bin/docker` on `PATH` (the same shadowing trick as the `google-chrome`
+`--no-sandbox` wrapper). It rewrites container paths to host paths using the
+`KANDEV_HOST_HOME` / `KANDEV_HOST_DATA_DIR` / `KANDEV_HOST_CODE_DIR` env vars set in
+`docker-compose.override.yml` — the inverse of the declared mounts, so nothing is
+hardcoded per host. It covers:
+
+- `-v` / `--volume` sources and `--mount source=`/`src=` (all subcommands)
+- `-f` / `--file` and `--project-directory` (**compose only** — `docker build -f` reads
+  that file from *our* filesystem, so rewriting it there would break the build)
+- the **working directory** for `docker compose`, which is what makes a project's own
+  unmodified compose file work: relative sources like `.:/var/www/html` are resolved by
+  the compose CLI against the project directory, so running from the host-equivalent
+  directory makes them come out as host paths
+
+Left alone: named volumes (`myvol:/data`), anonymous volumes, and container-internal
+flags like `-w`.
+
+`docker-compose.override.yml` also adds **identity mounts** — `~/Code` and
+`~/.local/share/kandev` mounted a second time at their own host paths. Nothing in kandev
+reads them there; they exist so a rewritten host path is still readable inside the
+container, which is what lets the wrapper `cd` into it and lets the compose CLI read the
+compose file and build context afterwards.
+
+**Escape hatch:** `/usr/bin/docker` is the untouched CLI, for when you really do mean a
+path exactly as the host sees it. **Debug:** `docker --kandev-print-argv <args>` prints
+the rewritten argv instead of executing. `test.sh` section 11 asserts the mapping,
+including two end-to-end checks that a sibling container actually receives the real files.
+
+**When adding a new host mount**, add the inverse entry to the `KANDEV_HOST_*` env vars
+and to the `MAPPINGS` table in `docker-host-path-wrapper.sh` — nested mounts must be
+listed **before** the `/data` catch-all (first match wins), or they resolve to their empty
+mountpoints instead of the real files.
+
 ### Transparent proxy (office-desktop)
 
 The corporate network uses a transparent proxy that intercepts HTTP/HTTPS and injects
@@ -241,11 +305,12 @@ Use `kandev-ssh-agent.sh` when:
 | `docker-compose.yml` | Base service: upstream image, restart policy, `network_mode: host`, core env vars and volumes |
 | `docker-compose.override.yml` | Local build, `USER`/`LOGNAME` env, SSH/git/gh/glab identity mounts |
 | `docker-compose.ssh-agent.yml` | Optional SSH agent socket overlay |
-| `Dockerfile.local` | Extends upstream: adds SSH, gh, glab, Docker CLI, build toolchain, mise, Chrome + chromedriver, sqlite3 (for hot DB backup); patches git and entrypoint |
+| `Dockerfile.local` | Extends upstream: adds SSH, gh, glab, Docker CLI (+ host-path wrapper), build toolchain, mise, Chrome + chromedriver, sqlite3 (for hot DB backup); patches git and entrypoint |
 | `docker-entrypoint-local.sh` | Upstream entrypoint + `|| true` chown fix for :ro mounts |
+| `docker-host-path-wrapper.sh` | Installed as `/usr/local/bin/docker`: rewrites container-only bind-mount paths to their host equivalents before calling the real CLI |
 | `mise.default.toml` | System-wide mise config (`/etc/mise/config.toml`): global language versions matched to host |
 | `setup-toolchains.sh` | One-time helper: installs the mise language toolchains into the persistent `/data` volume |
-| `test.sh` | 48 automated tests covering image, container, service, identity, SSH, git, CLI tools, toolchains (incl. Java JDK), sqlite3, headless browser |
+| `test.sh` | 56 automated tests covering image, container, service, identity, SSH, git, CLI tools, toolchains (incl. Java JDK), sqlite3, headless browser, Docker host-path wrapper |
 | `update.sh` | Daily cron: pull upstream → rebuild local → restart if changed |
 | `host.env` | **Git-ignored.** Real hosts/users/IPs for this machine + placeholder→real map (agent reference). Sourced by every script. |
 | `host.env.example` | Committed template for `host.env`; copy and fill in per host. |
@@ -267,6 +332,7 @@ Use `kandev-ssh-agent.sh` when:
 | `gh`/`glab` not authenticated after rebuild | Config mount missing or wrong path | Check `~/.config/gh` and `~/.config/glab-cli` are mounted rw |
 | `$USER` = `kandev` instead of `alice` | `USER` env missing from override | Check `docker-compose.override.yml` `environment:` block |
 | SSH uses wrong key for a host | `~/.ssh` not mounted or `HOME` wrong | Verify mount and `HOME=/data/home` |
+| A container started **from inside kandev** comes up with an empty `/app` (or empty data dir); "my code changes aren't showing up"; empty root-owned directories appear on the host under `/data` | The mounted socket drives the **host** daemon, which resolves bind sources on the **host** filesystem. A container-only path (`/data/...`) does not exist there, and Docker creates it empty instead of failing — see *Docker-out-of-Docker and the host-path wrapper* above | Should be handled automatically by `/usr/local/bin/docker`. If it recurs: check `docker exec -u kandev kandev bash -lc 'command -v docker'` returns `/usr/local/bin/docker` and that `KANDEV_HOST_*` are set; `docker --kandev-print-argv <args>` shows what the rewrite produces. Anything invoking `/usr/bin/docker` by absolute path bypasses the wrapper. Clean up strays with `docker run --rm -v /:/host debian:bookworm-slim rm -rf /host/data/<stray>` (host `sudo` needs a password) |
 | `http://board.office` unreachable | iptables NAT rules missing after reboot | Re-run `install-office.sh` or apply rules via privileged container (see README) |
 | `http://board.office` unreachable after our changes | Container crash-loop | Check `docker inspect kandev --format '{{.RestartCount}}'`; run `test.sh` |
 | `http://board.office` (or `board.home`, or literally any `http://` site) shows the **wrong data** or a stale/empty "Default Workspace" **when browsed from laptop** | `install-laptop.sh` set an **unscoped** iptables `OUTPUT` NAT redirect — `-A OUTPUT -p tcp --dport 80 -j REDIRECT --to-port 38429` has no `-d` filter, so it matches port-80 packets to **any destination**, silently rewriting them to laptop's own local kandev (127.0.0.1:38429) instead of letting them leave the host. Confirmed by stopping laptop's local kandev container: `board.office:80` then failed outright (connection refused) instead of reaching office-desktop — proving the request never left the machine. (Earlier guess blaming the Corp corporate VPN was wrong — ruled out once the local-redirect rule was found.) | Fixed in `install-laptop.sh`: the OUTPUT rule is now scoped with `-d 127.0.0.1/32` so it only catches the host's own loopback traffic (browser on laptop → `board.local`), and the old unscoped rule is actively removed (live + persisted in `/etc/ufw/before.rules`). Re-run `bash ~/Code/kandev/install-laptop.sh` (needs sudo) to apply after pulling this fix. |

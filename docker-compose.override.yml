@@ -46,6 +46,17 @@ services:
       # consistent identity reporting across all tooling.
       - LOGNAME=${USER}
 
+      # ── Host-path map for the Docker CLI wrapper ─────────────────────────────
+      # The mounted docker.sock points at the HOST daemon, so it resolves every
+      # bind-mount source on the HOST filesystem — container-only paths silently
+      # become empty root-owned directories up there. /usr/local/bin/docker
+      # (docker-host-path-wrapper.sh) rewrites them using these three values,
+      # which are simply the inverse of the mounts declared below.
+      # Keep in sync with any new host mount.
+      - KANDEV_HOST_HOME=${HOME}
+      - KANDEV_HOST_DATA_DIR=${HOME}/.local/share/kandev
+      - KANDEV_HOST_CODE_DIR=${HOME}/Code
+
     volumes:
       # ── SSH ──────────────────────────────────────────────────────────────────
       # Full ~/.ssh directory: keys, config, known_hosts.
@@ -77,6 +88,19 @@ services:
       # Override DOCKER_GID if your host docker group GID differs from 984:
       #   DOCKER_GID=<gid> docker compose up -d
       - /var/run/docker.sock:/var/run/docker.sock
+
+      # ── Identity mounts (host path == container path) ─────────────────────────
+      # The same two directories as above, mounted a second time at the exact
+      # path the HOST knows them by. Nothing in kandev reads them here — they
+      # exist so that a host path stays valid inside the container:
+      #   * the CLI wrapper can chdir into the host-equivalent directory before
+      #     running `docker compose`, which is what makes relative sources in a
+      #     project's own compose file ("./src:/app") resolve to host paths;
+      #   * the compose CLI can then still read the compose file and build
+      #     context from that rewritten path.
+      # Cheap: a bind mount of an already-mounted directory, no extra storage.
+      - ${HOME}/.local/share/kandev:${HOME}/.local/share/kandev
+      - ${HOME}/Code:${HOME}/Code
 
     group_add:
       - "${DOCKER_GID:-984}"

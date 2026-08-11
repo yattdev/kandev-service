@@ -90,6 +90,10 @@ RUN if getent group docker > /dev/null 2>&1; then \
     fi \
     && usermod -aG docker kandev
 
+# NOTE: the host-path wrapper that shadows this CLI is installed near the end of
+# this file, so that editing it does not invalidate the cache for the expensive
+# toolchain and Chrome layers below.
+
 # ── Build toolchain + dev headers ─────────────────────────────────────────────
 # Needed so that (a) pip/npm/gem can compile native extensions on demand and
 # (b) mise can build Ruby and PHP from source. Baking these once means projects
@@ -280,6 +284,22 @@ ENV PATH="/data/home/.local/share/mise/shims:${PATH}"
 # or repos where the host path (/home/alice/...) differs from the container
 # path (/data/home/...) in the global gitconfig safe.directory entries.
 RUN git config --system safe.directory '*'
+
+# ── Host-path wrapper for the Docker CLI ──────────────────────────────────────
+# The mounted /var/run/docker.sock points at the HOST daemon, so that daemon
+# resolves every bind-mount source on the HOST filesystem. Container-only paths
+# (/data/..., /data/home/Code/...) do not exist up there, and Docker does not
+# error on a missing source — it silently creates an empty root-owned directory
+# and mounts that. Sibling containers then come up with an empty /app and stray
+# root-owned trees accumulate on the host.
+#
+# /usr/local/bin (ahead of /usr/bin on PATH) shadows the CLI with a wrapper that
+# maps those paths back to their host equivalents, using the KANDEV_HOST_* env
+# vars set in docker-compose.override.yml — the same shadowing trick as the
+# google-chrome --no-sandbox wrapper above. The untouched CLI stays reachable at
+# /usr/bin/docker. Kept last so edits here don't bust the toolchain cache.
+COPY docker-host-path-wrapper.sh /usr/local/bin/docker
+RUN chmod +x /usr/local/bin/docker
 
 # ── Entrypoint: tolerate read-only bind mounts ────────────────────────────────
 # The upstream entrypoint runs `chown -R kandev:kandev /data` under `set -e`.

@@ -421,6 +421,94 @@ else
   fail "kandev cannot write to /data"
 fi
 
+# ── 11. Docker host-path wrapper ──────────────────────────────────────────────
+# The mounted docker.sock drives the HOST daemon, which resolves bind-mount
+# sources on the HOST filesystem. Container-only paths do not exist there and
+# Docker does not error on a missing source — it creates an empty root-owned
+# directory and mounts that, silently. /usr/local/bin/docker rewrites those
+# paths; these tests are what prove the rewrite is actually in effect.
+section "11. Docker host-path wrapper"
+
+WRAPPER_PATH=$(docker exec -u kandev kandev bash -lc 'command -v docker' 2>/dev/null || echo "")
+if [[ "$WRAPPER_PATH" == "/usr/local/bin/docker" ]]; then
+  ok "docker resolves to the wrapper (/usr/local/bin/docker) ahead of /usr/bin"
+else
+  fail "docker resolves to '${WRAPPER_PATH}' (expected /usr/local/bin/docker)"
+fi
+
+# The wrapper is a no-op without these; they are the inverse of the mounts.
+HOST_ENV_OK=$(docker exec -u kandev kandev bash -lc \
+  '[[ -n "$KANDEV_HOST_HOME" && -n "$KANDEV_HOST_DATA_DIR" && -n "$KANDEV_HOST_CODE_DIR" ]] && echo yes || echo no' 2>/dev/null || echo "no")
+if [[ "$HOST_ENV_OK" == "yes" ]]; then
+  ok "KANDEV_HOST_HOME / _DATA_DIR / _CODE_DIR are set in the container"
+else
+  fail "KANDEV_HOST_* env vars missing — check docker-compose.override.yml"
+fi
+
+# /data/... -> host data dir
+TRANSLATED_DATA=$(docker exec -u kandev kandev bash -lc \
+  'docker --kandev-print-argv run -v /data/tasks/x/repo:/app img 2>/dev/null | grep ":/app"' 2>/dev/null || echo "")
+EXPECT_DATA="${HOME}/.local/share/kandev/tasks/x/repo:/app"
+if [[ "$TRANSLATED_DATA" == "$EXPECT_DATA" ]]; then
+  ok "-v /data/tasks/... rewritten to the host data dir"
+else
+  fail "-v /data/... rewrote to '${TRANSLATED_DATA}' (expected '${EXPECT_DATA}')"
+fi
+
+# /data/home/Code/... -> host ~/Code (must win over the /data catch-all)
+TRANSLATED_CODE=$(docker exec -u kandev kandev bash -lc \
+  'docker --kandev-print-argv run -v /data/home/Code/proj:/src img 2>/dev/null | grep ":/src"' 2>/dev/null || echo "")
+EXPECT_CODE="${HOME}/Code/proj:/src"
+if [[ "$TRANSLATED_CODE" == "$EXPECT_CODE" ]]; then
+  ok "-v /data/home/Code/... rewritten to the host Code dir"
+else
+  fail "-v /data/home/Code/... rewrote to '${TRANSLATED_CODE}' (expected '${EXPECT_CODE}')"
+fi
+
+# Named volumes and container-internal flags must be left alone.
+UNTOUCHED=$(docker exec -u kandev kandev bash -lc \
+  'docker --kandev-print-argv run -v myvol:/var/lib/mysql -w /data/foo img 2>/dev/null | tr "\n" " "' 2>/dev/null || echo "")
+if [[ "$UNTOUCHED" == *"myvol:/var/lib/mysql"* && "$UNTOUCHED" == *"-w /data/foo"* ]]; then
+  ok "named volumes and container-internal paths (-w) left untouched"
+else
+  fail "wrapper altered a named volume or -w path: '${UNTOUCHED}'"
+fi
+
+# Identity mounts: a host path must be readable inside the container, otherwise
+# the compose chdir cannot work.
+IDENTITY_OK=$(docker exec -u kandev kandev bash -lc \
+  "[[ -d '${HOME}/Code' && -d '${HOME}/.local/share/kandev' ]] && echo yes || echo no" 2>/dev/null || echo "no")
+if [[ "$IDENTITY_OK" == "yes" ]]; then
+  ok "identity mounts present (host paths valid inside the container)"
+else
+  fail "identity mounts missing — host paths not visible inside the container"
+fi
+
+# End-to-end: a sibling container started with a CONTAINER path must receive the
+# real files. Without the wrapper this mounts an empty directory and prints
+# nothing. Uses kandev-local:latest so no image pull is needed.
+E2E_MOUNT=$(docker exec -u kandev kandev bash -lc \
+  'docker run --rm -v /data/home/Code/kandev:/src kandev-local:latest ls /src 2>/dev/null | grep -c "^test.sh$"' 2>/dev/null || echo "0")
+if [[ "$E2E_MOUNT" == "1" ]]; then
+  ok "sibling container mounting a container path receives the real host files"
+else
+  fail "sibling container got an empty mount — host-path rewrite is not working"
+fi
+
+# End-to-end: relative sources in a project's own compose file ("./x:/app") are
+# resolved by the compose CLI against the working directory. This is the case
+# that caused the original stray root-owned trees under the host's /data.
+COMPOSE_SRC=$(docker exec -u kandev kandev bash -lc '
+  d=/data/.wrapper-selftest-$$
+  mkdir -p "$d" && printf "services:\n  app:\n    image: alpine\n    volumes:\n      - .:/app\n" > "$d/docker-compose.yml"
+  cd "$d" && docker compose config 2>/dev/null | grep "source:" | head -1 | awk "{print \$2}"
+  rm -rf "$d"' 2>/dev/null || echo "")
+if [[ "$COMPOSE_SRC" == "${HOME}/.local/share/kandev/"* ]]; then
+  ok "compose resolves relative volume sources to host paths"
+else
+  fail "compose relative source resolved to '${COMPOSE_SRC}' (expected a host path under ${HOME})"
+fi
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 TOTAL=$((PASS + FAIL))
 echo ""
