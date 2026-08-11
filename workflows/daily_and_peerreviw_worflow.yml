@@ -5,6 +5,7 @@ workflows:
       prompt: |-
         ## Orchestration Rules (always apply)
 
+        - **Signal completion or don't end.** When this step's work is fully done and verified, call `step_complete_kandev` exactly once — this is the ONLY way the task advances. Before your final message, self-check: "Did I call it?" If the tool isn't in your tool list, run tool discovery to load it; if still missing, flag then ask. Never call it early (while waiting, polling, or asking a question) and never end a finished step without it.
         - **PR merged/closed → Done.** Check PR state on every resume. If terminal, move the task to the Done step (resolve `workflow_step_id` via discovery, never hardcode). Can't move it? Flag then ask.
         - **≥2 repos or ≥2 PRs → subtasks.** One subtask per repo/PR; this task orchestrates. Submodule changes always use the subtask blocker flow.
         - **Own your subtasks.** On every resume, poll open subtasks first: review, answer flags, unblock. Never move parent to Done while a subtask is open. Stuck? Flag then ask.
