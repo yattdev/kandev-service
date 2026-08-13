@@ -28,7 +28,7 @@ workflows:
           color: bg-purple-500
           prompt: |-
             {{task_prompt}}
-            @dw-spec
+            @codex-dw-spec
           events:
             on_enter:
                 - type: enable_plan_mode
@@ -65,7 +65,7 @@ workflows:
           color: bg-blue-500
           prompt: |-
             {{task_prompt}}
-            @dw-work
+            @codex-dw-work
           events:
             on_enter:
                 - type: auto_start_agent
@@ -87,7 +87,7 @@ workflows:
           color: bg-yellow-500
           prompt: |-
             {{task_prompt}}
-            @dw-review
+            @codex-dw-review
           events:
             on_enter:
                 - type: reset_agent_context
@@ -108,7 +108,7 @@ workflows:
           color: bg-orange-500
           prompt: |-
             {{task_prompt}}
-            @dw-qa
+            @codex-dw-qa
           events:
             on_enter:
                 - type: auto_start_agent
@@ -130,7 +130,7 @@ workflows:
           color: bg-indigo-500
           prompt: |-
             {{task_prompt}}
-            @dw-pull-request
+            @codex-dw-pr
           events:
             on_enter:
                 - type: auto_start_agent
@@ -150,7 +150,7 @@ workflows:
           color: bg-amber-500
           prompt: |-
             {{task_prompt}}
-            @dw-ci-fixup
+            @codex-ci-fixup
           events:
             on_enter:
                 - type: auto_start_agent
@@ -170,7 +170,7 @@ workflows:
           color: bg-orange-500
           prompt: |-
             {{task_prompt}}
-            @dw-human-qa-review
+            @codex-dw-human-qa-review
           events:
             on_enter:
                 - type: auto_start_agent
@@ -195,7 +195,7 @@ workflows:
         - name: Done
           position: 10
           color: bg-green-500
-          prompt: '@dw-done'
+          prompt: '@@codex-dw-done'
           events:
             on_enter:
                 - type: auto_start_agent
