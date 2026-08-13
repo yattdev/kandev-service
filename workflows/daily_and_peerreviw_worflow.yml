@@ -42,9 +42,9 @@ workflows:
           show_in_command_panel: true
           allow_manual_move: true
           agent_profile:
-            agent_name: Claude
-            model: opus[1m]
-            mode: plan
+            agent_name: Codex
+            model: gpt-5.6-sol
+            mode: agent
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
         - name: Todo
@@ -77,9 +77,9 @@ workflows:
           show_in_command_panel: true
           allow_manual_move: true
           agent_profile:
-            agent_name: Claude
-            model: sonnet
-            mode: bypassPermissions
+            agent_name: Codex
+            model: gpt-5.6-terra
+            mode: agent
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
         - name: Review
@@ -98,9 +98,9 @@ workflows:
           show_in_command_panel: true
           allow_manual_move: true
           agent_profile:
-            agent_name: Claude
-            model: opus[1m]
-            mode: bypassPermissions
+            agent_name: Codex
+            model: gpt-5.6-terra
+            mode: agent
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
         - name: QA
@@ -120,9 +120,9 @@ workflows:
           show_in_command_panel: true
           allow_manual_move: true
           agent_profile:
-            agent_name: Claude
-            model: opus[1m]
-            mode: bypassPermissions
+            agent_name: Codex
+            model: gpt-5.5
+            mode: agent
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
         - name: PR
@@ -140,9 +140,9 @@ workflows:
           show_in_command_panel: true
           allow_manual_move: true
           agent_profile:
-            agent_name: Claude
-            model: sonnet
-            mode: bypassPermissions
+            agent_name: Codex
+            model: gpt-5.4
+            mode: agent
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
         - name: CI Fixup
@@ -160,9 +160,9 @@ workflows:
           show_in_command_panel: true
           allow_manual_move: true
           agent_profile:
-            agent_name: Claude
-            model: sonnet
-            mode: bypassPermissions
+            agent_name: Codex
+            model: gpt-5.4
+            mode: agent
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
         - name: Human-QA
@@ -178,9 +178,9 @@ workflows:
           show_in_command_panel: false
           allow_manual_move: true
           agent_profile:
-            agent_name: Claude
-            model: sonnet
-            mode: bypassPermissions
+            agent_name: Codex
+            model: gpt-5.6-terra
+            mode: agent
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
         - name: ToDeploy
@@ -204,9 +204,9 @@ workflows:
           allow_manual_move: true
           auto_archive_after_hours: 72
           agent_profile:
-            agent_name: Claude
-            model: sonnet
-            mode: bypassPermissions
+            agent_name: Codex
+            model: gpt-5.4
+            mode: agent
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
     - name: PR Review
@@ -231,9 +231,9 @@ workflows:
           show_in_command_panel: true
           allow_manual_move: true
           agent_profile:
-            agent_name: Claude
-            model: opus[1m]
-            mode: bypassPermissions
+            agent_name: Codex
+            model: gpt-5.6-terra
+            mode: agent-full-access
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
         - name: QA
@@ -249,9 +249,9 @@ workflows:
           show_in_command_panel: true
           allow_manual_move: true
           agent_profile:
-            agent_name: Claude
-            model: opus[1m]
-            mode: bypassPermissions
+            agent_name: Codex
+            model: gpt-5.5
+            mode: agent-full-access
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
         - name: Human-QA
@@ -271,9 +271,9 @@ workflows:
           show_in_command_panel: false
           allow_manual_move: true
           agent_profile:
-            agent_name: Claude
-            model: sonnet
-            mode: bypassPermissions
+            agent_name: Codex
+            model: gpt-5.6-terra
+            mode: agent
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
         - name: Done
@@ -288,9 +288,9 @@ workflows:
           allow_manual_move: true
           auto_archive_after_hours: 72
           agent_profile:
-            agent_name: Claude
-            model: sonnet
-            mode: bypassPermissions
+            agent_name: Codex
+            model: gpt-5.4
+            mode: agent
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
 
