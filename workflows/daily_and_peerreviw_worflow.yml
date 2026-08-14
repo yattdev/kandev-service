@@ -43,8 +43,8 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Copilot
-            model: claude-opus-4.8
-            mode: https://agentclientprotocol.com/protocol/session-modes#plan
+            model: savoirfairelinux/DeepInfra/deepseek-ai%2FDeepSeek-V4-Pro
+            mode: https://agentclientprotocol.com/protocol/session-modes#agent
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
         - name: Todo
@@ -78,8 +78,7 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Copilot
-            model: claude-sonnet-5
-            mode: https://agentclientprotocol.com/protocol/session-modes#agent
+            model: savoirfairelinux/DeepInfra/deepseek-ai%2FDeepSeek-V4-Flash
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
         - name: Review
@@ -99,8 +98,7 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Copilot
-            model: gpt-5.3-codex
-            mode: https://agentclientprotocol.com/protocol/session-modes#plan
+            model: savoirfairelinux/DeepInfra/zai-org%2FGLM-5.2
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
         - name: QA
@@ -121,8 +119,7 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Copilot
-            model: gpt-5.5
-            mode: https://agentclientprotocol.com/protocol/session-modes#agent
+            model: kimi-k3
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
         - name: PR
@@ -141,8 +138,7 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Copilot
-            model: claude-sonnet-5
-            mode: https://agentclientprotocol.com/protocol/session-modes#agent
+            model: savoirfairelinux/DeepInfra/moonshotai%2FKimi-K2.7-Code
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
         - name: CI Fixup
@@ -161,8 +157,7 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Copilot
-            model: claude-sonnet-5
-            mode: https://agentclientprotocol.com/protocol/session-modes#autopilot
+            model: savoirfairelinux/DeepInfra/deepseek-ai%2FDeepSeek-V4-Flash
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
         - name: Human-QA
@@ -179,8 +174,7 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Copilot
-            model: claude-sonnet-5
-            mode: https://agentclientprotocol.com/protocol/session-modes#agent
+            model: savoirfairelinux/DeepInfra/deepseek-ai%2FDeepSeek-V4-Flash
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
         - name: ToDeploy
@@ -205,8 +199,7 @@ workflows:
           auto_archive_after_hours: 72
           agent_profile:
             agent_name: Copilot
-            model: claude-sonnet-5
-            mode: https://agentclientprotocol.com/protocol/session-modes#agent
+            model: savoirfairelinux/DeepInfra/moonshotai%2FKimi-K2.7-Code
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
     - name: PR Review
@@ -231,9 +224,8 @@ workflows:
           show_in_command_panel: true
           allow_manual_move: true
           agent_profile:
-            agent_name: Claude
-            model: opus[1m]
-            mode: bypassPermissions
+            agent_name: Copilot
+            model: savoirfairelinux/DeepInfra/zai-org%2FGLM-5.2
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
         - name: QA
@@ -249,9 +241,8 @@ workflows:
           show_in_command_panel: true
           allow_manual_move: true
           agent_profile:
-            agent_name: Claude
-            model: opus[1m]
-            mode: bypassPermissions
+            agent_name: Copilot
+            model: kimi-k3
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
         - name: Human-QA
@@ -271,9 +262,8 @@ workflows:
           show_in_command_panel: false
           allow_manual_move: true
           agent_profile:
-            agent_name: Claude
-            model: sonnet
-            mode: bypassPermissions
+            agent_name: Copilot
+            model: savoirfairelinux/DeepInfra/deepseek-ai%2FDeepSeek-V4-Flash
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
         - name: Done
