@@ -13,3 +13,4 @@ host.env
 
 # ── Local scratch / notes (not for the public repo) ───────────────────────────
 file.txt
+*.local
