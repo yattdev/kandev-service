@@ -2,14 +2,7 @@ version: 1
 type: kandev_workflow
 workflows:
     - name: Daily workflow
-      prompt: |-
-        ## Orchestration Rules (always apply)
-
-        - **Signal completion or don't end.** When this step's work is fully done and verified, call `step_complete_kandev` exactly once — this is the ONLY way the task advances. Before your final message, self-check: "Did I call it?" If the tool isn't in your tool list, run tool discovery to load it; if still missing, flag then ask. Never call it early (while waiting, polling, or asking a question) and never end a finished step without it.
-        - **PR merged/closed → Done.** Check PR state on every resume. If terminal, move the task to the Done step (resolve `workflow_step_id` via discovery, never hardcode). Can't move it? Flag then ask.
-        - **≥2 repos or ≥2 PRs → subtasks.** One subtask per repo/PR; this task orchestrates. Submodule changes always use the subtask blocker flow.
-        - **Own your subtasks.** On every resume, poll open subtasks first: review, answer flags, unblock. Never move parent to Done while a subtask is open. Stuck? Flag then ask.
-        - **Sync across tasks.** Any change affecting parent/sibling/subtasks (API, branch, submodule pointer, scope) → post it on each affected task immediately. Read their latest updates before resuming work.
+      prompt: '@workstep-prompt'
       steps:
         - name: Backlogs
           position: 0
@@ -79,6 +72,7 @@ workflows:
           agent_profile:
             agent_name: Copilot
             model: savoirfairelinux/DeepInfra/deepseek-ai%2FDeepSeek-V4-Flash
+            mode: https://agentclientprotocol.com/protocol/session-modes#agent
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
         - name: Review
@@ -99,6 +93,7 @@ workflows:
           agent_profile:
             agent_name: Copilot
             model: savoirfairelinux/DeepInfra/zai-org%2FGLM-5.2
+            mode: https://agentclientprotocol.com/protocol/session-modes#agent
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
         - name: QA
@@ -120,6 +115,7 @@ workflows:
           agent_profile:
             agent_name: Copilot
             model: savoirfairelinux/DeepInfra/moonshotai%2FKimi-K3
+            mode: https://agentclientprotocol.com/protocol/session-modes#agent
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
         - name: PR
@@ -139,6 +135,7 @@ workflows:
           agent_profile:
             agent_name: Copilot
             model: savoirfairelinux/DeepInfra/deepseek-ai%2FDeepSeek-V4-Flash
+            mode: https://agentclientprotocol.com/protocol/session-modes#agent
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
         - name: CI Fixup
@@ -158,6 +155,7 @@ workflows:
           agent_profile:
             agent_name: Copilot
             model: savoirfairelinux/DeepInfra/deepseek-ai%2FDeepSeek-V4-Flash
+            mode: https://agentclientprotocol.com/protocol/session-modes#agent
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
         - name: Human-QA
@@ -175,6 +173,7 @@ workflows:
           agent_profile:
             agent_name: Copilot
             model: savoirfairelinux/DeepInfra/deepseek-ai%2FDeepSeek-V4-Flash
+            mode: https://agentclientprotocol.com/protocol/session-modes#agent
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
         - name: ToDeploy
@@ -200,6 +199,7 @@ workflows:
           agent_profile:
             agent_name: Copilot
             model: savoirfairelinux/DeepInfra/deepseek-ai%2FDeepSeek-V4-Flash
+            mode: https://agentclientprotocol.com/protocol/session-modes#agent
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
     - name: PR Review
@@ -226,6 +226,7 @@ workflows:
           agent_profile:
             agent_name: Copilot
             model: savoirfairelinux/DeepInfra/zai-org%2FGLM-5.2
+            mode: https://agentclientprotocol.com/protocol/session-modes#agent
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
         - name: QA
@@ -243,6 +244,7 @@ workflows:
           agent_profile:
             agent_name: Copilot
             model: savoirfairelinux/DeepInfra/moonshotai%2FKimi-K3
+            mode: https://agentclientprotocol.com/protocol/session-modes#agent
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
         - name: Human-QA
@@ -264,6 +266,7 @@ workflows:
           agent_profile:
             agent_name: Copilot
             model: savoirfairelinux/DeepInfra/deepseek-ai%2FDeepSeek-V4-Flash
+            mode: https://agentclientprotocol.com/protocol/session-modes#agent
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
         - name: Done
