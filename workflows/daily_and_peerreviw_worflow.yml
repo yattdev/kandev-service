@@ -7,9 +7,7 @@ workflows:
         - name: Backlogs
           position: 0
           color: bg-slate-500
-          prompt: |-
-            DO NOTHING AT THIS STAGE.
-            THE REAL ANALYSE START IN NEXT STEP ONCE I MANUALLY MOVE.
+          prompt: "@dw-backlogs"
           events: {}
           is_start_step: true
           show_in_command_panel: true
