@@ -57,7 +57,6 @@ workflows:
           position: 3
           color: bg-blue-500
           prompt: |-
-            {{task_prompt}}
             @codex-dw-work
           events:
             on_enter:
@@ -79,7 +78,6 @@ workflows:
           position: 4
           color: bg-yellow-500
           prompt: |-
-            {{task_prompt}}
             @codex-dw-review
           events:
             on_enter:
@@ -100,7 +98,6 @@ workflows:
           position: 5
           color: bg-orange-500
           prompt: |-
-            {{task_prompt}}
             @codex-dw-qa
           events:
             on_enter:
@@ -122,7 +119,6 @@ workflows:
           position: 6
           color: bg-indigo-500
           prompt: |-
-            {{task_prompt}}
             @codex-dw-pr
           events:
             on_enter:
@@ -142,7 +138,6 @@ workflows:
           position: 7
           color: bg-amber-500
           prompt: |-
-            {{task_prompt}}
             @codex-ci-fixup
           events:
             on_enter:
@@ -162,7 +157,6 @@ workflows:
           position: 8
           color: bg-orange-500
           prompt: |-
-            {{task_prompt}}
             @codex-dw-human-qa-review
           events:
             on_enter:
@@ -251,7 +245,6 @@ workflows:
           position: 3
           color: bg-cyan-500
           prompt: |-
-            {{task_prompt}}
             @dw-human-qa-review
           events:
             on_enter:
