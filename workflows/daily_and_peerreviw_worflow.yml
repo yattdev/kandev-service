@@ -56,8 +56,7 @@ workflows:
         - name: Work
           position: 3
           color: bg-blue-500
-          prompt: |-
-            @codex-dw-work
+          prompt: "@codex-dw-work"
           events:
             on_enter:
                 - type: auto_start_agent
@@ -77,8 +76,7 @@ workflows:
         - name: Review
           position: 4
           color: bg-yellow-500
-          prompt: |-
-            @codex-dw-review
+          prompt: "@codex-dw-review"
           events:
             on_enter:
                 - type: reset_agent_context
@@ -97,8 +95,7 @@ workflows:
         - name: QA
           position: 5
           color: bg-orange-500
-          prompt: |-
-            @codex-dw-qa
+          prompt: "@codex-dw-qa"
           events:
             on_enter:
                 - type: auto_start_agent
@@ -118,8 +115,7 @@ workflows:
         - name: PR
           position: 6
           color: bg-indigo-500
-          prompt: |-
-            @codex-dw-pr
+          prompt: "@codex-dw-pr"
           events:
             on_enter:
                 - type: auto_start_agent
@@ -137,8 +133,7 @@ workflows:
         - name: CI Fixup
           position: 7
           color: bg-amber-500
-          prompt: |-
-            @codex-ci-fixup
+          prompt: "@codex-ci-fixup"
           events:
             on_enter:
                 - type: auto_start_agent
@@ -156,8 +151,7 @@ workflows:
         - name: Human-QA
           position: 8
           color: bg-orange-500
-          prompt: |-
-            @codex-dw-human-qa-review
+          prompt: "@codex-dw-human-qa-review"
           events:
             on_enter:
                 - type: auto_start_agent
@@ -182,7 +176,7 @@ workflows:
         - name: Done
           position: 10
           color: bg-green-500
-          prompt: '@@codex-dw-done'
+          prompt: '@codex-dw-done'
           events:
             on_enter:
                 - type: auto_start_agent
@@ -210,7 +204,9 @@ workflows:
         - name: Review
           position: 1
           color: bg-yellow-500
-          prompt: '@pr-review'
+          prompt: |-
+            {{task_prompt}}
+            @pr-review
           events:
             on_enter:
                 - type: auto_start_agent
@@ -245,6 +241,7 @@ workflows:
           position: 3
           color: bg-cyan-500
           prompt: |-
+            {{task_prompt}}
             @dw-human-qa-review
           events:
             on_enter:
@@ -265,7 +262,7 @@ workflows:
         - name: Done
           position: 4
           color: bg-green-500
-          prompt: '@dw-done'
+          prompt: '@codex-dw-done'
           events:
             on_enter:
                 - type: auto_start_agent
