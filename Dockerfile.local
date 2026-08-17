@@ -279,6 +279,33 @@ COPY mise.default.toml /etc/mise/config.toml
 # PATH entry is harmless.
 ENV PATH="/data/home/.local/share/mise/shims:${PATH}"
 
+# ...but ENV alone is NOT enough for LOGIN shells. Debian's /etc/profile
+# *overwrites* PATH with a hardcoded list (it does not append to the inherited
+# value), so anything starting a login shell — `bash -lc`, `su -`, `ssh host cmd`,
+# some agent/CI runners — silently throws the line above away and every
+# mise-managed tool disappears:
+#     $ docker exec -u kandev kandev bash -lc 'go version'
+#     bash: go: command not found          # same for node/python/java/ruby/php
+# while the identical command with `bash -c` works. /etc/profile sources
+# /etc/profile.d/*.sh *after* clobbering PATH, so a drop-in there is what puts
+# the shims back. Idempotent: only prepends entries that are not already present,
+# so it is a no-op for the non-login shells that already inherit the ENV.
+RUN printf '%s\n' \
+      '# Re-prepend the image PATH prefix that /etc/profile clobbers.' \
+      '# See the mise section of Dockerfile.local for why this is needed.' \
+      '# Listed back-to-front: each is prepended, so the LAST one ends up first,' \
+      '# reproducing the image ENV order (mise shims ahead of the npm global bin).' \
+      'for _d in /data/.npm-global/bin /data/home/.local/share/mise/shims; do' \
+      '  case ":$PATH:" in' \
+      '    *":$_d:"*) ;;' \
+      '    *) PATH="$_d:$PATH" ;;' \
+      '  esac' \
+      'done' \
+      'unset _d' \
+      'export PATH' \
+    > /etc/profile.d/10-kandev-path.sh \
+    && chmod 0644 /etc/profile.d/10-kandev-path.sh
+
 # ── Git: trust all directories ────────────────────────────────────────────────
 # Prevents "dubious ownership" errors for repos owned by root (docker leftovers)
 # or repos where the host path (/home/alice/...) differs from the container

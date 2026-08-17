@@ -296,6 +296,78 @@ else
   fail "javac not runnable — java runtime present but not a full JDK"
 fi
 
+# Go — pinned in the baked system config so every image guarantees it.
+if docker run --rm kandev-local:latest sh -c 'grep -q "^go" /etc/mise/config.toml'; then
+  ok "/etc/mise/config.toml pins a go version"
+else
+  fail "/etc/mise/config.toml does not pin a go version"
+fi
+
+# Go installed into the persistent volume (listed by mise in the container).
+if docker exec -u kandev kandev mise ls 2>/dev/null | grep -qE '^go +[0-9]'; then
+  ok "mise reports go toolchain installed in volume"
+else
+  fail "go toolchain not installed in volume — run: bash setup-toolchains.sh go"
+fi
+
+# Go actually RUNS as user kandev the way agents invoke it (non-login `bash -c`).
+if docker exec -u kandev kandev go version >/dev/null 2>&1; then
+  GO_VER="$(docker exec -u kandev kandev go version 2>&1)"
+  GO_VER="${GO_VER%%$'\n'*}"
+  ok "go runs in container ($GO_VER)"
+else
+  fail "go installed but not runnable in container (shim missing / not on PATH)"
+fi
+
+# The container's go must match the version pinned in the baked config, so the
+# container and the host agree on the toolchain. Compares against /etc/mise/config.toml
+# rather than a hardcoded number, so bumping the pin does not break this test.
+GO_PINNED="$(docker run --rm kandev-local:latest \
+  sh -c 'sed -n "s/^go *= *\"\([^\"]*\)\".*/\1/p" /etc/mise/config.toml' 2>/dev/null)"
+if [[ -n "$GO_PINNED" ]] && docker exec -u kandev kandev go version 2>/dev/null \
+     | grep -qF "go${GO_PINNED} "; then
+  ok "container go matches the pinned version (${GO_PINNED})"
+else
+  fail "container go does not match pinned version '${GO_PINNED}' — version drift vs host"
+fi
+
+# Go can actually COMPILE and run, not just report a version: proves the stdlib
+# and a writable build cache (GOCACHE under the persistent HOME) are in place.
+# Runs in a scratch dir under HOME — NOT /tmp, which is littered with other
+# projects' go.mod/go.work files that would change the resolved toolchain.
+if docker exec -u kandev kandev bash -c '
+      set -e
+      d=$(mktemp -d "$HOME/.cache/go-selftest.XXXXXX")
+      trap "rm -rf $d" EXIT
+      cd "$d"
+      printf "package main\nimport \"fmt\"\nfunc main(){fmt.Print(\"ok\")}\n" > main.go
+      go mod init selftest >/dev/null 2>&1
+      test "$(go run main.go)" = ok
+    ' >/dev/null 2>&1; then
+  ok "go compiles and runs a program in container"
+else
+  fail "go cannot compile/run a program (broken stdlib or unwritable GOCACHE)"
+fi
+
+# LOGIN-shell PATH. Debian's /etc/profile OVERWRITES PATH, discarding the image's
+# ENV PATH, so before the /etc/profile.d/10-kandev-path.sh drop-in every
+# mise-managed tool vanished under `bash -lc` ("go: command not found") while the
+# same command under `bash -c` worked. Anything that starts a login shell — su -,
+# ssh host cmd, some agent/CI runners — hit this. Guards that regression.
+if docker exec -u kandev kandev bash -lc 'echo "$PATH"' 2>/dev/null \
+     | grep -q '/data/home/.local/share/mise/shims'; then
+  ok "mise shims dir survives /etc/profile in a login shell"
+else
+  fail "login shell drops mise shims from PATH — /etc/profile.d/10-kandev-path.sh missing"
+fi
+
+# ...and prove it end-to-end with a real tool, not just the PATH string.
+if docker exec -u kandev kandev bash -lc 'go version && node --version' >/dev/null 2>&1; then
+  ok "mise tools (go, node) resolve in a login shell"
+else
+  fail "mise tools do not resolve under 'bash -lc' — login-shell PATH regression"
+fi
+
 # sqlite3 in the image — required for the NO-DOWNTIME restic backup, which uses
 # `sqlite3 .backup` (SQLite online-backup API) to snapshot kandev.db live rather
 # than stopping the container. Without it kandev-restic-backup.sh has no way to

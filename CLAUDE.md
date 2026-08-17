@@ -88,7 +88,7 @@ curl -s -o /dev/null -w "HTTP %{http_code}" http://localhost:38429/
 2. Rebuild if Dockerfile.local was modified:  docker compose build
 3. Restart container if compose files changed: docker compose up -d --force-recreate
 4. Run:  bash ~/Code/kandev/test.sh
-5. All 56 tests must be green
+5. All 63 tests must be green
 6. Commit
 7. Only then report the task as complete
 ```
@@ -179,6 +179,21 @@ version manager) plus `build-essential` and common dev headers. Design:
   (`~/.cache/pip`, `~/.npm`, `~/go`, `~/.cargo`, `~/.m2`).
 - **Shims on PATH:** `Dockerfile.local` puts `…/mise/shims` on `PATH` via `ENV`
   so tools resolve even in non-interactive `bash -c` shells (how agents run).
+  **`ENV` alone is not enough for *login* shells** — Debian's `/etc/profile`
+  *overwrites* `PATH` with a hardcoded list rather than appending to it, so
+  `bash -lc`, `su -`, `ssh host cmd` and some CI runners silently lose every
+  mise tool (`go: command not found`, likewise node/python/java/ruby/php) while
+  the identical `bash -c` command works. `/etc/profile` sources
+  `/etc/profile.d/*.sh` *after* clobbering `PATH`, so `Dockerfile.local` writes
+  **`/etc/profile.d/10-kandev-path.sh`** to re-prepend the shims (idempotent, and
+  it reproduces the `ENV` ordering). `test.sh` section 8 guards both shell kinds.
+- **Per-project version pinning is real:** with `idiomatic_version_file_enable_tools`
+  + `not_found_auto_install`, mise reads a project's `go.mod` / `.nvmrc` /
+  `.python-version` and *auto-installs and switches to* that version. So `go version`
+  can legitimately differ between two directories (e.g. a repo whose `go.mod` says
+  `go 1.25.0` gets 1.25.0, not the global 1.26.0). That is intended. When checking
+  the *global* toolchain, do it from a directory with no version file — `/tmp` is a
+  poor choice here, it is littered with other projects' `go.mod`/`go.work` files.
 - **First-time population:** run `bash setup-toolchains.sh` once to install the
   global toolchains into the volume. Precompiled tools (node/python/go/java/dotnet)
   are fast; ruby/php compile from source (hence the baked-in build headers).
@@ -310,7 +325,7 @@ Use `kandev-ssh-agent.sh` when:
 | `docker-host-path-wrapper.sh` | Installed as `/usr/local/bin/docker`: rewrites container-only bind-mount paths to their host equivalents before calling the real CLI |
 | `mise.default.toml` | System-wide mise config (`/etc/mise/config.toml`): global language versions matched to host |
 | `setup-toolchains.sh` | One-time helper: installs the mise language toolchains into the persistent `/data` volume |
-| `test.sh` | 56 automated tests covering image, container, service, identity, SSH, git, CLI tools, toolchains (incl. Java JDK), sqlite3, headless browser, Docker host-path wrapper |
+| `test.sh` | 63 automated tests covering image, container, service, identity, SSH, git, CLI tools, toolchains (incl. Java JDK and Go, plus login-shell PATH), sqlite3, headless browser, Docker host-path wrapper |
 | `update.sh` | Daily cron: pull upstream → rebuild local → restart if changed |
 | `host.env` | **Git-ignored.** Real hosts/users/IPs for this machine + placeholder→real map (agent reference). Sourced by every script. |
 | `host.env.example` | Committed template for `host.env`; copy and fill in per host. |
@@ -332,6 +347,7 @@ Use `kandev-ssh-agent.sh` when:
 | `gh`/`glab` not authenticated after rebuild | Config mount missing or wrong path | Check `~/.config/gh` and `~/.config/glab-cli` are mounted rw |
 | `$USER` = `kandev` instead of `alice` | `USER` env missing from override | Check `docker-compose.override.yml` `environment:` block |
 | SSH uses wrong key for a host | `~/.ssh` not mounted or `HOME` wrong | Verify mount and `HOME=/data/home` |
+| `go: command not found` (or node/python/java/ruby/php) inside the container — but **only** under `bash -lc`, `su -`, `ssh host cmd` or a CI runner, while plain `docker exec … bash -c 'go version'` works. Easy to misread as "Go isn't installed" and re-install it | Debian's `/etc/profile` **overwrites** `PATH` instead of appending, discarding the image's `ENV PATH` (which is what carries `…/mise/shims`). Login shells therefore see only `/usr/local/bin:/usr/bin:/bin:…`. `docker exec kandev printenv PATH` looks correct, which hides it | Handled by **`/etc/profile.d/10-kandev-path.sh`**, written by `Dockerfile.local` (`/etc/profile` sources `profile.d/*.sh` after the clobber, so the drop-in wins). If it recurs: `docker exec -u kandev kandev bash -lc 'echo $PATH'` must contain `/data/home/.local/share/mise/shims`; rebuild if the file is missing. **Before installing any language "again", check `mise ls` and `bash -c` first** — the toolchain is almost certainly already in `/data/home/.local/share/mise` |
 | A container started **from inside kandev** comes up with an empty `/app` (or empty data dir); "my code changes aren't showing up"; empty root-owned directories appear on the host under `/data` | The mounted socket drives the **host** daemon, which resolves bind sources on the **host** filesystem. A container-only path (`/data/...`) does not exist there, and Docker creates it empty instead of failing — see *Docker-out-of-Docker and the host-path wrapper* above | Should be handled automatically by `/usr/local/bin/docker`. If it recurs: check `docker exec -u kandev kandev bash -lc 'command -v docker'` returns `/usr/local/bin/docker` and that `KANDEV_HOST_*` are set; `docker --kandev-print-argv <args>` shows what the rewrite produces. Anything invoking `/usr/bin/docker` by absolute path bypasses the wrapper. Clean up strays with `docker run --rm -v /:/host debian:bookworm-slim rm -rf /host/data/<stray>` (host `sudo` needs a password) |
 | `http://board.office` unreachable | iptables NAT rules missing after reboot | Re-run `install-office.sh` or apply rules via privileged container (see README) |
 | `http://board.office` unreachable after our changes | Container crash-loop | Check `docker inspect kandev --format '{{.RestartCount}}'`; run `test.sh` |
