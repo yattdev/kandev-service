@@ -378,8 +378,63 @@ else
   fail "sqlite3 missing from image — hot backup would fall back to a torn live-DB copy"
 fi
 
-# ── 9. Headless browser (Chrome) ──────────────────────────────────────────────
-section "9. Headless browser (Chrome)"
+# ── 9. Codex workspace-write sandbox ─────────────────────────────────────────
+section "9. Codex workspace-write sandbox"
+
+if jq -e '.defaultAction == "SCMP_ACT_ERRNO"' "$COMPOSE_DIR/seccomp/kandev-bwrap.json" >/dev/null; then
+  ok "Codex seccomp profile retains a deny-by-default policy"
+else
+  fail "Codex seccomp profile is invalid or not deny-by-default"
+fi
+
+if jq -e '.syscalls[] | select(.names == ["clone"]) | select(.args[0].value == 268435456 and .args[0].valueTwo == 268435456)' \
+    "$COMPOSE_DIR/seccomp/kandev-bwrap.json" >/dev/null; then
+  ok "seccomp clone exception requires CLONE_NEWUSER"
+else
+  fail "seccomp profile lacks the CLONE_NEWUSER-masked Bubblewrap exception"
+fi
+
+if command -v apparmor_parser >/dev/null 2>&1 && \
+    apparmor_parser -Q -K "$COMPOSE_DIR/apparmor/kandev-codex" >/dev/null 2>&1; then
+  ok "kandev-codex AppArmor policy compiles"
+else
+  fail "kandev-codex AppArmor policy does not compile (or apparmor_parser is missing)"
+fi
+
+COMPOSE_SECURITY=$(cd "$COMPOSE_DIR" && docker compose config --format json 2>/dev/null || echo '{}')
+if jq -e '.services.kandev.security_opt | index("seccomp=./seccomp/kandev-bwrap.json") != null' \
+    <<<"$COMPOSE_SECURITY" >/dev/null; then
+  ok "Compose applies the worker-specific seccomp profile"
+else
+  fail "Compose does not apply seccomp/kandev-bwrap.json"
+fi
+if jq -e '.services.kandev.security_opt | index("apparmor=kandev-codex") != null' \
+    <<<"$COMPOSE_SECURITY" >/dev/null; then
+  ok "Compose applies the worker-specific AppArmor profile"
+else
+  fail "Compose does not apply the kandev-codex AppArmor profile"
+fi
+
+if docker run --rm \
+    --security-opt seccomp="$COMPOSE_DIR/seccomp/kandev-bwrap.json" \
+    --security-opt apparmor=kandev-codex \
+    kandev-local:latest /usr/local/bin/codex-sandbox-preflight >/dev/null 2>&1; then
+  ok "Bubblewrap preflight passes in the actual worker image/runtime"
+else
+  fail "Bubblewrap preflight failed; load AppArmor profile with: sudo bash scripts/install-codex-apparmor.sh"
+fi
+
+ACTIVE_SECURITY=$(docker inspect kandev --format '{{json .HostConfig.SecurityOpt}}' 2>/dev/null || echo '[]')
+if jq -e 'map(startswith("seccomp=")) | any' \
+    <<<"$ACTIVE_SECURITY" >/dev/null 2>&1 && \
+   jq -e 'index("apparmor=kandev-codex") != null' <<<"$ACTIVE_SECURITY" >/dev/null 2>&1; then
+  ok "running worker has explicit seccomp and kandev-codex AppArmor policies"
+else
+  fail "running worker is not using both explicit Codex sandbox policies (recreate it)"
+fi
+
+# ── 10. Headless browser (Chrome) ─────────────────────────────────────────────
+section "10. Headless browser (Chrome)"
 
 # Browser present, and `google-chrome` on PATH must hit the --no-sandbox wrapper
 WHICH_CHROME=$(docker run --rm kandev-local:latest which google-chrome 2>/dev/null || echo "")
@@ -443,8 +498,8 @@ else
   fail "headless Chrome failed to render as kandev (sandbox wrapper not working?)"
 fi
 
-# ── 10. sudo / root privileges for kandev ─────────────────────────────────────
-section "10. sudo / root privileges for kandev"
+# ── 11. sudo / root privileges for kandev ─────────────────────────────────────
+section "11. sudo / root privileges for kandev"
 
 if docker run --rm kandev-local:latest which sudo &>/dev/null; then
   ok "sudo binary present in image"
@@ -493,13 +548,13 @@ else
   fail "kandev cannot write to /data"
 fi
 
-# ── 11. Docker host-path wrapper ──────────────────────────────────────────────
+# ── 12. Docker host-path wrapper ──────────────────────────────────────────────
 # The mounted docker.sock drives the HOST daemon, which resolves bind-mount
 # sources on the HOST filesystem. Container-only paths do not exist there and
 # Docker does not error on a missing source — it creates an empty root-owned
 # directory and mounts that, silently. /usr/local/bin/docker rewrites those
 # paths; these tests are what prove the rewrite is actually in effect.
-section "11. Docker host-path wrapper"
+section "12. Docker host-path wrapper"
 
 WRAPPER_PATH=$(docker exec -u kandev kandev bash -lc 'command -v docker' 2>/dev/null || echo "")
 if [[ "$WRAPPER_PATH" == "/usr/local/bin/docker" ]]; then

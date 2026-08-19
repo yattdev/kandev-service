@@ -34,6 +34,9 @@ if [[ $EUID -ne 0 ]]; then
   exit 2
 fi
 
+# Persist the worker-only AppArmor policy and load it into the current kernel.
+bash "$SCRIPT_DIR/scripts/install-codex-apparmor.sh"
+
 install -d -o "$USER_NAME" -g "$USER_NAME" -m 755 "$USER_HOME/logs"
 
 # ── Systemd user unit (ExecStart → kandev-start-hub.sh) ────────────────────

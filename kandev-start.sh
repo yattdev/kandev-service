@@ -294,6 +294,11 @@ fi
 # ── 3. Start kandev (+ Litestream sidecar, only if we hold the writer lock) ──
 cd "$COMPOSE_DIR"
 
+# Docker cannot load named AppArmor profiles from Compose. Refuse to create a
+# worker that would fail every Codex sandbox command; the fix command is
+# printed by the check.
+bash "$COMPOSE_DIR/scripts/check-codex-runtime.sh"
+
 RECREATE_ARG=""
 [[ "$RECREATE" -eq 1 ]] && RECREATE_ARG="--force-recreate"
 

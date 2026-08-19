@@ -29,6 +29,9 @@ RESTIC_REPO="${RESTIC_REPO:-sftp:${MINI_USER}@${MINI_HOST}:restic-repos/kandev-b
 
 echo "[install-laptop] user=$USER_NAME home=$USER_HOME"
 
+# Persist the worker-only AppArmor policy and load it into the current kernel.
+sudo bash "$SCRIPT_DIR/scripts/install-codex-apparmor.sh"
+
 # ── 0. Host identity for Litestream replica path + active-writer lock ───────
 # Each satellite host gets its OWN replica subdir on home (never shared —
 # sharing one path across multiple writers is what caused the 2026-07-07/08

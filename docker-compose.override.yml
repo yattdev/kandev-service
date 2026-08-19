@@ -26,6 +26,15 @@ services:
     # --disable-dev-shm-usage, is then unnecessary but still harmless.)
     shm_size: 2gb
 
+    # Codex's workspace-write sandbox uses bubblewrap. Docker's built-in
+    # seccomp profile rejects clone(CLONE_NEWUSER|CLONE_NEWNS) before the
+    # kernel can apply its user-namespace policy. This profile starts from the
+    # Docker default and permits only bubblewrap's namespace bootstrap/mount
+    # operations; it does not add capabilities or use seccomp=unconfined.
+    security_opt:
+      - seccomp=./seccomp/kandev-bwrap.json
+      - apparmor=kandev-codex
+
     # Load secrets from .env (git-ignored). required: false so the container
     # starts even before .env is populated — tools just won't have API access.
     # After filling in .env, restart with: docker compose up -d --force-recreate

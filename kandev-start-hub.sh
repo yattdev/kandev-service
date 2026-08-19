@@ -137,6 +137,7 @@ fi
 # ── 2. Start kandev (plain, no Litestream sidecar) ──────────────────────────
 log "Starting kandev..."
 cd "$COMPOSE_DIR"
+bash "$COMPOSE_DIR/scripts/check-codex-runtime.sh"
 RECREATE_ARG=""
 [[ "$RECREATE" -eq 1 ]] && RECREATE_ARG="--force-recreate"
 docker compose -p kandev up -d --remove-orphans $RECREATE_ARG

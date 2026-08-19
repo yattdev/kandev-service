@@ -79,6 +79,10 @@ UPSTREAM_ID=$(docker image inspect "$IMAGE" --format '{{.Id}}' 2>/dev/null || ec
 
 cd "$COMPOSE_DIR"
 
+# Validate node-level prerequisites before a rebuild/recreate (or an
+# "already up to date" early exit) can leave agents on a broken runtime.
+bash "$COMPOSE_DIR/scripts/check-codex-runtime.sh"
+
 # ── Decide whether the local image must be (re)built ─────────────────────────
 # The old logic only rebuilt when THIS pull downloaded a new upstream base, so
 # it never reconciled a kandev-local:latest that had drifted for any OTHER

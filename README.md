@@ -145,6 +145,93 @@ health-checking the container afterward and auto-rolling back on failure — mir
 release ships) rebuilds `kandev-local:latest` from the release again and discards the
 main-branch layer.
 
+### Codex workspace-write sandbox
+
+Codex agents run inside this Kandev worker container. On Linux, the Codex
+`workspace-write` sandbox uses Bubblewrap, which creates an unprivileged user +
+mount namespace and then bind-mounts only the allowed workspace paths. The
+host's `kernel.unprivileged_userns_clone=1` setting is necessary but not
+sufficient: Docker's built-in seccomp profile rejects Bubblewrap's
+`clone(CLONE_NEWUSER|CLONE_NEWNS|...)`, and Docker's `docker-default` AppArmor
+profile rejects the subsequent staging mounts.
+
+The launch chain is Compose's `kandev start` command → the upstream Kandev
+backend/`agentctl` executor → the persistent Codex CLI at
+`/data/.npm-global/bin/codex`. Bubblewrap is selected internally by that Codex
+CLI; Kandev has no separate `bwrap` toggle. This local image explicitly installs
+`/usr/bin/bwrap` so the dependency does not rely on the current upstream image.
+
+This repository supplies two worker-only policies:
+
+- `seccomp/kandev-bwrap.json` is Docker's pinned default seccomp profile plus a
+  `clone` exception that matches only calls containing `CLONE_NEWUSER`, and the
+  namespace-local mount syscalls Bubblewrap uses. It does not add
+  `CAP_SYS_ADMIN` or use `seccomp=unconfined`.
+- `apparmor/kandev-codex` retains Docker's default `/proc`, `/sys`, signal,
+  ptrace, file, capability, and network restrictions. Its mount rules are
+  limited to Bubblewrap's `/tmp`, `/oldroot`, and `/newroot` staging trees.
+
+AppArmor profiles are host kernel state and Docker Compose cannot load one.
+Install or refresh it after cloning/updating this repository, before starting
+the worker:
+
+```bash
+cd ~/Code/kandev
+sudo bash scripts/install-codex-apparmor.sh
+docker compose build
+docker compose up -d --force-recreate
+```
+
+The image entrypoint runs `codex-sandbox-preflight` before Kandev accepts work.
+If nested user namespaces, seccomp, or AppArmor are incompatible, startup exits
+with an actionable error instead of letting every agent fail at `apply_patch`.
+
+Operator diagnostic (runs the same preflight in the actual worker image and
+with the same two policies as Compose):
+
+```bash
+docker run --rm \
+  --security-opt seccomp=./seccomp/kandev-bwrap.json \
+  --security-opt apparmor=kandev-codex \
+  kandev-local:latest /usr/local/bin/codex-sandbox-preflight
+```
+
+For a fresh `exec-worktree` task, the apply-patch regression is:
+
+```bash
+bash tests/codex-sandbox-regression.sh
+```
+
+It uses the task's real injected `apply_patch` helper to create a file, update
+that new file, and update a tracked file through `codex sandbox -P :workspace`.
+
+Runtime requirements and safe deployment equivalents:
+
+- Docker/Compose: apply both supplied profiles to the `kandev` service; keep
+  `privileged: false`, do not add `SYS_ADMIN`, and do not select
+  `seccomp=unconfined` or `apparmor=unconfined`.
+- Kubernetes: install equivalent node-local seccomp and AppArmor profiles, set
+  `securityContext.seccompProfile.type: Localhost`, select the
+  `kandev-codex` AppArmor profile, keep `privileged: false`,
+  `allowPrivilegeEscalation: false`, and drop `SYS_ADMIN`. Schedule only onto
+  nodes where both profiles are installed.
+- Nested Docker/LXC: the outer runtime must pass through unprivileged user
+  namespace creation and AppArmor namespace-local mount mediation. Mounting a
+  Docker socket is unrelated; this worker uses the host daemon, not Docker in
+  Docker.
+- The normal Codex network boundary remains Bubblewrap's `CLONE_NEWNET`; the
+  policies grant no host networking or filesystem paths. Workspace visibility
+  remains determined by Codex's bind-mount allowlist.
+
+Useful diagnosis:
+
+```bash
+docker inspect kandev --format \
+  '{{json .HostConfig.SecurityOpt}} privileged={{.HostConfig.Privileged}} caps={{json .HostConfig.CapAdd}} apparmor={{.AppArmorProfile}}'
+docker exec -u kandev kandev sh -lc \
+  'id; grep -E "NoNewPrivs|Seccomp" /proc/self/status; /usr/local/bin/codex-sandbox-preflight'
+```
+
 ### Browser tests (headless Chrome)
 
 Chrome, `chromedriver`, and the fonts/libraries headless rendering needs are baked into

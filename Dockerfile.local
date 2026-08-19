@@ -19,6 +19,7 @@ LABEL com.kandev.base-id=${BASE_IMAGE_ID}
 
 # ── Core tools ────────────────────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    bubblewrap \
     openssh-client \
     curl \
     gnupg \
@@ -335,4 +336,5 @@ RUN chmod +x /usr/local/bin/docker
 # loop. The patched version adds `|| true` so chown proceeds on all writable
 # paths and silently skips the read-only ones instead of aborting startup.
 COPY docker-entrypoint-local.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+COPY scripts/codex-sandbox-preflight.sh /usr/local/bin/codex-sandbox-preflight
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh /usr/local/bin/codex-sandbox-preflight
