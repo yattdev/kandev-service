@@ -85,9 +85,9 @@ workflows:
           show_in_command_panel: true
           allow_manual_move: true
           agent_profile:
-            agent_name: Codex
-            model: gpt-5.5
-            mode: agent
+            agent_name: Copilot
+            model: savoirfairelinux/DeepInfra/moonshotai%2FKimi-K3
+            mode: https://agentclientprotocol.com/protocol/session-modes#autopilot
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
         - name: QA
@@ -123,9 +123,9 @@ workflows:
           show_in_command_panel: true
           allow_manual_move: true
           agent_profile:
-            agent_name: Codex
-            model: gpt-5.4
-            mode: agent
+            agent_name: Copilot
+            model: savoirfairelinux/DeepInfra/deepseek-ai%2FDeepSeek-V4-Pro
+            mode: https://agentclientprotocol.com/protocol/session-modes#agent
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
         - name: CI Fixup
@@ -141,9 +141,9 @@ workflows:
           show_in_command_panel: true
           allow_manual_move: true
           agent_profile:
-            agent_name: Codex
-            model: gpt-5.6-luna
-            mode: agent-full-access
+            agent_name: Copilot
+            model: savoirfairelinux/DeepInfra/deepseek-ai%2FDeepSeek-V4-Pro
+            mode: https://agentclientprotocol.com/protocol/session-modes#agent
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
         - name: Human-QA
@@ -212,9 +212,9 @@ workflows:
           show_in_command_panel: true
           allow_manual_move: true
           agent_profile:
-            agent_name: Codex
-            model: gpt-5.5
-            mode: agent-full-access
+            agent_name: Copilot
+            model: savoirfairelinux/DeepInfra/moonshotai%2FKimi-K3
+            mode: https://agentclientprotocol.com/protocol/session-modes#autopilot
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
         - name: QA
@@ -252,9 +252,9 @@ workflows:
           show_in_command_panel: false
           allow_manual_move: true
           agent_profile:
-            agent_name: Codex
-            model: gpt-5.6-terra
-            mode: agent
+            agent_name: Copilot
+            model: savoirfairelinux/DeepInfra/deepseek-ai%2FDeepSeek-V4-Pro
+            mode: https://agentclientprotocol.com/protocol/session-modes#agent
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
         - name: Done
