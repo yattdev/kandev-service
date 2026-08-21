@@ -1,0 +1,89 @@
+# AGENTS.md — rules for any AI agent working in this repository
+
+Applies to every agent (Claude, Codex, Copilot, and any other) operating on this
+repo. **`CLAUDE.md` in this directory is the full context document — read it
+before making any change.** This file is the short, non-negotiable version.
+
+---
+
+## 1. Work on `main` for anything that is not a workflow file
+
+`main` is the branch that runs the deployment. All infrastructure, config,
+Docker, script, and documentation changes belong on `main`:
+
+`Dockerfile.local`, all `docker-compose*.yml`, `docker-entrypoint-local.sh`,
+`docker-host-path-wrapper.sh`, `apparmor/`, `seccomp/`, `scripts/`, `tests/`,
+`test.sh`, `update.sh`, `kandev-*.sh`, `install-*.sh`, `sync-*.sh`,
+`mise.default.toml`, `host.env.example`, `CLAUDE.md`, `AGENTS.md`, `README.md`.
+
+The `*-workflow` branches — `claude-workflow`, `codex-workflow`,
+`codex-copilotDI-workflow`, `copilot-workflow`, `copilot-DeepInfra-workflow` —
+exist **only** to edit the agent workflow definition under `workflows/`. They are
+stale forks of `main` and are never synced back; each still carries an old copy
+of every infra file.
+
+**Start every kandev change with:**
+
+```bash
+cd ~/Code/kandev
+git rev-parse --abbrev-ref HEAD    # must print: main
+git switch main                    # if it does not
+```
+
+If you were asked to change a `workflows/` file, stay on the relevant
+`*-workflow` branch and touch **nothing else**. If a task mixes the two, do the
+infra part on `main` and the workflow part on its branch — never carry infra
+edits onto a workflow branch.
+
+## 2. Never start or rebuild the deployment from a non-`main` checkout
+
+`kandev-start.sh`, `update.sh`, `kandev-pull.sh`, and any bare
+`docker compose up` read the compose files **from the current working tree**.
+Running them on a `*-workflow` branch builds the container from that branch's
+outdated `docker-compose.override.yml` / `Dockerfile.local`, silently dropping
+everything `main` has added since — including the `security_opt:` block that the
+Codex bubblewrap sandbox requires. The container comes up misconfigured with no
+warning in the output. This caused a real crash-loop outage on 2026-08-21.
+
+`scripts/require-main-branch.sh` now enforces this: those entry points abort with
+exit 78 on a non-`main` checkout. Do not work around it by calling
+`docker compose` directly — switch branch instead. The deliberate override, for
+testing a compose change on a branch, is `KANDEV_ALLOW_BRANCH=1`.
+
+Switching back to `main` does **not** repair an already-running container.
+After any branch switch, recreate it:
+
+```bash
+cd ~/Code/kandev && git switch main && docker compose -p kandev up -d --force-recreate
+```
+
+Verify the security profiles actually landed:
+
+```bash
+docker inspect kandev --format '{{.AppArmorProfile}} {{json .HostConfig.SecurityOpt}}'
+# must show: kandev-codex  ["seccomp={...}","apparmor=kandev-codex"]
+# NOT:       docker-default  null
+```
+
+## 3. Read `host.env` before acting on any hostname, user, or IP
+
+The committed files use sanitized placeholders (`office-desktop`/`alice`,
+`home-server`/`bob`, `board.office`, …). The real values for this machine are in
+the git-ignored `host.env` at the repo root, whose header maps each placeholder
+to its real value. Read it first; never act on the placeholder values.
+
+## 4. Tests must pass before reporting a change complete
+
+Any change to `Dockerfile.local`, `docker-compose*.yml`,
+`docker-entrypoint-local.sh`, `update.sh`, or any `install-*.sh` requires a
+green run of:
+
+```bash
+bash ~/Code/kandev/test.sh
+```
+
+Rebuild (`docker compose build`) if `Dockerfile.local` changed, and recreate
+(`docker compose up -d --force-recreate`) if a compose file changed, before
+running the tests. Fix the root cause of a failure — never weaken or skip a test
+to make it pass. See *Mandatory rule: tests must pass before reporting
+completion* in `CLAUDE.md`.

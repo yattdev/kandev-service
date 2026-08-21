@@ -26,6 +26,48 @@ The kandev UI is reachable at `http://board.office` and `http://board.home`.
 
 ---
 
+## Mandatory rule: infrastructure changes live on `main`
+
+**`main` is the only branch that carries the deployment.** Every infrastructure,
+config, Docker, script, and documentation change belongs on `main`:
+`Dockerfile.local`, all `docker-compose*.yml`, `docker-entrypoint-local.sh`,
+`docker-host-path-wrapper.sh`, `apparmor/`, `seccomp/`, `scripts/`, `tests/`,
+`test.sh`, `update.sh`, `kandev-*.sh`, `install-*.sh`, `sync-*.sh`,
+`mise.default.toml`, `CLAUDE.md`, `AGENTS.md`, `README.md`.
+
+The `*-workflow` branches (`claude-workflow`, `codex-workflow`,
+`codex-copilotDI-workflow`, `copilot-workflow`, `copilot-DeepInfra-workflow`)
+exist for **one purpose only**: editing the agent workflow definition under
+**`workflows/`**. They are *not* development branches for the deployment, and
+they are **not kept in sync with `main`** — each one is a stale fork that still
+carries an old copy of every infra file.
+
+**Before touching anything outside `workflows/`:**
+
+```bash
+cd ~/Code/kandev
+git rev-parse --abbrev-ref HEAD    # must print: main
+git switch main                    # if it does not
+```
+
+**Never run the deployment from a non-`main` checkout.** `kandev-start.sh`,
+`update.sh`, `kandev-pull.sh`, and any bare `docker compose up` read the compose
+files **from the current working tree**. Running them while a `*-workflow` branch
+is checked out builds the container from that branch's outdated
+`docker-compose.override.yml` / `Dockerfile.local` — silently dropping whatever
+`main` has added since the branch was cut. Nothing in the output warns you; the
+container just comes up wrong, and it stays wrong until something recreates it.
+
+This is not hypothetical — see the crash-loop row in *Common failure modes* below.
+A checkout back to `main` **does not fix a container that is already running**:
+after any branch switch, recreate it explicitly.
+
+```bash
+cd ~/Code/kandev && git switch main && docker compose -p kandev up -d --force-recreate
+```
+
+---
+
 ## Build, test, run
 
 ### Build the local image
@@ -327,6 +369,9 @@ Use `kandev-ssh-agent.sh` when:
 | `setup-toolchains.sh` | One-time helper: installs the mise language toolchains into the persistent `/data` volume |
 | `test.sh` | 63 automated tests covering image, container, service, identity, SSH, git, CLI tools, toolchains (incl. Java JDK and Go, plus login-shell PATH), sqlite3, headless browser, Docker host-path wrapper |
 | `update.sh` | Daily cron: pull upstream → rebuild local → restart if changed |
+| `AGENTS.md` | Short, non-negotiable rules for **any** AI agent (Claude, Codex, Copilot): work on `main` for everything outside `workflows/`, never start the deployment from a non-`main` checkout, read `host.env`, keep `test.sh` green |
+| `.claude/skills/kandev-change/SKILL.md` | Claude Code skill that fires before any kandev infra edit or `docker compose` / `kandev-start.sh` / `update.sh` run: enforces the `main`-branch rule, the post-branch-switch recreate, and the security-profile verification |
+| `scripts/require-main-branch.sh` | Preflight called by `kandev-start.sh`, `kandev-start-hub.sh`, `update.sh` and `kandev-pull.sh`: aborts with exit 78 when the checkout is not on `main` (override: `KANDEV_ALLOW_BRANCH=1`), so the deployment can never be built from a stale `*-workflow` branch |
 | `host.env` | **Git-ignored.** Real hosts/users/IPs for this machine + placeholder→real map (agent reference). Sourced by every script. |
 | `host.env.example` | Committed template for `host.env`; copy and fill in per host. |
 | `kandev-ssh-agent.sh` | Helper: start/reuse ssh-agent, load keys, restart kandev with socket forwarding |
@@ -341,6 +386,7 @@ Use `kandev-ssh-agent.sh` when:
 
 | Symptom | Cause | Fix |
 |---|---|---|
+| Container crash-loops right after a branch switch; `docker logs kandev` repeats `ERROR: Codex workspace-write sandbox cannot create its bubblewrap namespaces` / `bwrap: No permissions to create new namespace`; `board.office` unreachable | The container was created from a **non-`main`** working tree. The `*-workflow` branches predate the Codex sandbox fix, so their `docker-compose.override.yml` has no `security_opt:` block — the container then runs under `docker-default` AppArmor + default seccomp, which blocks `clone(CLONE_NEWUSER)`. Hosts with `kernel.apparmor_restrict_unprivileged_userns=1` therefore refuse bubblewrap's namespaces, the entrypoint preflight exits 78, and Docker restarts forever. Switching back to `main` restores the file but **does not touch the running container**. Hit on 2026-08-21: `kandev-start.sh` ran at 18:35 while `codex-copilotDI-workflow` was checked out; 43 restarts | Confirm with `docker inspect kandev --format '{{.AppArmorProfile}} {{json .HostConfig.SecurityOpt}}'` — it must show `kandev-codex` and the seccomp JSON, **not** `docker-default` / `null`. Then: `cd ~/Code/kandev && git switch main && docker compose -p kandev up -d --force-recreate`. Prevented going forward by `scripts/require-main-branch.sh`. |
 | Container crash-loops, logs full of `chown: Read-only file system` | Entrypoint patch missing or overwritten by image update | Verify `docker-entrypoint-local.sh` has `\|\| true`; rebuild |
 | `apt-get` fails with `NOSPLIT` during build | Transparent proxy, missing `network: host` | Ensure `build.network: host` in `docker-compose.override.yml` |
 | `git` reports "dubious ownership" inside container | `safe.directory` not set in system config | Rebuild image; check `git config --system safe.directory` = `*` |

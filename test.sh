@@ -636,6 +636,57 @@ else
   fail "compose relative source resolved to '${COMPOSE_SRC}' (expected a host path under ${HOME})"
 fi
 
+section "13. Branch guard (deployment runs only from main)"
+
+GUARD="$(dirname "${BASH_SOURCE[0]:-$0}")/scripts/require-main-branch.sh"
+
+if [[ -x "$GUARD" ]]; then
+  ok "scripts/require-main-branch.sh exists and is executable"
+else
+  fail "scripts/require-main-branch.sh is missing or not executable"
+fi
+
+# On the required branch it must be a silent no-op.
+if bash "$GUARD" "$(pwd)" >/dev/null 2>&1; then
+  ok "guard allows the deployment to run from the current (main) checkout"
+else
+  fail "guard refused the current checkout — are you on a non-main branch?"
+fi
+
+# A mismatching branch must abort with 78, the same code the other preflights use.
+GUARD_RC=0
+KANDEV_REQUIRED_BRANCH=__not_a_branch__ bash "$GUARD" "$(pwd)" >/dev/null 2>&1 || GUARD_RC=$?
+if [[ "$GUARD_RC" -eq 78 ]]; then
+  ok "guard refuses a non-main checkout with exit 78"
+else
+  fail "guard returned $GUARD_RC on a non-main checkout (expected 78)"
+fi
+
+# The documented escape hatch must still work.
+if KANDEV_REQUIRED_BRANCH=__not_a_branch__ KANDEV_ALLOW_BRANCH=1 \
+     bash "$GUARD" "$(pwd)" >/dev/null 2>&1; then
+  ok "KANDEV_ALLOW_BRANCH=1 overrides the guard"
+else
+  fail "KANDEV_ALLOW_BRANCH=1 did not override the guard"
+fi
+
+# A deployment copied without .git (e.g. /usr/local/sbin/kandev-update.sh's dir)
+# must not be blocked.
+if bash "$GUARD" /tmp >/dev/null 2>&1; then
+  ok "guard is a no-op outside a git work tree"
+else
+  fail "guard blocked a non-git directory"
+fi
+
+# Every entry point that reads the compose files must call the guard.
+for entry in kandev-start.sh kandev-start-hub.sh update.sh kandev-pull.sh; do
+  if grep -q 'require-main-branch.sh' "$entry" 2>/dev/null; then
+    ok "$entry invokes the branch guard"
+  else
+    fail "$entry does not invoke the branch guard"
+  fi
+done
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 TOTAL=$((PASS + FAIL))
 echo ""
