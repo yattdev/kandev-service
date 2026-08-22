@@ -247,7 +247,9 @@ if [[ -f "$BEFORE_RULES" ]]; then
     if "${SUDO[@]}" cmp -s "$TMP2" "$BEFORE_RULES"; then
         log "before.rules already up to date"
     else
-        "${SUDO[@]}" cp "$TMP2" "$BEFORE_RULES"
+        # Truncate in place rather than cp: keeps before.rules' own mode and
+        # owner instead of inheriting mktemp's 0600.
+        "${SUDO[@]}" sh -c "cat '$TMP2' > '$BEFORE_RULES'"
         log "persisted in $BEFORE_RULES (backup: ${BEFORE_RULES}.kandev.bak)"
         if command -v ufw >/dev/null 2>&1; then
             "${SUDO[@]}" ufw reload >/dev/null 2>&1 || log "WARNING: 'ufw reload' failed — rules are live but may not survive a reboot"
