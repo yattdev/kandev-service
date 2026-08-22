@@ -687,6 +687,87 @@ for entry in kandev-start.sh kandev-start-hub.sh update.sh kandev-pull.sh; do
   fi
 done
 
+# ── 14. Port 80 → 38429 NAT redirect scoping ─────────────────────────────────
+section "14. NAT redirect scoping (port 80 → 38429)"
+
+NAT_SCRIPT="$COMPOSE_DIR/scripts/nat-redirect.sh"
+
+if [[ -x "$NAT_SCRIPT" ]]; then
+  ok "scripts/nat-redirect.sh exists and is executable"
+else
+  fail "scripts/nat-redirect.sh is missing or not executable"
+fi
+
+# --print needs no root: it renders exactly the rules that would be applied.
+NAT_RULES="$(bash "$NAT_SCRIPT" --print 2>/dev/null | grep '^-A' || echo "")"
+
+if [[ -n "$NAT_RULES" ]]; then
+  ok "nat-redirect.sh --print renders a rule set"
+else
+  fail "nat-redirect.sh --print produced no rules"
+fi
+
+# The whole point: nothing unscoped. An unscoped PREROUTING rule also matches
+# every container's port-80 egress, which is what broke apt-get in builds.
+if grep -qE '^-A PREROUTING -p tcp --dport 80' <<<"$NAT_RULES"; then
+  fail "PREROUTING rule is UNSCOPED (would hijack container egress to :80)"
+else
+  ok "no unscoped PREROUTING redirect"
+fi
+
+if grep -qE '^-A OUTPUT -p tcp --dport 80' <<<"$NAT_RULES"; then
+  fail "OUTPUT rule is UNSCOPED (would hijack this host's own :80 traffic)"
+else
+  ok "no unscoped OUTPUT redirect"
+fi
+
+if grep -qE '^-A PREROUTING -i [^ ]+ -p tcp --dport 80 -j REDIRECT --to-port 38429$' <<<"$NAT_RULES"; then
+  ok "PREROUTING redirect is scoped to an inbound LAN interface"
+else
+  fail "PREROUTING redirect is not interface-scoped"
+fi
+
+# -o lo covers 127.0.0.1 AND this host's own LAN IP (both route out lo), so
+# board.<host> keeps working from the host itself across a DHCP lease change.
+if grep -qE '^-A OUTPUT -o lo -p tcp --dport 80 -j REDIRECT --to-port 38429$' <<<"$NAT_RULES"; then
+  ok "OUTPUT redirect is scoped to locally-destined traffic (-o lo)"
+else
+  fail "OUTPUT redirect is not scoped to -o lo"
+fi
+
+# Docker bridges must never appear as a redirect interface.
+if grep -qE '^-A PREROUTING -i (docker[0-9]*|br-|veth|virbr)' <<<"$NAT_RULES"; then
+  fail "a docker/virtual bridge was detected as a LAN interface"
+else
+  ok "docker bridges are excluded from the detected LAN interfaces"
+fi
+
+# Neither installer may hand-roll iptables any more — they must delegate, or
+# the two copies drift apart again (they already did once).
+for inst in install-office.sh install-laptop.sh; do
+  if [[ ! -f "$COMPOSE_DIR/$inst" ]]; then
+    continue
+  fi
+  if grep -q 'scripts/nat-redirect.sh' "$COMPOSE_DIR/$inst" \
+     && ! grep -qE '^[^#]*iptables .*REDIRECT' "$COMPOSE_DIR/$inst"; then
+    ok "$inst delegates the NAT redirect to scripts/nat-redirect.sh"
+  else
+    fail "$inst still installs iptables REDIRECT rules inline"
+  fi
+done
+
+# End-to-end: apply the rules for real in a disposable netns and verify with
+# the nat table's own packet counters that bridge egress is left alone while
+# LAN-inbound and host-local traffic are still redirected.
+NAT_FUNC_OUT="$(timeout 400 docker run --rm --privileged \
+  -e KANDEV_NAT_TEST_OK=1 -v "$COMPOSE_DIR:/repo:ro" alpine:latest \
+  sh -c 'apk add -q bash iptables iproute2 && bash /repo/tests/nat-redirect-scoping.sh' 2>&1 || true)"
+if grep -q 'nat scoping: .*passed' <<<"$NAT_FUNC_OUT"; then
+  ok "live scoping behaves correctly ($(grep -o 'nat scoping: [0-9]*/[0-9]* passed' <<<"$NAT_FUNC_OUT"))"
+else
+  fail "tests/nat-redirect-scoping.sh failed: $(grep '✗' <<<"$NAT_FUNC_OUT" | head -3 | tr '\n' ';')"
+fi
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 TOTAL=$((PASS + FAIL))
 echo ""

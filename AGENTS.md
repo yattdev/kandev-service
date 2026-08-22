@@ -72,7 +72,24 @@ The committed files use sanitized placeholders (`office-desktop`/`alice`,
 the git-ignored `host.env` at the repo root, whose header maps each placeholder
 to its real value. Read it first; never act on the placeholder values.
 
-## 4. Tests must pass before reporting a change complete
+## 4. Never add an unscoped port-80 NAT redirect
+
+`http://board.<host>` works via an iptables REDIRECT of port 80 → 38429. Keep it —
+but **only through `scripts/nat-redirect.sh`**, and never unscoped. A rule with no
+interface or destination constraint also matches every container's port-80 egress
+(`apt-get` in a docker build gets the kandev SPA → `Clearsigned file isn't valid,
+got 'NOSPLIT'`) and every port-80 request this host makes. Both were real outages.
+
+```bash
+bash scripts/nat-redirect.sh --print      # what would be applied (no root)
+sudo bash scripts/nat-redirect.sh         # apply live + persist
+sudo bash scripts/nat-redirect.sh --check # verify; exits 1 on an unscoped/stale rule
+```
+
+Do not hand-roll `iptables … REDIRECT` in an installer or a fix-up command; add it
+to that script so both installers stay in sync.
+
+## 5. Tests must pass before reporting a change complete
 
 Any change to `Dockerfile.local`, `docker-compose*.yml`,
 `docker-entrypoint-local.sh`, `update.sh`, or any `install-*.sh` requires a

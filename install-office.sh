@@ -144,24 +144,15 @@ if command -v ufw &>/dev/null; then
     fi
 fi
 
-# ── 6. Port 80 → 38429 redirect ──────────────────────────────────────────────
-BEFORE_RULES="/etc/ufw/before.rules"
-
-if ! sudo iptables -t nat -C PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 38429 2>/dev/null; then
-    sudo iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 38429
-    echo "[install-office] iptables: PREROUTING redirect added (80 → 38429)"
-fi
-
-if ! sudo iptables -t nat -C OUTPUT -p tcp --dport 80 -j REDIRECT --to-port 38429 2>/dev/null; then
-    sudo iptables -t nat -A OUTPUT -p tcp --dport 80 -j REDIRECT --to-port 38429
-    echo "[install-office] iptables: OUTPUT redirect added"
-fi
-
-if ! sudo grep -q "OUTPUT.*REDIRECT.*38429\|REDIRECT.*38429.*OUTPUT" "$BEFORE_RULES" 2>/dev/null; then
-    sudo sed -i '/^\*filter/i # kandev: port 80 → 38429 (PREROUTING=external, OUTPUT=local)\n*nat\n:PREROUTING ACCEPT [0:0]\n:OUTPUT ACCEPT [0:0]\n-A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 38429\n-A OUTPUT -p tcp --dport 80 -j REDIRECT --to-port 38429\nCOMMIT\n' "$BEFORE_RULES"
-    sudo ufw reload
-    echo "[install-office] redirects persisted in before.rules"
-fi
+# ── 6. Port 80 → 38429 redirect (scoped) ─────────────────────────────────────
+# Both the live rules and their persisted copy are managed by
+# scripts/nat-redirect.sh. The redirect MUST stay scoped: an unscoped
+# PREROUTING rule also catches every container's port-80 egress (breaking
+# apt-get in docker builds with "Clearsigned file isn't valid, got 'NOSPLIT'"),
+# and an unscoped OUTPUT rule catches every port-80 request this host makes.
+# See the header of scripts/nat-redirect.sh.
+sudo env "KANDEV_LAN_IFACES=${KANDEV_LAN_IFACES:-}" \
+     bash "$SCRIPT_DIR/scripts/nat-redirect.sh"
 
 # ── 7. Start kandev (with Litestream restore) ─────────────────────────────────
 if ! docker ps --filter name=kandev --format '{{.Names}}' | grep -q kandev; then

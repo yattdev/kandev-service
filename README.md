@@ -464,11 +464,25 @@ For `board.local` (laptop's own kandev), `install-laptop.sh` adds:
 | http://board.office | office-desktop (192.168.1.10) | Yes — `sudo nmcli connection up "Corp VPN"` |
 | http://board.local | laptop (127.0.0.1) | No — local |
 
-> **Fixed bug — `board.office`/`board.home` used to show wrong/stale data when browsed from laptop.**
-> Root cause: `install-laptop.sh` set an **unscoped** iptables `OUTPUT` NAT rule (`--dport 80 -j REDIRECT --to-port 38429` with no `-d` filter), so *any* outbound port-80 request from laptop — including to board.office, board.home, or any external website — was silently redirected to laptop's own local kandev instead of leaving the machine. Confirmed by stopping laptop's local kandev: `board.office:80` then failed outright instead of reaching office-desktop.
-> **Fix:** the OUTPUT rule is now scoped to `-d 127.0.0.1/32` (only catches the host's own loopback traffic for `board.local`). Re-run `bash ~/Code/kandev/install-laptop.sh` (needs sudo) to apply on hosts still running the old unscoped rule. See "Common failure modes" in `CLAUDE.md` for full details.
+> **Fixed bug — an unscoped port-80 redirect hijacked traffic that was never meant for kandev.**
+> Both installers used to add `--dport 80 -j REDIRECT --to-port 38429` with no interface or
+> destination constraint, in *both* NAT chains. That matched far more than "someone asked for
+> the board":
+> * **`OUTPUT`** caught every port-80 request the host itself made — so from laptop,
+>   `board.office`, `board.home` and any plain-`http://` site were silently answered by
+>   laptop's own kandev. Confirmed by stopping laptop's local kandev: `board.office:80`
+>   then failed outright instead of reaching office-desktop.
+> * **`PREROUTING`** caught the egress of every container on a docker bridge — `apt-get
+>   update` reaching `deb.debian.org:80` got the kandev SPA instead, which surfaces as
+>   `Clearsigned file isn't valid, got 'NOSPLIT'` during a build.
+>
+> **Fix:** the redirect stays — it is the whole point of `http://board.<host>` — but it is now
+> *scoped*, and both installers delegate to a single `scripts/nat-redirect.sh`. See
+> [Network / iptables](#network--iptables) below. Re-run `bash ~/Code/kandev/install-office.sh`
+> (or `install-laptop.sh`), or just `sudo bash ~/Code/kandev/scripts/nat-redirect.sh`, on any
+> host still carrying the old rules.
 
-## Network / iptables (office-desktop)
+## Network / iptables
 
 ### Port map
 
@@ -477,53 +491,77 @@ For `board.local` (laptop's own kandev), `install-laptop.sh` adds:
 | `38429` | `0.0.0.0` | Kandev unified server — backend + web UI |
 | `80` | N/A — no listener | Redirected → `38429` by iptables NAT |
 
-### Why two iptables rules are required
+### The two chains, and why each needs a scope
 
-Linux iptables NAT has two chains that must both be set for `http://board.office` to work everywhere:
+`http://board.<host>` with no port number needs a NAT redirect in both chains — and each
+one, left unscoped, catches traffic that has nothing to do with kandev:
 
-| Chain | Applies to | Use case |
-|---|---|---|
-| `PREROUTING` | Packets arriving **from outside** the machine | Other PCs on the network (laptop, home-server) |
-| `OUTPUT` | Packets generated **locally** on office-desktop | Browser/curl running on office-desktop itself |
+| Chain | Must catch | Also caught when unscoped | Scope used |
+|---|---|---|---|
+| `PREROUTING` | Packets arriving **from the network** — other PCs asking for the board | The egress of every container on a docker bridge (`apt-get` → `deb.debian.org:80` is answered with the kandev SPA → `NOSPLIT`) | `-i <lan-iface>`, one rule per detected LAN interface |
+| `OUTPUT` | Packets generated **on this host** and addressed **to this host** — a browser or `curl` here opening `board.<host>` or `localhost` | Every port-80 request the host makes, including a `network: host` docker build and any `http://` site in the browser | `-o lo` |
 
-**Classic symptom of a missing OUTPUT rule:** `http://board.office` works from laptop but gives *Connection refused* from a browser or `curl` on office-desktop itself.
+`-o lo` is the right scope because `ip route get` sends **both** `127.0.0.1` **and the host's
+own LAN IP** out the loopback device, so one rule covers `http://localhost` and
+`http://board.<host>` from the host itself — and unlike a `-d <lan-ip>` scope it keeps
+working after a DHCP lease change. Anything actually leaving the machine goes out
+`enp*`/`wl*` and is left alone.
 
-Both rules must be present:
+**Classic symptom of a missing OUTPUT rule:** `http://board.office` works from another PC
+but gives *Connection refused* from a browser or `curl` on office-desktop itself.
 
+**Deliberate trade-off:** a container on a docker bridge can no longer reach the board on
+port 80 by hostname — it must use `<host-ip>:38429`. That is precisely the traffic class
+that was breaking `apt`.
+
+### Managing the rules
+
+One script owns the live rules *and* their persisted copy in `/etc/ufw/before.rules`
+(falling back to `iptables-persistent`). It is idempotent, and it removes the older
+unscoped rules wherever it finds them:
+
+```bash
+bash ~/Code/kandev/scripts/nat-redirect.sh --print    # show the rules; no root needed
+sudo bash ~/Code/kandev/scripts/nat-redirect.sh       # apply live + persist
+sudo bash ~/Code/kandev/scripts/nat-redirect.sh --check  # verify; exit 1 if wrong/unscoped
 ```
--A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 38429
--A OUTPUT     -p tcp --dport 80 -j REDIRECT --to-port 38429
-```
 
-These are persisted in `/etc/ufw/before.rules` and applied at boot by UFW.
+LAN interfaces are autodetected: every globally-addressed IPv4 interface that is not
+`lo`, `docker0`, `br-*`, `veth*` or `virbr*`. Override with `KANDEV_LAN_IFACES="eth0 wlan0"`
+in `host.env` — for example to add a VPN interface the board is reached over. If nothing is
+detected the script **fails** rather than falling back to an unscoped rule.
+
+`install-office.sh` and `install-laptop.sh` both call it; neither runs `iptables` itself.
 
 ### Diagnose
 
 ```bash
-# Are both rules active right now?
-sudo iptables -t nat -L PREROUTING -n | grep 38429   # should show a line
-sudo iptables -t nat -L OUTPUT     -n | grep 38429   # should show a line
+# Are the rules present and correctly scoped?
+sudo bash ~/Code/kandev/scripts/nat-redirect.sh --check
 
-# Quick connectivity test
-curl -o /dev/null -w "%{http_code}" http://board.office/   # expect 200
-curl -o /dev/null -w "%{http_code}" http://localhost:38429/  # direct, no NAT
+# Raw view (no sudo password needed — uses the docker group)
+docker run --rm --net=host --privileged alpine \
+  sh -c 'apk add -q iptables && iptables -t nat -S PREROUTING && iptables -t nat -S OUTPUT'
+
+# Connectivity
+curl -o /dev/null -w "%{http_code}\n" http://board.office/       # via NAT, expect 200
+curl -o /dev/null -w "%{http_code}\n" http://localhost:38429/    # direct, no NAT
+
+# Is a container's :80 egress being hijacked? (the apt symptom)
+docker run --rm alpine sh -c 'apk add -q curl && curl -sI http://deb.debian.org/ | head -1'
 ```
+
+An unscoped rule shows up in `--check` output as `UNSCOPED/STALE`.
 
 ### Fix (if rules are missing after reboot)
 
-If UFW reload didn't pick up `before.rules` correctly, re-apply live without sudo using Docker:
-
 ```bash
-# Apply both rules via privileged container (no sudo password needed — uses docker group)
-docker run --rm --net=host --cap-add=NET_ADMIN --privileged alpine \
-  sh -c 'apk add -q iptables && \
-         iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 38429 && \
-         iptables -t nat -A OUTPUT     -p tcp --dport 80 -j REDIRECT --to-port 38429 && \
-         echo OK'
-
-# Or simply re-run the idempotent install script (will prompt for sudo):
-bash ~/Code/kandev/install-office.sh
+sudo bash ~/Code/kandev/scripts/nat-redirect.sh
 ```
+
+If `ufw reload` is not picking up `before.rules`, the script says so; the live rules are
+applied either way. `/etc/ufw/before.rules.kandev.bak` holds the copy from before the last
+run.
 
 ## Deploy
 

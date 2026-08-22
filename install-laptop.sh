@@ -3,7 +3,7 @@
 #
 # Sets up a full kandev instance identical to office-desktop:
 #   - Systemd user unit (autostart on login/boot via linger)
-#   - iptables NAT: port 80 → 38429 (persisted across reboots)
+#   - iptables NAT: port 80 → 38429, scoped (persisted across reboots)
 #   - DNS: 127.0.0.1 board.local in /etc/hosts
 #   - Litestream: restore from home-server replica on start
 #   - Restic: daily backup snapshot to home-server repo
@@ -170,50 +170,16 @@ if command -v ufw &>/dev/null; then
     fi
 fi
 
-# ── 7. Port 80 → 38429 NAT redirect ──────────────────────────────────────────
-# PREROUTING: external traffic (other LAN devices)
-# OUTPUT:     localhost traffic (browser on laptop itself → board.local)
-
-if ! sudo iptables -t nat -C PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 38429 2>/dev/null; then
-    sudo iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 38429
-    echo "[install-laptop] iptables: PREROUTING redirect added (80 → 38429)"
-fi
-
-# IMPORTANT: scope to -d 127.0.0.1/32 only. An unscoped OUTPUT rule matches
-# ANY destination on port 80 (board.office, board.home, even unrelated websites),
-# silently redirecting them all to this host's own local kandev instead of the
-# real remote host. This caused board.office/board.home to appear to load but
-# show local/stale data when browsed from laptop.
-if ! sudo iptables -t nat -C OUTPUT -d 127.0.0.1/32 -p tcp --dport 80 -j REDIRECT --to-port 38429 2>/dev/null; then
-    sudo iptables -t nat -A OUTPUT -d 127.0.0.1/32 -p tcp --dport 80 -j REDIRECT --to-port 38429
-    echo "[install-laptop] iptables: OUTPUT redirect added (80 → 38429, scoped to 127.0.0.1 only)"
-fi
-
-# Remove any pre-existing unscoped OUTPUT rule from a previous (buggy) run
-if sudo iptables -t nat -C OUTPUT -p tcp --dport 80 -j REDIRECT --to-port 38429 2>/dev/null; then
-    sudo iptables -t nat -D OUTPUT -p tcp --dport 80 -j REDIRECT --to-port 38429
-    echo "[install-laptop] iptables: removed unscoped OUTPUT redirect (security/correctness fix)"
-fi
-
-# Persist: prefer UFW before.rules if present, else iptables-persistent
-BEFORE_RULES="/etc/ufw/before.rules"
-IPTABLES_RULES="/etc/iptables/rules.v4"
-
-if [[ -f "$BEFORE_RULES" ]]; then
-    # Remove any previously-persisted unscoped OUTPUT rule (buggy — matches all destinations)
-    if sudo grep -q '^-A OUTPUT -p tcp --dport 80 -j REDIRECT --to-port 38429$' "$BEFORE_RULES" 2>/dev/null; then
-        sudo sed -i '/^-A OUTPUT -p tcp --dport 80 -j REDIRECT --to-port 38429$/d' "$BEFORE_RULES"
-        echo "[install-laptop] removed unscoped OUTPUT redirect from before.rules"
-    fi
-    if ! sudo grep -q "REDIRECT.*38429" "$BEFORE_RULES" 2>/dev/null; then
-        sudo sed -i '/^\*filter/i # kandev: port 80 → 38429\n*nat\n:PREROUTING ACCEPT [0:0]\n:OUTPUT ACCEPT [0:0]\n-A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 38429\n-A OUTPUT -d 127.0.0.1/32 -p tcp --dport 80 -j REDIRECT --to-port 38429\nCOMMIT\n' "$BEFORE_RULES"
-        sudo ufw reload
-        echo "[install-laptop] redirects persisted in ufw/before.rules"
-    fi
-elif command -v iptables-save &>/dev/null; then
-    sudo iptables-save | sudo tee "$IPTABLES_RULES" > /dev/null
-    echo "[install-laptop] redirects persisted via iptables-save"
-fi
+# ── 7. Port 80 → 38429 NAT redirect (scoped) ─────────────────────────────────
+# Managed by scripts/nat-redirect.sh, which also removes the older unscoped
+# rules this script used to install. Scoping matters twice over here:
+#   * PREROUTING is limited to the LAN interfaces, so a container's port-80
+#     egress (apt-get in a docker build) is no longer answered by kandev.
+#   * OUTPUT is limited to `-o lo`, so only traffic addressed to THIS machine
+#     is redirected — the unscoped version is what made board.office and
+#     board.home show this laptop's own stale data.
+sudo env "KANDEV_LAN_IFACES=${KANDEV_LAN_IFACES:-}" \
+     bash "$SCRIPT_DIR/scripts/nat-redirect.sh"
 
 # ── 8. DNS: board.local → localhost ──────────────────────────────────────────
 if ! grep -q "board.local" /etc/hosts 2>/dev/null; then
