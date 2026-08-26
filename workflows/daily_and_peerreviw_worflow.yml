@@ -7,7 +7,7 @@ workflows:
         - name: Backlogs
           position: 0
           color: bg-slate-500
-          prompt: "@dw-backlogs"
+          prompt: '@dw-backlogs'
           events: {}
           is_start_step: true
           show_in_command_panel: true
@@ -54,14 +54,14 @@ workflows:
         - name: Work
           position: 3
           color: bg-blue-500
-          prompt: "@dw-work"
+          prompt: '@dw-work'
           events:
             on_enter:
                 - type: auto_start_agent
             on_turn_complete:
                 - type: move_to_step
                   config:
-                    step_position: 4
+                    step_position: 5
           is_start_step: false
           show_in_command_panel: true
           allow_manual_move: true
@@ -71,10 +71,26 @@ workflows:
             mode: bypassPermissions
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
-        - name: Review
+        - name: Blocked
           position: 4
+          color: bg-red-500
+          prompt: '@dw-blocked'
+          events:
+            on_enter:
+                - type: auto_start_agent
+          is_start_step: false
+          show_in_command_panel: false
+          allow_manual_move: true
+          agent_profile:
+            agent_name: Claude
+            model: sonnet
+            mode: bypassPermissions
+          auto_advance_requires_signal: false
+          cancel_triggers_turn_complete: false
+        - name: Review
+          position: 5
           color: bg-yellow-500
-          prompt: "@dw-review"
+          prompt: '@dw-review'
           events:
             on_enter:
                 - type: reset_agent_context
@@ -91,16 +107,16 @@ workflows:
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
         - name: QA
-          position: 5
+          position: 6
           color: bg-orange-500
-          prompt: "@dw-qa"
+          prompt: '@dw-qa'
           events:
             on_enter:
                 - type: auto_start_agent
             on_turn_complete:
                 - type: move_to_step
                   config:
-                    step_position: 6
+                    step_position: 7
           is_start_step: false
           show_in_command_panel: true
           allow_manual_move: true
@@ -111,9 +127,9 @@ workflows:
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
         - name: PR
-          position: 6
+          position: 7
           color: bg-indigo-500
-          prompt: "@dw-pull-request"
+          prompt: '@dw-pull-request'
           events:
             on_enter:
                 - type: auto_start_agent
@@ -129,9 +145,9 @@ workflows:
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
         - name: CI Fixup
-          position: 7
+          position: 8
           color: bg-amber-500
-          prompt: "@dw-ci-fixup"
+          prompt: '@dw-ci-fixup'
           events:
             on_enter:
                 - type: auto_start_agent
@@ -147,9 +163,9 @@ workflows:
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
         - name: Human-QA
-          position: 8
+          position: 9
           color: bg-orange-500
-          prompt: "@dw-human-qa-review"
+          prompt: '@dw-human-qa-review'
           events:
             on_enter:
                 - type: auto_start_agent
@@ -163,7 +179,7 @@ workflows:
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
         - name: ToDeploy
-          position: 9
+          position: 10
           color: bg-cyan-500
           events: {}
           is_start_step: false
@@ -172,7 +188,7 @@ workflows:
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
         - name: Done
-          position: 10
+          position: 11
           color: bg-green-500
           prompt: '@dw-done'
           events:
