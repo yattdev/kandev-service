@@ -1,0 +1,68 @@
+Hey folks — sharing my self-hosted kandev setup, curious how you run yours 👀
+
+I've been running kandev as a small multi-host infra across three machines that
+all share the same board/data, and I'd love feedback on whether I'm
+over-engineering it (and whether some of this is already on the roadmap).
+
+The topology
+- home-server   — always-on box, acts as the central hub.
+- office-desktop — my powerful workstation (only reachable over the corp VPN
+                   during office hours).
+- laptop        — VPN-independent local fallback.
+
+All three run an *identical* kandev instance, and I can walk from one machine to
+another and pick up the exact same board state.
+
+How the pieces fit (roughly one concern per file):
+- docker-compose.yml + docker-compose.override.yml — base upstream image + a
+  local layer. The override does the interesting stuff: mounts my host identity
+  into the container.
+- Dockerfile.local — extends the upstream image with the tools agents actually
+  need day-to-day: ssh, gh, glab, Docker CLI, a build toolchain, mise (polyglot
+  runtime manager), and a headless Chrome + chromedriver stack for browser tests.
+- Host identity mirroring — ~/.ssh, ~/.gitconfig, gh/glab tokens are
+  bind-mounted (with HOME=/data/home + UID matching), so git/ssh/gh/glab inside
+  the container behave exactly like on the host. No re-auth, no key copying.
+- host.env (git-ignored) — one place for real hosts/users/IPs/secrets, sourced
+  by every script; the committed repo only ships generic placeholders. Keeps the
+  whole thing shareable.
+- kandev-start.sh / kandev-pull.sh — freshest-wins startup + on-demand "pull the
+  latest state" with a single-active-writer lock so two hosts never clobber each
+  other.
+- install-*.sh — idempotent per-host setup (systemd unit, UFW/iptables 80→38429
+  NAT, cron, litestream config).
+- update.sh — nightly auto-update: pulls the upstream image, rebuilds my local
+  layer only if the digest changed, restarts, health-checks, and auto-rolls back
+  to the previous image on failure.
+- kandev-restic-backup.sh — daily restic snapshot history (7 daily / 4 weekly /
+  3 monthly) with a zero-downtime hot SQLite copy — never stops kandev (stopping
+  it would kill in-flight agent sessions).
+
+The two features I lean on most:
+
+1. Live replication (Litestream). This is the star of the show. A Litestream
+   sidecar streams the SQLite WAL from the active host to the hub in ~seconds,
+   and on startup each host restores the freshest replica before kandev boots.
+   That's what makes "same board, any machine" actually work instead of me
+   rsync'ing DBs around.
+
+2. Mimicking my host's packages inside the container. The image ships mise +
+   build headers so agents get Node/Python/Go/Java/Ruby/PHP/.NET on demand,
+   persisted to a volume (survives rebuilds). Right now this is the gap I feel
+   most: tools I already have on the host still have to be (auto-)installed into
+   the container. It works, but it's the part that feels like it *should* be
+   native.
+
+What I've noticed: a couple of these feel like they're being cooked upstream on
+the same roadmap — nightly auto-update and secrets/token management especially.
+So my questions:
+
+- How do you run your kandev workstation? Single host, or something multi-machine
+  like this?
+- Am I over-engineering the Litestream + restic + lock dance, or does anyone else
+  sync across machines?
+- Is native host-toolchain passthrough (or first-class secrets + auto-update)
+  something kandev plans to ship soon? Happy to stop maintaining my bolt-ons if
+  so. 🙂
+
+Would love to see your setups!
