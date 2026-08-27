@@ -197,6 +197,24 @@ The container's home is `/data/home`, not `/home/kandev`. This is intentional:
 - The `HOME` override makes `/data/home` the base so `~` expands correctly for SSH, git, gh, glab
 - All `IdentityFile ~/.ssh/...` entries in `~/.ssh/config` resolve to `/data/home/.ssh/...`
 
+### Live custom prompts
+
+Saved/custom prompts are persistent operator data with a required versioned
+mirror under `custom_prompts/`. Workflows can reference them by name, such as
+`@workstep-prompt`, and the backend resolves the latest database value while
+composing a subsequent task turn. When the instance owner explicitly asks to
+add or update a prompt, work from `main`, update/create
+`custom_prompts/<prompt-name>.md`, synchronize the identified live row through
+the authenticated API or documented backup-first SQLite fallback, verify both
+copies, and commit and push `main`. See **`CUSTOM-PROMPTS.md`** for the complete
+procedure.
+
+Do not confuse this operator capability with agent permissions: guarded task
+agents may not reach outside their assigned scope to edit the Kandev database.
+They escalate to their parent/Coordinator. The reviewed prompt mirror is
+committed; secrets, database snapshots, prompt backups, and `master.key` never
+are.
+
 ### git `safe.directory = *`
 
 The host `~/.gitconfig` contains `safe.directory = /home/alice/Code/work-project` (an absolute
@@ -455,6 +473,8 @@ Use `kandev-ssh-agent.sh` when:
 | `setup-toolchains.sh` | One-time helper: installs the mise language toolchains into the persistent `/data` volume |
 | `test.sh` | Automated tests covering image, container, service, identity, SSH, git, CLI tools, toolchains (incl. Java JDK and Go, plus login-shell PATH), sqlite3, headless browser, guarded agent Compose/coordinator source access, Docker host-path wrapper, branch guard, and port-80 NAT redirect scoping |
 | `update.sh` | Daily cron: pull upstream → rebuild local → restart if changed |
+| `CUSTOM-PROMPTS.md` | Operator runbook for discovering, inspecting, backing up, and explicitly updating live saved prompts through the API or a tightly scoped SQLite transaction |
+| `custom_prompts/` | Versioned Markdown mirrors of saved prompts; every owner-requested add/update must synchronize the live database and be committed and pushed from `main` |
 | `AGENTS.md` | Short, non-negotiable rules for **any** AI agent (Claude, Codex, Copilot): work on `main` for everything outside `workflows/`, never start the deployment from a non-`main` checkout, read `host.env`, keep `test.sh` green |
 | `.claude/skills/kandev-change/SKILL.md` | Claude Code skill that fires before any kandev infra edit or `docker compose` / `kandev-start.sh` / `update.sh` run: enforces the `main`-branch rule, the post-branch-switch recreate, and the security-profile verification |
 | `scripts/require-main-branch.sh` | Preflight called by `kandev-start.sh`, `kandev-start-hub.sh`, `update.sh` and `kandev-pull.sh`: aborts with exit 78 when the checkout is not on `main` (override: `KANDEV_ALLOW_BRANCH=1`), so the deployment can never be built from a stale `*-workflow` branch |

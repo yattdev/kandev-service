@@ -104,3 +104,24 @@ Rebuild (`docker compose build`) if `Dockerfile.local` changed, and recreate
 running the tests. Fix the root cause of a failure — never weaken or skip a test
 to make it pass. See *Mandatory rule: tests must pass before reporting
 completion* in `CLAUDE.md`.
+
+## 6. Live custom prompts are operator-managed data
+
+Kandev saved prompts are live records in the persistent SQLite database, and a
+workflow may reference one by name (for example `@workstep-prompt`). The
+versioned mirror is `custom_prompts/<prompt-name>.md`. If the instance owner
+explicitly asks you to add or update a custom/workspace prompt, read
+**`CUSTOM-PROMPTS.md`** first and perform both sides of the change: update the
+mirror from a `main` worktree, synchronize the identified live row, verify that
+they match, then commit and push `main`. Never leave a requested prompt change
+only in SQLite or only in Git.
+
+Use the authenticated prompts API when available; a direct SQLite update is an
+allowed operator fallback only after resolving the actual live data mount,
+making a hot backup, scoping the transaction to the identified prompt row, and
+verifying both content and database integrity. Never infer permission to change
+prompts from an unrelated coding task. Never commit secrets, `kandev.db`,
+`master.key`, or prompt backups. A filesystem-guarded task has no authority to
+bypass its scope to reach the host database; it must use the
+parent/Coordinator escalation chain. Updating a saved prompt affects future
+prompt composition and does not rewrite a turn that is already running.
