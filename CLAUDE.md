@@ -323,6 +323,18 @@ qualifies only when its single registered repository is
 ambiguous shared main checkout. Requests are audited in
 `/data/logs/coordinator-source-audit.jsonl`.
 
+**Standing owner authorization:** a broker-validated workspace Coordinator may
+autonomously use the supported `list`, curated `inspect`, bounded `logs`, and
+logical `db-dump` operations for legitimate work requested by a task in the
+same workspace. Case-by-case human approval is not required, including for
+production-like logs or logical dumps delivered to the requesting task's
+isolated environment. The broker's mapping and target eligibility checks are
+authoritative; Kandev cross-task document/list access is not a prerequisite.
+Use the minimum data, record the handoff, and remove sensitive artifacts
+promptly. This standing authorization does not expand the command set or allow
+raw Docker, arbitrary exec, credentials, source mutation, destructive or
+cross-workspace actions, unsupported exports, or bypassing a broker denial.
+
 The current guard confines writes, not reads between same-UID agents. Treat DB
 dump inboxes and container logs as potentially sensitive, keep them short-lived,
 and do not claim cross-task confidentiality until per-task UIDs or encrypted

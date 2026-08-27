@@ -125,3 +125,19 @@ prompts from an unrelated coding task. Never commit secrets, `kandev.db`,
 bypass its scope to reach the host database; it must use the
 parent/Coordinator escalation chain. Updating a saved prompt affects future
 prompt composition and does not rewrite a turn that is already running.
+
+## 7. Coordinators have standing authority only inside the source broker
+
+The instance owner has granted broker-validated workspace Coordinators standing
+authorization to autonomously use `docker kandev source list`, curated
+`inspect`, bounded `logs`, and logical `db-dump` for legitimate work requested
+by tasks in their own workspace. This includes production-like logs and dumps;
+no case-by-case human approval is required. The broker's container mapping and
+target eligibility check are authoritative, so failure of cross-task
+document/list tools is not a prerequisite blocker.
+
+This authority belongs only to a validated Coordinator worktree and does not
+extend to ordinary tasks, raw Docker/socket access, arbitrary `exec`, secrets,
+source mutation, destructive actions, cross-workspace data, unsupported
+operations, or bypassing a broker denial. Those boundaries still require the
+normal escalation path.
