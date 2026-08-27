@@ -1,0 +1,522 @@
+#!/usr/bin/env python3
+"""Constrained Docker Compose broker for filesystem-guarded Kandev agents.
+
+The broker runs outside Bubblewrap and owns the host Docker socket. Agents only
+receive this broker's Unix socket plus a task-scoped HMAC token. The raw Docker
+API is never exposed inside an agent namespace.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import hmac
+import copy
+import json
+import os
+from pathlib import Path
+import secrets
+import socketserver
+import subprocess
+import sys
+import tempfile
+import threading
+from typing import Any
+
+
+SOCKET_PATH = Path(os.environ.get("KANDEV_AGENT_DOCKER_BROKER_SOCKET", "/run/kandev-agent-docker/broker.sock"))
+KEY_PATH = Path(os.environ.get("KANDEV_AGENT_DOCKER_BROKER_KEY", "/run/kandev-agent-docker/broker.key"))
+DOCKER_BIN = os.environ.get("KANDEV_AGENT_DOCKER_HOST_CLI", "/usr/local/bin/docker")
+GUARD_BIN = os.environ.get("KANDEV_AGENT_GUARD_BIN", "/usr/local/bin/kandev-agent-guard")
+COMPOSE_PLUGIN = os.environ.get(
+    "KANDEV_AGENT_COMPOSE_PLUGIN", "/usr/libexec/docker/cli-plugins/docker-compose"
+)
+MODEL_DIR = Path(os.environ.get("KANDEV_AGENT_DOCKER_MODEL_DIR", "/data/agent-docker-models"))
+MAX_REQUEST = 1024 * 1024
+MAX_OUTPUT = 16 * 1024 * 1024
+COMMAND_TIMEOUT = 30 * 60
+
+COMPOSE_VALUE_OPTIONS = {
+    "-f",
+    "--file",
+    "--profile",
+    "--env-file",
+    "--project-directory",
+    "--parallel",
+    "--progress",
+    "--ansi",
+}
+COMPOSE_FLAG_OPTIONS = {"--compatibility", "--dry-run", "--all-resources"}
+PATH_OPTIONS = {"-f", "--file", "--env-file", "--project-directory"}
+MODEL_COMMANDS = {"build", "config", "create", "pull", "run", "up"}
+SAFE_EXISTING_COMMANDS = {
+    "down",
+    "events",
+    "exec",
+    "images",
+    "kill",
+    "logs",
+    "pause",
+    "port",
+    "ps",
+    "restart",
+    "rm",
+    "start",
+    "stats",
+    "stop",
+    "top",
+    "unpause",
+    "version",
+    "wait",
+}
+FORBIDDEN_RUN_OPTIONS = {
+    "-v",
+    "--volume",
+    "--privileged",
+    "--cap-add",
+    "--device",
+    "--network",
+    "--pid",
+    "--ipc",
+    "--uts",
+    "--security-opt",
+}
+
+
+class BrokerError(RuntimeError):
+    pass
+
+
+def is_within(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def resolve_inside(value: str, cwd: Path, root: Path, *, must_exist: bool = True) -> Path:
+    candidate = Path(value)
+    if not candidate.is_absolute():
+        candidate = cwd / candidate
+    try:
+        resolved = candidate.resolve(strict=must_exist)
+    except OSError as exc:
+        raise BrokerError(f"path is unavailable: {value}: {exc}") from exc
+    if not is_within(resolved, root):
+        raise BrokerError(f"path is outside this agent task: {value}")
+    return resolved
+
+
+def translate_to_host(path: Path) -> Path:
+    mappings = [
+        (Path("/data/home/Code"), os.environ.get("KANDEV_HOST_CODE_DIR", "")),
+        (Path("/data"), os.environ.get("KANDEV_HOST_DATA_DIR", "")),
+    ]
+    host_code = os.environ.get("KANDEV_HOST_CODE_DIR", "")
+    if host_code:
+        mappings.insert(0, (Path(host_code), host_code))
+    for source, destination in mappings:
+        if not destination:
+            continue
+        try:
+            relative = path.relative_to(source)
+        except ValueError:
+            continue
+        return (Path(destination) / relative).resolve(strict=True)
+    raise BrokerError(f"task path has no configured host mapping: {path}")
+
+
+def project_name(task_root: Path) -> str:
+    digest = hashlib.sha256(str(task_root).encode()).hexdigest()[:16]
+    return f"kd_{digest}"
+
+
+def expected_token(key: bytes, task_root: Path) -> str:
+    return hmac.new(key, str(task_root).encode(), hashlib.sha256).hexdigest()
+
+
+def split_compose_args(args: list[str], cwd: Path, task_root: Path) -> tuple[list[str], str, list[str]]:
+    if not args or args[0] != "compose":
+        raise BrokerError("guarded Docker access supports 'docker compose' only")
+
+    global_args: list[str] = []
+    index = 1
+    while index < len(args):
+        arg = args[index]
+        if not arg.startswith("-"):
+            break
+        if arg in {"-p", "--project-name"} or arg.startswith("--project-name="):
+            raise BrokerError("Compose project names are assigned per Kandev task")
+        if arg in COMPOSE_FLAG_OPTIONS:
+            global_args.append(arg)
+            index += 1
+            continue
+        option = arg.split("=", 1)[0]
+        if option not in COMPOSE_VALUE_OPTIONS:
+            raise BrokerError(f"unsupported Compose global option: {arg}")
+        if "=" in arg:
+            value = arg.split("=", 1)[1]
+            if option in PATH_OPTIONS:
+                if value == "-":
+                    raise BrokerError("Compose files from stdin are not supported")
+                resolve_inside(value, cwd, task_root)
+            global_args.append(arg)
+            index += 1
+            continue
+        if index + 1 >= len(args):
+            raise BrokerError(f"missing value for Compose option: {arg}")
+        value = args[index + 1]
+        if option in PATH_OPTIONS:
+            if value == "-":
+                raise BrokerError("Compose files from stdin are not supported")
+            resolve_inside(value, cwd, task_root)
+        global_args.extend((arg, value))
+        index += 2
+
+    if index >= len(args):
+        raise BrokerError("a Docker Compose subcommand is required")
+    command = args[index]
+    command_args = args[index + 1 :]
+    if command not in MODEL_COMMANDS | SAFE_EXISTING_COMMANDS:
+        raise BrokerError(f"Docker Compose subcommand is not permitted for agents: {command}")
+    if command == "run":
+        for arg in command_args:
+            option = arg.split("=", 1)[0]
+            if option in FORBIDDEN_RUN_OPTIONS or arg.startswith("-v") or option in {
+                "--env-file",
+                "--env-from-file",
+                "--name",
+            }:
+                raise BrokerError(f"Compose run option is not permitted: {arg}")
+    if command == "exec" and any(arg in {"--privileged"} for arg in command_args):
+        raise BrokerError("privileged Compose exec is not permitted")
+    if command == "build":
+        for arg in command_args:
+            if arg.split("=", 1)[0] in {"--ssh", "--secret", "--builder"}:
+                raise BrokerError(f"Compose build option is not permitted: {arg}")
+    if command == "down":
+        for arg in command_args:
+            if arg == "--rmi" or arg.startswith("--rmi="):
+                raise BrokerError("Compose down may not remove shared host images")
+    if command == "config":
+        for arg in command_args:
+            if arg in {"-o", "--output"} or arg.startswith("--output="):
+                raise BrokerError("Compose config output files are not permitted")
+    return global_args, command, command_args
+
+
+def scoped_path_to_host(value: str, cwd: Path, task_root: Path, host_root: Path) -> Path:
+    scoped = resolve_inside(value, cwd, task_root)
+    host_path = translate_to_host(scoped)
+    if not is_within(host_path, host_root):
+        raise BrokerError(f"Compose source is outside this task: {value}")
+    return host_path
+
+
+def validate_named_resources(model: dict[str, Any], project: str) -> None:
+    for section in ("volumes", "networks", "configs", "secrets"):
+        resources = model.get(section) or {}
+        if not isinstance(resources, dict):
+            raise BrokerError(f"invalid Compose {section} section")
+        for logical_name, config in resources.items():
+            if config is None:
+                continue
+            if not isinstance(config, dict):
+                raise BrokerError(f"invalid Compose {section} resource: {logical_name}")
+            if config.get("external"):
+                raise BrokerError(f"external Compose {section} are not permitted: {logical_name}")
+            actual_name = config.get("name")
+            if actual_name and not str(actual_name).startswith(f"{project}_"):
+                raise BrokerError(
+                    f"explicit Compose {section} name escapes the task project: {actual_name}"
+                )
+
+
+def validate_model(
+    model: dict[str, Any], cwd: Path, task_root: Path, host_root: Path, project: str
+) -> dict[str, Any]:
+    sanitized = copy.deepcopy(model)
+    sanitized["name"] = project
+    validate_named_resources(sanitized, project)
+    services = sanitized.get("services")
+    if not isinstance(services, dict) or not services:
+        raise BrokerError("Compose model has no services")
+
+    for service_name, service in services.items():
+        if not isinstance(service, dict):
+            raise BrokerError(f"invalid Compose service: {service_name}")
+        for key in (
+            "privileged",
+            "cap_add",
+            "devices",
+            "device_cgroup_rules",
+            "volumes_from",
+            "external_links",
+            "credential_spec",
+        ):
+            if service.get(key):
+                raise BrokerError(f"Compose service {service_name} uses forbidden setting: {key}")
+        for key in ("pid", "ipc", "uts", "cgroup", "userns_mode"):
+            if service.get(key):
+                raise BrokerError(f"Compose service {service_name} may not select {key}")
+        network_mode = str(service.get("network_mode") or "")
+        if network_mode == "host" or network_mode.startswith("container:"):
+            raise BrokerError(f"Compose service {service_name} uses forbidden network_mode")
+        for option in service.get("security_opt") or []:
+            if str(option) not in {"no-new-privileges", "no-new-privileges:true"}:
+                raise BrokerError(f"Compose service {service_name} uses forbidden security_opt: {option}")
+        labels = service.get("labels") or {}
+        label_names = labels.keys() if isinstance(labels, dict) else (str(item).split("=", 1)[0] for item in labels)
+        if any(str(name).startswith("com.docker.compose.") for name in label_names):
+            raise BrokerError(f"Compose service {service_name} overrides reserved project labels")
+
+        build = service.get("build")
+        if isinstance(build, str):
+            service["build"] = str(scoped_path_to_host(build, cwd, task_root, host_root))
+            service["image"] = f"{project}_{service_name}:latest"
+        elif isinstance(build, dict):
+            context = build.get("context")
+            remote_context = context and str(context).startswith(
+                ("docker-image://", "git://", "http://", "https://", "ssh://")
+            )
+            context_inside: Path | None = None
+            if context and not remote_context:
+                context_inside = resolve_inside(str(context), cwd, task_root)
+                build["context"] = str(translate_to_host(context_inside))
+            dockerfile = build.get("dockerfile")
+            if dockerfile:
+                if remote_context:
+                    raise BrokerError(
+                        f"Compose build for {service_name} may not select a Dockerfile "
+                        "with a remote context"
+                    )
+                dockerfile_path = Path(str(dockerfile))
+                if not dockerfile_path.is_absolute():
+                    dockerfile_path = (context_inside or cwd) / dockerfile_path
+                build["dockerfile"] = str(
+                    scoped_path_to_host(str(dockerfile_path), cwd, task_root, host_root)
+                )
+            for key in (
+                "additional_contexts",
+                "cache_from",
+                "cache_to",
+                "entitlements",
+                "output",
+                "privileged",
+                "secrets",
+                "ssh",
+                "tags",
+            ):
+                if build.get(key):
+                    raise BrokerError(f"Compose build for {service_name} uses forbidden setting: {key}")
+            # Never overwrite a host image tag that may belong to another task
+            # or a production Compose project.
+            service["image"] = f"{project}_{service_name}:latest"
+
+        for mount in service.get("volumes") or []:
+            if not isinstance(mount, dict):
+                raise BrokerError(f"Compose service {service_name} has an invalid volume")
+            source = mount.get("source")
+            target = str(mount.get("target") or "")
+            if "docker.sock" in target or target in {"/run", "/var/run"}:
+                raise BrokerError(f"Compose service {service_name} attempts to expose a daemon path")
+            if mount.get("type") == "bind":
+                if not source:
+                    raise BrokerError(f"Compose service {service_name} has a bind without a source")
+                mount["source"] = str(scoped_path_to_host(str(source), cwd, task_root, host_root))
+                mount["read_only"] = True
+
+    for section in ("configs", "secrets"):
+        for logical_name, config in (sanitized.get(section) or {}).items():
+            if isinstance(config, dict) and config.get("file"):
+                config["file"] = str(
+                    scoped_path_to_host(str(config["file"]), cwd, task_root, host_root)
+                )
+    return sanitized
+
+
+def clean_environment() -> dict[str, str]:
+    environment = dict(os.environ)
+    for key in list(environment):
+        if key.startswith("KANDEV_AGENT_DOCKER_") or key in {
+            "KANDEV_AGENT_GUARD_ACTIVE",
+            "DOCKER_CONTEXT",
+            "DOCKER_HOST",
+        }:
+            environment.pop(key, None)
+    return environment
+
+
+def run_command(args: list[str], cwd: Path, timeout: int = COMMAND_TIMEOUT) -> tuple[int, str, str]:
+    with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
+        process = subprocess.Popen(
+            args,
+            cwd=str(cwd),
+            env=clean_environment(),
+            stdin=subprocess.DEVNULL,
+            stdout=stdout_file,
+            stderr=stderr_file,
+        )
+        try:
+            return_code = process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+            return_code = 124
+            stderr_file.write(f"command timed out after {timeout} seconds\n".encode())
+        stdout_file.seek(0)
+        stderr_file.seek(0)
+        stdout = stdout_file.read(MAX_OUTPUT + 1)
+        stderr = stderr_file.read(MAX_OUTPUT + 1)
+    if len(stdout) > MAX_OUTPUT:
+        stdout = stdout[:MAX_OUTPUT] + b"\n[broker output truncated]\n"
+    if len(stderr) > MAX_OUTPUT:
+        stderr = stderr[:MAX_OUTPUT] + b"\n[broker error output truncated]\n"
+    return return_code, stdout.decode(errors="replace"), stderr.decode(errors="replace")
+
+
+def compose_config(cwd: Path, project: str, global_args: list[str]) -> dict[str, Any]:
+    # Parse all agent-controlled Compose files inside the same Bubblewrap scope
+    # as the agent. The broker never opens env/config/include files on the host.
+    args = [
+        GUARD_BIN,
+        "--",
+        COMPOSE_PLUGIN,
+        "--project-name",
+        project,
+        *global_args,
+        "config",
+        "--format",
+        "json",
+    ]
+    code, stdout, stderr = run_command(args, cwd)
+    if code != 0:
+        raise BrokerError(f"Docker Compose configuration failed:\n{stderr or stdout}")
+    try:
+        return json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        raise BrokerError("Docker Compose returned an invalid configuration model") from exc
+
+
+def handle_request(request: dict[str, Any], key: bytes) -> dict[str, Any]:
+    task_root_raw = request.get("task_root")
+    cwd_raw = request.get("cwd")
+    args = request.get("args")
+    token = request.get("token")
+    if not isinstance(task_root_raw, str) or not isinstance(cwd_raw, str):
+        raise BrokerError("missing task scope")
+    if not isinstance(args, list) or not all(isinstance(item, str) for item in args):
+        raise BrokerError("invalid Docker argument vector")
+    if not isinstance(token, str):
+        raise BrokerError("missing task token")
+
+    task_root = Path(task_root_raw).resolve(strict=True)
+    cwd = Path(cwd_raw).resolve(strict=True)
+    if not is_within(cwd, task_root):
+        raise BrokerError("working directory is outside this agent task")
+    if not hmac.compare_digest(token, expected_token(key, task_root)):
+        raise BrokerError("invalid task-scoped Docker token")
+    host_root = translate_to_host(task_root)
+    project = project_name(task_root)
+    global_args, command, command_args = split_compose_args(args, cwd, task_root)
+
+    if command == "version":
+        code, stdout, stderr = run_command([DOCKER_BIN, "compose", "version", *command_args], cwd)
+        return {"returncode": code, "stdout": stdout, "stderr": stderr, "project": project}
+
+    MODEL_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    saved_model = MODEL_DIR / f"{project}.json"
+    try:
+        initial_model = compose_config(cwd, project, global_args)
+        sanitized_model = validate_model(initial_model, cwd, task_root, host_root, project)
+        temporary_saved = MODEL_DIR / f".{project}.{threading.get_ident()}.json"
+        temporary_saved.write_text(json.dumps(sanitized_model))
+        temporary_saved.replace(saved_model)
+    except BrokerError:
+        if command not in SAFE_EXISTING_COMMANDS or not saved_model.exists():
+            raise
+        sanitized_model = json.loads(saved_model.read_text())
+
+    model_file: Path | None = None
+    try:
+        handle = tempfile.NamedTemporaryFile(
+            mode="w", prefix=f"{project}-", suffix=".json", dir="/run/kandev-agent-docker", delete=False
+        )
+        with handle:
+            json.dump(sanitized_model, handle)
+        model_file = Path(handle.name)
+        command_line = [
+            DOCKER_BIN,
+            "compose",
+            "--project-name",
+            project,
+            "-f",
+            str(model_file),
+        ]
+        # Profiles affect which already-sanitized services Compose selects.
+        index = 0
+        while index < len(global_args):
+            if global_args[index] == "--profile":
+                command_line.extend(global_args[index : index + 2])
+                index += 2
+            elif global_args[index].startswith("--profile="):
+                command_line.append(global_args[index])
+                index += 1
+            else:
+                index += 1
+        command_line.extend((command, *command_args))
+        code, stdout, stderr = run_command(command_line, cwd)
+        return {"returncode": code, "stdout": stdout, "stderr": stderr, "project": project}
+    finally:
+        if model_file is not None:
+            model_file.unlink(missing_ok=True)
+
+
+class BrokerHandler(socketserver.StreamRequestHandler):
+    def handle(self) -> None:
+        line = self.rfile.readline(MAX_REQUEST + 1)
+        if len(line) > MAX_REQUEST:
+            response = {"returncode": 78, "stdout": "", "stderr": "Docker broker request is too large\n"}
+        else:
+            try:
+                request = json.loads(line)
+                response = handle_request(request, self.server.broker_key)  # type: ignore[attr-defined]
+            except (BrokerError, json.JSONDecodeError, OSError) as exc:
+                response = {"returncode": 78, "stdout": "", "stderr": f"kandev-agent-docker: {exc}\n"}
+            except Exception as exc:  # fail closed without killing the broker
+                print(f"kandev-agent-docker-broker: internal error: {exc}", file=sys.stderr)
+                response = {"returncode": 70, "stdout": "", "stderr": "kandev-agent-docker: internal broker error\n"}
+        self.wfile.write(json.dumps(response).encode() + b"\n")
+
+
+class ThreadedUnixServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+    daemon_threads = True
+    allow_reuse_address = True
+    broker_key: bytes
+
+
+def load_or_create_key() -> bytes:
+    KEY_PATH.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if not KEY_PATH.exists():
+        KEY_PATH.write_text(secrets.token_hex(32))
+        KEY_PATH.chmod(0o600)
+    return KEY_PATH.read_text().strip().encode()
+
+
+def main() -> int:
+    key = load_or_create_key()
+    SOCKET_PATH.unlink(missing_ok=True)
+    server = ThreadedUnixServer(str(SOCKET_PATH), BrokerHandler)
+    server.broker_key = key
+    SOCKET_PATH.chmod(0o600)
+    print(f"kandev-agent-docker-broker: listening on {SOCKET_PATH}", file=sys.stderr)
+    try:
+        server.serve_forever()
+    finally:
+        server.server_close()
+        SOCKET_PATH.unlink(missing_ok=True)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

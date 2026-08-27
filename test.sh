@@ -66,6 +66,14 @@ for bin in ssh gh glab git; do
   fi
 done
 
+for bin in mariadb-dump kandev-agent-docker-broker kandev-agent-docker-client; do
+  if docker run --rm kandev-local:latest which "$bin" &>/dev/null; then
+    ok "$bin binary present in image"
+  else
+    fail "$bin binary missing from image"
+  fi
+done
+
 # git system safe.directory must be '*'
 SAFE=$(docker run --rm kandev-local:latest git config --system safe.directory 2>/dev/null || echo "")
 if [[ "$SAFE" == "*" ]]; then
@@ -771,12 +779,27 @@ fi
 # ── 15. Per-agent filesystem boundary ────────────────────────────────────────────────
 section "15. Per-agent filesystem boundary"
 
+if PYTHONDONTWRITEBYTECODE=1 python3 "$COMPOSE_DIR/tests/test-agent-docker-broker.py" >/dev/null 2>&1; then
+  ok "task-scoped Docker broker policy unit tests pass"
+else
+  fail "tests/test-agent-docker-broker.py failed"
+fi
+
+BROKER_STATE=$(docker exec -u kandev kandev sh -c '
+  test -S /run/kandev-agent-docker/broker.sock && pgrep -f "[k]andev-agent-docker-broker" >/dev/null && echo ready
+' 2>/dev/null || echo "missing")
+if [[ "$BROKER_STATE" == "ready" ]]; then
+  ok "task-scoped Docker broker is running"
+else
+  fail "task-scoped Docker broker is not running"
+fi
+
 # Stream the test into the running container so this also works from an
 # alternate Git worktree that is not one of the container's identity mounts.
 GUARD_TEST_OUT="$(docker exec -i -u kandev -w /data/tasks kandev bash -s \
   < "$COMPOSE_DIR/tests/test-agent-guard.sh" 2>&1 || true)"
-if grep -q '^PASS: linked task worktrees work;' <<<"$GUARD_TEST_OUT"; then
-  ok "linked task worktrees work while source repos, Code root, sudo, and Docker socket stay blocked"
+if grep -q '^PASS: linked task worktrees and isolated Compose work;' <<<"$GUARD_TEST_OUT"; then
+  ok "linked task worktrees and isolated Compose work while source repos, Code root, sudo, and the raw Docker socket stay blocked"
 else
   fail "tests/test-agent-guard.sh failed: $(tail -3 <<<"$GUARD_TEST_OUT" | tr '\n' ';')"
 fi

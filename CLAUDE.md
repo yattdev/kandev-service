@@ -130,7 +130,7 @@ curl -s -o /dev/null -w "HTTP %{http_code}" http://localhost:38429/
 2. Rebuild if Dockerfile.local was modified:  docker compose build
 3. Restart container if compose files changed: docker compose up -d --force-recreate
 4. Run:  bash ~/Code/kandev/test.sh
-5. All 89 tests must be green
+5. All tests must be green
 6. Commit
 7. Only then report the task as complete
 ```
@@ -283,6 +283,16 @@ serviced by the **host's** daemon and every container it starts is a **sibling o
 host**, not a nested child. (`docker ps` inside the container lists the host's containers,
 including `kandev` itself.) Three things make it work, and all three are required:
 
+This description applies to the trusted outer Kandev process. Filesystem-guarded
+agents do **not** inherit the socket: their `/run` is a fresh tmpfs and
+`/usr/local/bin/docker` routes `docker compose` to the task-scoped
+`kandev-agent-docker-broker`. The broker resolves Compose input inside the
+agent's Bubblewrap scope, forces a task-derived project name, rejects privileged
+or external resources, rewrites built image tags into the task project, and
+forces host bind mounts read-only before invoking the host daemon. Agents use
+named volumes for mutable database/runtime state. Raw `docker run`, raw API
+access, and the host socket remain unavailable.
+
 1. `docker-ce-cli` + the compose/buildx plugins in `Dockerfile.local` — client only.
 2. The socket mount.
 3. **Matching group GID.** The socket is `srw-rw---- root:docker`, so `Dockerfile.local`
@@ -418,12 +428,15 @@ Use `kandev-ssh-agent.sh` when:
 | `docker-compose.yml` | Base service: upstream image, restart policy, `network_mode: host`, core env vars and volumes |
 | `docker-compose.override.yml` | Local build, `USER`/`LOGNAME` env, SSH/git/gh/glab identity mounts |
 | `docker-compose.ssh-agent.yml` | Optional SSH agent socket overlay |
-| `Dockerfile.local` | Extends upstream: adds SSH, gh, glab, Docker CLI (+ host-path wrapper), build toolchain, mise, Chrome + chromedriver, sqlite3 (for hot DB backup); patches git and entrypoint |
-| `docker-entrypoint-local.sh` | Upstream entrypoint + `|| true` chown fix for :ro mounts |
+| `Dockerfile.local` | Extends upstream: adds SSH, gh, glab, Docker CLI (+ host-path wrapper), MariaDB client, build toolchain, mise, Chrome + chromedriver, sqlite3 (for hot DB backup); installs the agent Docker broker and patches git/entrypoint |
+| `docker-entrypoint-local.sh` | Upstream entrypoint + `|| true` chown fix for :ro mounts; starts and supervises the task-scoped agent Docker broker |
 | `docker-host-path-wrapper.sh` | Installed as `/usr/local/bin/docker`: rewrites container-only bind-mount paths to their host equivalents before calling the real CLI |
+| `scripts/kandev-agent-docker-broker` | Validates and executes task-scoped Docker Compose requests without exposing the host daemon socket to agents |
+| `scripts/kandev-agent-docker-client` | Docker-compatible agent-side client for the constrained Compose broker |
+| `scripts/kandev-agent-guard` | Bubblewrap filesystem boundary; mints a task token and exposes only the constrained broker socket |
 | `mise.default.toml` | System-wide mise config (`/etc/mise/config.toml`): global language versions matched to host |
 | `setup-toolchains.sh` | One-time helper: installs the mise language toolchains into the persistent `/data` volume |
-| `test.sh` | 89 automated tests covering image, container, service, identity, SSH, git, CLI tools, toolchains (incl. Java JDK and Go, plus login-shell PATH), sqlite3, headless browser, Docker host-path wrapper, branch guard, port-80 NAT redirect scoping |
+| `test.sh` | Automated tests covering image, container, service, identity, SSH, git, CLI tools, toolchains (incl. Java JDK and Go, plus login-shell PATH), sqlite3, headless browser, guarded agent Compose access, Docker host-path wrapper, branch guard, and port-80 NAT redirect scoping |
 | `update.sh` | Daily cron: pull upstream → rebuild local → restart if changed |
 | `AGENTS.md` | Short, non-negotiable rules for **any** AI agent (Claude, Codex, Copilot): work on `main` for everything outside `workflows/`, never start the deployment from a non-`main` checkout, read `host.env`, keep `test.sh` green |
 | `.claude/skills/kandev-change/SKILL.md` | Claude Code skill that fires before any kandev infra edit or `docker compose` / `kandev-start.sh` / `update.sh` run: enforces the `main`-branch rule, the post-branch-switch recreate, and the security-profile verification |

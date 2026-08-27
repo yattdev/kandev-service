@@ -7,6 +7,30 @@ preflight_worker() {
     fi
 }
 
+start_agent_docker_broker() {
+    if [ "${1:-}" != "kandev" ] || [ "${2:-}" != "start" ]; then
+        return 0
+    fi
+    install -d -m 0700 -o kandev -g kandev /run/kandev-agent-docker
+    gosu kandev sh -c '
+        while :; do
+            /usr/local/bin/kandev-agent-docker-broker
+            status=$?
+            echo "kandev-agent-docker-broker exited with status $status; restarting" >&2
+            sleep 1
+        done
+    ' &
+    attempts=0
+    while [ ! -S /run/kandev-agent-docker/broker.sock ]; do
+        attempts=$((attempts + 1))
+        if [ "$attempts" -ge 50 ]; then
+            echo "ERROR: task-scoped Docker broker did not start" >&2
+            exit 78
+        fi
+        sleep 0.1
+    done
+}
+
 if [ "$(id -u)" = '0' ]; then
     # HOME for the kandev user lives on the PV so agent CLI auth state
     # (gh, claude, codex, auggie, copilot, amp, ...) survives pod restarts
@@ -22,6 +46,7 @@ if [ "$(id -u)" = '0' ]; then
     if [ "${1:-}" = "kandev" ] && [ "${2:-}" = "start" ]; then
         gosu kandev /usr/local/bin/codex-sandbox-preflight
     fi
+    start_agent_docker_broker "$@"
     exec gosu kandev "$@"
 fi
 

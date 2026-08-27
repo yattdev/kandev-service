@@ -232,6 +232,31 @@ docker exec -u kandev kandev sh -lc \
   'id; grep -E "NoNewPrivs|Seccomp" /proc/self/status; /usr/local/bin/codex-sandbox-preflight'
 ```
 
+### Task-scoped Docker for guarded agents
+
+The outer Kandev service retains the host Docker socket for orchestration, but
+an agent's Bubblewrap namespace never receives `/var/run/docker.sock`. Instead,
+`docker compose` is routed through `kandev-agent-docker-broker`:
+
+- an HMAC token binds every request to the agent's assigned task/repository;
+- Compose files, includes, and env files are resolved inside that Bubblewrap
+  scope, then the broker executes only the resulting sanitized model;
+- the Compose project name is derived from the task, so containers, networks,
+  images built by the task, and named volumes cannot collide with production or
+  another task;
+- external volumes/networks, privileged containers, devices, added
+  capabilities, host namespaces, daemon-socket mounts, and extra `run -v`
+  mounts are rejected;
+- every host/task bind is forced read-only. Use task-prefixed named volumes for
+  database and other mutable container state; edit source from the agent shell.
+
+This supports `docker compose up`, `build`, `exec`, `logs`, `down`, and the other
+normal lifecycle commands. Raw `docker run` and direct Docker API access are
+intentionally unavailable. The image includes `mariadb-dump`, so an agent can
+dump a source database exposed on a TCP port into its worktree and restore it
+into an isolated Compose database volume without access to the source
+container's Docker control plane.
+
 ### Browser tests (headless Chrome)
 
 Chrome, `chromedriver`, and the fonts/libraries headless rendering needs are baked into

@@ -86,6 +86,21 @@ esac
 writable_root="$(realpath -e -- "$writable_root")" || deny "cannot resolve writable root"
 [[ "$cwd" == "$writable_root" || "$cwd" == "$writable_root"/* ]] || deny "working directory escapes writable root"
 
+agent_docker_socket="/run/kandev-agent-docker/broker.sock"
+agent_docker_target="/run/kandev-agent-docker.sock"
+agent_docker_token=""
+declare -a agent_docker_env
+agent_docker_env=()
+if [[ -S "$agent_docker_socket" && -x /usr/local/bin/kandev-agent-docker-token ]]; then
+    agent_docker_token="$(/usr/local/bin/kandev-agent-docker-token "$writable_root")" \
+        || deny "cannot mint task-scoped Docker token"
+    agent_docker_env=(
+        --setenv KANDEV_AGENT_DOCKER_SOCKET "$agent_docker_target"
+        --setenv KANDEV_AGENT_DOCKER_ROOT "$writable_root"
+        --setenv KANDEV_AGENT_DOCKER_TOKEN "$agent_docker_token"
+    )
+fi
+
 declare -a bwrap_args
 declare -A bound
 bwrap_args=(
@@ -102,6 +117,12 @@ bwrap_args=(
     --bind "$writable_root" "$writable_root"
 )
 bound["$writable_root"]=1
+
+# Expose only the constrained broker socket, never /var/run/docker.sock or the
+# broker's HMAC key. /run is otherwise a fresh tmpfs inside the agent boundary.
+if [[ -n "$agent_docker_token" ]]; then
+    bwrap_args+=(--bind "$agent_docker_socket" "$agent_docker_target")
+fi
 
 add_rw_bind() {
     local path="$1" resolved
@@ -208,5 +229,6 @@ fi
 exec bwrap "${bwrap_args[@]}" \
     --setenv KANDEV_AGENT_GUARD_ACTIVE 1 \
     --setenv TMPDIR /tmp \
+    "${agent_docker_env[@]}" \
     --chdir "$cwd" \
     -- "$@"

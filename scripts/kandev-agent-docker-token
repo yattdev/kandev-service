@@ -1,0 +1,24 @@
+#!/usr/bin/env python3
+"""Mint a scope token before entering the agent's Bubblewrap namespace."""
+
+from __future__ import annotations
+
+import hashlib
+import hmac
+from pathlib import Path
+import sys
+
+
+KEY_PATH = Path("/run/kandev-agent-docker/broker.key")
+
+
+def main() -> int:
+    if len(sys.argv) != 2:
+        return 64
+    key = KEY_PATH.read_text().strip().encode()
+    print(hmac.new(key, sys.argv[1].encode(), hashlib.sha256).hexdigest())
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
