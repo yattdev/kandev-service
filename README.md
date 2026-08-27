@@ -257,6 +257,52 @@ dump a source database exposed on a TCP port into its worktree and restore it
 into an isolated Compose database volume without access to the source
 container's Docker control plane.
 
+### Workspace coordinator source access
+
+Agents whose **task worktree has exactly one registered repository**, the
+workspace's `/data/home/Code/coordinator` repository, receive an additional
+read-only information capability. Authorization comes from Kandev's SQLite
+task/environment/repository metadata—not the task title, prompt, branch name,
+or an agent-writable `.git` file. The coordinator and every source/target task
+must belong to the same `workspace_id`.
+
+```bash
+docker kandev source list
+docker kandev source inspect <container>
+docker kandev source logs <container> --tail 200 --since 30m
+docker kandev source db-dump <container> \
+  --target-task <full-task-uuid> --name source.sql
+```
+
+`list`, `inspect`, and bounded/redacted `logs` expose only containers whose
+Compose working directory or broker-owned task project maps to a repository or
+task in the coordinator's workspace. `db-dump` supports MariaDB/MySQL and
+PostgreSQL. The broker reads the container's configured database credentials,
+keeps them out of agent argv/output, performs a logical read over the container
+network, and atomically creates a mode-0600 artifact at:
+
+```text
+/data/tasks/<target-task>/.kandev-coordinator-inbox/<name>
+```
+
+The target must be an active task in the same workspace and the file may not
+already exist. Every coordinator source request is appended to
+`/data/logs/coordinator-source-audit.jsonl` without credentials.
+
+Logical dumps may contain sensitive application data. The current Bubblewrap
+policy is a write-confinement boundary, not a distinct-UID confidentiality
+boundary: other guarded agents cannot modify the inbox but may be able to read
+paths elsewhere under `/data`. Import the artifact promptly, remove it when no
+longer needed, and use per-task UIDs/encrypted broker delivery before treating
+the inbox as suitable for secrets. Log redaction is best-effort key-pattern
+redaction; request only the smallest time/tail range required.
+
+This capability never provides raw `docker exec`, a shell, arbitrary container
+names outside the workspace, container environment output, or the host Docker
+socket. The shared main coordinator checkout is denied when it cannot identify
+one unique task/workspace; coordinators must run from their materialized Kandev
+task worktrees.
+
 ### Browser tests (headless Chrome)
 
 Chrome, `chromedriver`, and the fonts/libraries headless rendering needs are baked into

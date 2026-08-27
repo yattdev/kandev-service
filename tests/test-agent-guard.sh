@@ -3,8 +3,28 @@
 set -euo pipefail
 
 GUARD=/usr/local/bin/kandev-agent-guard
-task_root="$(find /data/tasks -mindepth 1 -maxdepth 1 -type d ! -name '.*' -print -quit)"
-[[ -n "$task_root" ]] || { echo "ERROR: no task workspace available for guard test" >&2; exit 1; }
+task_root=""
+while IFS= read -r task_dir_name; do
+    candidate="/data/tasks/$task_dir_name"
+    if [[ -d "$candidate" ]]; then
+        task_root="$candidate"
+        break
+    fi
+done < <(sqlite3 /data/data/kandev.db "
+    SELECT te.task_dir_name
+    FROM task_environments te
+    JOIN tasks t ON t.id = te.task_id
+    WHERE t.archived_at IS NULL AND te.task_dir_name <> ''
+      AND NOT EXISTS (
+          SELECT 1 FROM task_repositories tr
+          JOIN repositories r ON r.id = tr.repository_id
+          WHERE tr.task_id = t.id
+            AND r.local_path = '/data/home/Code/coordinator'
+            AND r.deleted_at IS NULL
+      )
+    ORDER BY t.updated_at DESC;
+")
+[[ -n "$task_root" ]] || { echo "ERROR: no ordinary task workspace available for guard test" >&2; exit 1; }
 
 probe="$task_root/.kandev-guard-write-probe-$$"
 (cd "$task_root" && "$GUARD" -- sh -ceu 'printf allowed > "$1"; test "$(cat "$1")" = allowed; rm -f "$1"' sh "$probe")
@@ -21,6 +41,10 @@ fi
     test ! -S /var/run/docker.sock
     test -S "${KANDEV_AGENT_DOCKER_SOCKET:?}"
     docker compose version >/dev/null
+    if docker kandev source list >/dev/null 2>&1; then
+        echo "ERROR: ordinary task received coordinator source access" >&2
+        exit 1
+    fi
 ')
 (cd "$task_root" && "$GUARD" -- sh -ceu '
     grep -Eq "^NoNewPrivs:[[:space:]]+1$" /proc/self/status
@@ -97,9 +121,42 @@ fi
     fi
 ')
 
+# Every materialized coordinator worktree is authorized from Kandev's trusted
+# task/workspace/repository metadata. The shared source checkout is deliberately
+# not used because multiple workspace coordinators can point at it.
+coordinator_root=""
+while IFS= read -r task_dir_name; do
+    candidate="/data/tasks/$task_dir_name/coordinator"
+    if [[ -f "$candidate/.git" ]]; then
+        coordinator_root="$candidate"
+        break
+    fi
+done < <(sqlite3 /data/data/kandev.db "
+    SELECT te.task_dir_name
+    FROM task_environments te
+    JOIN tasks t ON t.id = te.task_id
+    WHERE t.archived_at IS NULL AND te.task_dir_name <> ''
+      AND (SELECT COUNT(*) FROM task_repositories tr WHERE tr.task_id = t.id) = 1
+      AND EXISTS (
+          SELECT 1 FROM task_repositories tr
+          JOIN repositories r ON r.id = tr.repository_id
+          WHERE tr.task_id = t.id AND r.workspace_id = t.workspace_id
+            AND r.local_path = '/data/home/Code/coordinator'
+            AND r.deleted_at IS NULL
+      )
+    ORDER BY t.updated_at DESC;
+")
+[[ -n "$coordinator_root" ]] || {
+    echo "ERROR: no registered coordinator task worktree available for source policy test" >&2
+    exit 1
+}
+coordinator_sources="$(cd "$coordinator_root" && "$GUARD" -- docker kandev source list)"
+grep -q '"workspace"' <<<"$coordinator_sources"
+grep -q '"containers"' <<<"$coordinator_sources"
+
 if (cd / && "$GUARD" -- true) 2>/dev/null; then
     echo "ERROR: guard accepted an unscoped root workspace" >&2
     exit 1
 fi
 
-echo "PASS: linked task worktrees and isolated Compose work; task writes allowed; source/Code-root writes, raw Docker socket, sudo, and / workspace blocked"
+echo "PASS: linked tasks, isolated Compose, and coordinator source scope work; task writes allowed; source/Code-root writes, raw Docker socket, sudo, and / workspace blocked"

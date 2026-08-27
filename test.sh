@@ -66,7 +66,7 @@ for bin in ssh gh glab git; do
   fi
 done
 
-for bin in mariadb-dump kandev-agent-docker-broker kandev-agent-docker-client; do
+for bin in mariadb-dump pg_dump kandev-agent-docker-broker kandev-agent-docker-client; do
   if docker run --rm kandev-local:latest which "$bin" &>/dev/null; then
     ok "$bin binary present in image"
   else
@@ -798,8 +798,8 @@ fi
 # alternate Git worktree that is not one of the container's identity mounts.
 GUARD_TEST_OUT="$(docker exec -i -u kandev -w /data/tasks kandev bash -s \
   < "$COMPOSE_DIR/tests/test-agent-guard.sh" 2>&1 || true)"
-if grep -q '^PASS: linked task worktrees and isolated Compose work;' <<<"$GUARD_TEST_OUT"; then
-  ok "linked task worktrees and isolated Compose work while source repos, Code root, sudo, and the raw Docker socket stay blocked"
+if grep -q '^PASS: linked tasks, isolated Compose, and coordinator source scope work;' <<<"$GUARD_TEST_OUT"; then
+  ok "linked tasks, isolated Compose, and coordinator source scope work while source repos, Code root, sudo, and the raw Docker socket stay blocked"
 else
   fail "tests/test-agent-guard.sh failed: $(tail -3 <<<"$GUARD_TEST_OUT" | tr '\n' ';')"
 fi

@@ -11,15 +11,20 @@ from __future__ import annotations
 import hashlib
 import hmac
 import copy
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import re
 import secrets
+import selectors
 import socketserver
+import sqlite3
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 from typing import Any
 
 
@@ -31,9 +36,28 @@ COMPOSE_PLUGIN = os.environ.get(
     "KANDEV_AGENT_COMPOSE_PLUGIN", "/usr/libexec/docker/cli-plugins/docker-compose"
 )
 MODEL_DIR = Path(os.environ.get("KANDEV_AGENT_DOCKER_MODEL_DIR", "/data/agent-docker-models"))
+KANDEV_DB = Path(os.environ.get("KANDEV_AGENT_DB_PATH", "/data/data/kandev.db"))
+COORDINATOR_REPOSITORY = os.environ.get(
+    "KANDEV_COORDINATOR_REPOSITORY", "/data/home/Code/coordinator"
+)
+COORDINATOR_AUDIT_LOG = Path(
+    os.environ.get(
+        "KANDEV_COORDINATOR_AUDIT_LOG", "/data/logs/coordinator-source-audit.jsonl"
+    )
+)
 MAX_REQUEST = 1024 * 1024
 MAX_OUTPUT = 16 * 1024 * 1024
 COMMAND_TIMEOUT = 30 * 60
+MAX_EXPORT = int(os.environ.get("KANDEV_COORDINATOR_MAX_EXPORT_BYTES", str(4 * 1024**3)))
+MAX_LOG_LINES = 1000
+CONTAINER_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+SAFE_OUTPUT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+TASK_ID_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+AUDIT_LOCK = threading.Lock()
+EXPORT_LOCK = threading.Lock()
 
 COMPOSE_VALUE_OPTIONS = {
     "-f",
@@ -375,6 +399,607 @@ def run_command(args: list[str], cwd: Path, timeout: int = COMMAND_TIMEOUT) -> t
     return return_code, stdout.decode(errors="replace"), stderr.decode(errors="replace")
 
 
+def kandev_db() -> sqlite3.Connection:
+    if not KANDEV_DB.is_file():
+        raise BrokerError("Kandev task metadata is unavailable")
+    connection = sqlite3.connect(f"file:{KANDEV_DB}?mode=ro", uri=True, timeout=5)
+    connection.row_factory = sqlite3.Row
+    return connection
+
+
+def coordinator_context(task_root: Path) -> dict[str, str]:
+    """Resolve a coordinator's task/workspace from trusted Kandev metadata.
+
+    A repository name or agent-controlled .git file is not sufficient. The
+    task's primary materialized workspace must itself be the coordinator repo,
+    and that repo must be registered in the same Kandev workspace.
+    """
+    candidates: list[sqlite3.Row]
+    with kandev_db() as database:
+        if is_within(task_root, Path("/data/tasks")):
+            relative = task_root.relative_to("/data/tasks")
+            if len(relative.parts) != 1:
+                raise BrokerError("invalid coordinator task root")
+            candidates = database.execute(
+                """
+                SELECT t.id AS task_id, t.workspace_id, w.name AS workspace_name,
+                       te.workspace_path, te.task_dir_name
+                FROM task_environments te
+                JOIN tasks t ON t.id = te.task_id
+                JOIN workspaces w ON w.id = t.workspace_id
+                WHERE te.task_dir_name = ? AND t.archived_at IS NULL
+                """,
+                (relative.name,),
+            ).fetchall()
+        else:
+            candidates = database.execute(
+                """
+                SELECT t.id AS task_id, t.workspace_id, w.name AS workspace_name,
+                       te.workspace_path, te.task_dir_name
+                FROM task_environments te
+                JOIN tasks t ON t.id = te.task_id
+                JOIN workspaces w ON w.id = t.workspace_id
+                WHERE te.workspace_path = ? AND t.archived_at IS NULL
+                """,
+                (str(task_root),),
+            ).fetchall()
+
+        eligible: list[sqlite3.Row] = []
+        for candidate in candidates:
+            primary_path = Path(str(candidate["workspace_path"]))
+            if task_root == Path(COORDINATOR_REPOSITORY):
+                primary_matches = primary_path == task_root
+            else:
+                # Older/restored task rows can retain the source repository as
+                # workspace_path even though task_dir_name now owns a proper
+                # linked worktree. The unique task directory plus the trusted
+                # single-repository registration below is the authority.
+                primary_matches = True
+            if not primary_matches:
+                continue
+            registration = database.execute(
+                """
+                SELECT COUNT(*) AS repository_count,
+                       SUM(CASE WHEN r.workspace_id = ? AND r.local_path = ?
+                                     AND r.deleted_at IS NULL
+                                THEN 1 ELSE 0 END) AS coordinator_count
+                FROM task_repositories tr
+                JOIN repositories r ON r.id = tr.repository_id
+                WHERE tr.task_id = ?
+                """,
+                (
+                    candidate["workspace_id"],
+                    COORDINATOR_REPOSITORY,
+                    candidate["task_id"],
+                ),
+            ).fetchone()
+            if (
+                registration
+                and int(registration["repository_count"] or 0) == 1
+                and int(registration["coordinator_count"] or 0) == 1
+            ):
+                eligible.append(candidate)
+
+    if not eligible:
+        raise BrokerError(
+            "source access requires a live coordinator task whose primary repository "
+            f"is {COORDINATOR_REPOSITORY}"
+        )
+    if len(eligible) != 1:
+        raise BrokerError("coordinator task identity is ambiguous")
+    row = eligible[0]
+    return {
+        "task_id": str(row["task_id"]),
+        "workspace_id": str(row["workspace_id"]),
+        "workspace_name": str(row["workspace_name"]),
+    }
+
+
+def container_path_for_host(path: str) -> Path | None:
+    candidate = Path(path)
+    mappings = [
+        (os.environ.get("KANDEV_HOST_CODE_DIR", ""), Path("/data/home/Code")),
+        (os.environ.get("KANDEV_HOST_DATA_DIR", ""), Path("/data")),
+    ]
+    for host_prefix, container_prefix in mappings:
+        if not host_prefix:
+            continue
+        try:
+            relative = candidate.relative_to(Path(host_prefix))
+        except ValueError:
+            continue
+        return container_prefix / relative
+    if candidate == Path("/data") or is_within(candidate, Path("/data")):
+        return candidate
+    return None
+
+
+def container_workspace_ids(info: dict[str, Any]) -> set[str]:
+    labels = (info.get("Config") or {}).get("Labels") or {}
+    workspace_ids: set[str] = set()
+    working_dir_raw = labels.get("com.docker.compose.project.working_dir")
+    working_dir = container_path_for_host(str(working_dir_raw)) if working_dir_raw else None
+
+    with kandev_db() as database:
+        if working_dir and is_within(working_dir, Path("/data/tasks")):
+            relative = working_dir.relative_to("/data/tasks")
+            if relative.parts:
+                rows = database.execute(
+                    """
+                    SELECT t.workspace_id
+                    FROM task_environments te
+                    JOIN tasks t ON t.id = te.task_id
+                    WHERE te.task_dir_name = ? AND t.archived_at IS NULL
+                    """,
+                    (relative.parts[0],),
+                ).fetchall()
+                workspace_ids.update(str(row["workspace_id"]) for row in rows)
+        elif working_dir:
+            rows = database.execute(
+                """
+                SELECT workspace_id, local_path
+                FROM repositories
+                WHERE deleted_at IS NULL
+                """
+            ).fetchall()
+            for row in rows:
+                repository_path = Path(str(row["local_path"]))
+                if working_dir == repository_path or is_within(working_dir, repository_path):
+                    workspace_ids.add(str(row["workspace_id"]))
+
+        project = str(labels.get("com.docker.compose.project") or "")
+        if project.startswith("kd_"):
+            rows = database.execute(
+                """
+                SELECT t.workspace_id, te.task_dir_name, te.workspace_path
+                FROM task_environments te
+                JOIN tasks t ON t.id = te.task_id
+                WHERE t.archived_at IS NULL
+                """
+            ).fetchall()
+            for row in rows:
+                task_dir_name = str(row["task_dir_name"] or "")
+                roots = []
+                if task_dir_name:
+                    roots.append(Path("/data/tasks") / task_dir_name)
+                workspace_path_raw = str(row["workspace_path"] or "")
+                workspace_path = Path(workspace_path_raw)
+                if workspace_path_raw and not is_within(workspace_path, Path("/data/tasks")):
+                    roots.append(workspace_path)
+                if any(project_name(root) == project for root in roots):
+                    workspace_ids.add(str(row["workspace_id"]))
+    return workspace_ids
+
+
+def docker_inspect_container(name: str) -> dict[str, Any]:
+    if not CONTAINER_NAME_RE.fullmatch(name):
+        raise BrokerError("invalid source container name")
+    code, stdout, stderr = run_command(
+        [DOCKER_BIN, "inspect", "--type", "container", name], Path("/tmp"), timeout=30
+    )
+    if code != 0:
+        raise BrokerError(f"source container is unavailable: {name}: {stderr or stdout}")
+    try:
+        documents = json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        raise BrokerError("Docker returned invalid container metadata") from exc
+    if not isinstance(documents, list) or len(documents) != 1:
+        raise BrokerError("Docker returned unexpected container metadata")
+    return documents[0]
+
+
+def require_workspace_container(name: str, workspace_id: str) -> dict[str, Any]:
+    info = docker_inspect_container(name)
+    if workspace_id not in container_workspace_ids(info):
+        raise BrokerError(
+            f"source container is not associated with the coordinator workspace: {name}"
+        )
+    return info
+
+
+def container_summary(info: dict[str, Any]) -> dict[str, Any]:
+    labels = (info.get("Config") or {}).get("Labels") or {}
+    state = info.get("State") or {}
+    health = (state.get("Health") or {}).get("Status")
+    ports: list[dict[str, Any]] = []
+    for container_port, bindings in sorted(
+        ((info.get("NetworkSettings") or {}).get("Ports") or {}).items()
+    ):
+        host_bindings = []
+        for binding in bindings or []:
+            host_bindings.append(
+                {"address": binding.get("HostIp", ""), "port": binding.get("HostPort", "")}
+            )
+        ports.append({"container": container_port, "host": host_bindings})
+    return {
+        "name": str(info.get("Name") or "").lstrip("/"),
+        "id": str(info.get("Id") or "")[:12],
+        "image": str((info.get("Config") or {}).get("Image") or ""),
+        "state": str(state.get("Status") or "unknown"),
+        "health": health,
+        "compose_project": labels.get("com.docker.compose.project"),
+        "compose_service": labels.get("com.docker.compose.service"),
+        "ports": ports,
+    }
+
+
+def list_workspace_containers(workspace_id: str) -> list[dict[str, Any]]:
+    code, stdout, stderr = run_command(
+        [DOCKER_BIN, "container", "ls", "--all", "--quiet"], Path("/tmp"), timeout=30
+    )
+    if code != 0:
+        raise BrokerError(f"cannot list source containers: {stderr or stdout}")
+    identifiers = [line.strip() for line in stdout.splitlines() if line.strip()]
+    if not identifiers:
+        return []
+    code, stdout, stderr = run_command(
+        [DOCKER_BIN, "inspect", "--type", "container", *identifiers],
+        Path("/tmp"),
+        timeout=30,
+    )
+    if code != 0:
+        raise BrokerError(f"cannot inspect source containers: {stderr or stdout}")
+    try:
+        infos = json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        raise BrokerError("Docker returned invalid container metadata") from exc
+    visible = [
+        container_summary(info)
+        for info in infos
+        if workspace_id in container_workspace_ids(info)
+    ]
+    return sorted(visible, key=lambda item: str(item["name"]))
+
+
+def redact_logs(value: str) -> str:
+    pattern = re.compile(
+        r"(?i)(password|passwd|token|secret|authorization|api[_-]?key)"
+        r"(\s*[:=]\s*)([^\s,;]+)"
+    )
+    return pattern.sub(lambda match: f"{match.group(1)}{match.group(2)}<redacted>", value)
+
+
+def audit_source(context: dict[str, str], operation: str, **fields: Any) -> None:
+    event = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "coordinator_task_id": context["task_id"],
+        "workspace_id": context["workspace_id"],
+        "operation": operation,
+        **fields,
+    }
+    try:
+        COORDINATOR_AUDIT_LOG.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        line = json.dumps(event, sort_keys=True, separators=(",", ":")) + "\n"
+        with AUDIT_LOCK, COORDINATOR_AUDIT_LOG.open("a", encoding="utf-8") as handle:
+            handle.write(line)
+        COORDINATOR_AUDIT_LOG.chmod(0o600)
+    except OSError as exc:
+        raise BrokerError(f"cannot record coordinator source audit event: {exc}") from exc
+
+
+def target_task_inbox(target_task_id: str, workspace_id: str, output_name: str) -> tuple[Path, str]:
+    if not TASK_ID_RE.fullmatch(target_task_id):
+        raise BrokerError("target task ID must be a full UUID")
+    if not SAFE_OUTPUT_NAME_RE.fullmatch(output_name) or output_name in {".", ".."}:
+        raise BrokerError("invalid export output name")
+    with kandev_db() as database:
+        row = database.execute(
+            """
+            SELECT te.task_dir_name
+            FROM tasks t
+            JOIN task_environments te ON te.task_id = t.id
+            WHERE t.id = ? AND t.workspace_id = ? AND t.archived_at IS NULL
+            """,
+            (target_task_id, workspace_id),
+        ).fetchone()
+    if row is None or not str(row["task_dir_name"] or ""):
+        raise BrokerError("target task has no active task-scoped workspace")
+    container_root = Path("/data/tasks") / str(row["task_dir_name"])
+    host_root = translate_to_host(container_root)
+    inbox = host_root / ".kandev-coordinator-inbox"
+    inbox.mkdir(mode=0o700, parents=False, exist_ok=True)
+    inbox.chmod(0o700)
+    resolved_inbox = inbox.resolve(strict=True)
+    if not is_within(resolved_inbox, host_root):
+        raise BrokerError("target task inbox escapes its workspace")
+    destination = resolved_inbox / output_name
+    if destination.exists() or destination.is_symlink():
+        raise BrokerError("target task export already exists")
+    container_destination = f"{container_root}/.kandev-coordinator-inbox/{output_name}"
+    return destination, container_destination
+
+
+def container_environment(info: dict[str, Any]) -> dict[str, str]:
+    environment: dict[str, str] = {}
+    for item in (info.get("Config") or {}).get("Env") or []:
+        key, separator, value = str(item).partition("=")
+        if separator:
+            environment[key] = value
+    return environment
+
+
+def database_export_command(info: dict[str, Any]) -> tuple[list[str], dict[str, str]]:
+    environment = container_environment(info)
+    image = str((info.get("Config") or {}).get("Image") or "").lower()
+    networks = (info.get("NetworkSettings") or {}).get("Networks") or {}
+    addresses = sorted(
+        str(network.get("IPAddress") or "")
+        for network in networks.values()
+        if network.get("IPAddress")
+    )
+    if not addresses:
+        raise BrokerError("source database has no broker-reachable container address")
+    host = addresses[0]
+
+    if "mariadb" in image or "mysql" in image or any(
+        key in environment for key in ("MARIADB_DATABASE", "MYSQL_DATABASE")
+    ):
+        database = environment.get("MARIADB_DATABASE") or environment.get("MYSQL_DATABASE")
+        user = environment.get("MARIADB_USER") or environment.get("MYSQL_USER")
+        password = environment.get("MARIADB_PASSWORD") or environment.get("MYSQL_PASSWORD")
+        if not user or not password:
+            user = "root"
+            password = environment.get("MARIADB_ROOT_PASSWORD") or environment.get(
+                "MYSQL_ROOT_PASSWORD"
+            )
+        if not database or not user or not password:
+            raise BrokerError("source MariaDB lacks an exportable database credential set")
+        return (
+            [
+                "/usr/bin/mariadb-dump",
+                "--host",
+                host,
+                "--port",
+                "3306",
+                "--user",
+                user,
+                "--single-transaction",
+                "--quick",
+                "--skip-lock-tables",
+                "--hex-blob",
+                database,
+            ],
+            {"MYSQL_PWD": password},
+        )
+
+    if "postgres" in image or "POSTGRES_DB" in environment:
+        database = environment.get("POSTGRES_DB") or environment.get("POSTGRES_USER")
+        user = environment.get("POSTGRES_USER")
+        password = environment.get("POSTGRES_PASSWORD")
+        if not database or not user or not password:
+            raise BrokerError("source PostgreSQL lacks an exportable database credential set")
+        return (
+            [
+                "/usr/bin/pg_dump",
+                "--host",
+                host,
+                "--port",
+                "5432",
+                "--username",
+                user,
+                "--dbname",
+                database,
+                "--no-owner",
+                "--no-privileges",
+            ],
+            {"PGPASSWORD": password},
+        )
+    raise BrokerError("source container is not a supported MariaDB/MySQL/PostgreSQL database")
+
+
+def run_bounded_export(
+    args: list[str], environment_overrides: dict[str, str], destination: Path
+) -> tuple[int, str, int, str]:
+    process_environment = clean_environment()
+    process_environment.update(environment_overrides)
+    temporary = tempfile.NamedTemporaryFile(
+        mode="wb", prefix=f".{destination.name}.", dir=destination.parent, delete=False
+    )
+    temporary_path = Path(temporary.name)
+    total = 0
+    digest = hashlib.sha256()
+    stderr_chunks: list[bytes] = []
+    deadline = time.monotonic() + COMMAND_TIMEOUT
+    process: subprocess.Popen[bytes] | None = None
+    selector: selectors.BaseSelector | None = None
+    try:
+        process = subprocess.Popen(
+            args,
+            cwd="/tmp",
+            env=process_environment,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        assert process.stdout is not None and process.stderr is not None
+        selector = selectors.DefaultSelector()
+        selector.register(process.stdout, selectors.EVENT_READ, "stdout")
+        selector.register(process.stderr, selectors.EVENT_READ, "stderr")
+        with temporary:
+            while selector.get_map():
+                if time.monotonic() >= deadline:
+                    process.kill()
+                    raise BrokerError("database export timed out")
+                events = selector.select(timeout=0.25)
+                if not events and process.poll() is not None:
+                    events = [(key, selectors.EVENT_READ) for key in selector.get_map().values()]
+                for key, _ in events:
+                    chunk = os.read(key.fileobj.fileno(), 1024 * 1024)
+                    if not chunk:
+                        selector.unregister(key.fileobj)
+                        continue
+                    if key.data == "stdout":
+                        total += len(chunk)
+                        if total > MAX_EXPORT:
+                            process.kill()
+                            raise BrokerError("database export exceeded the configured size limit")
+                        digest.update(chunk)
+                        temporary.write(chunk)
+                    elif sum(len(item) for item in stderr_chunks) < MAX_OUTPUT:
+                        stderr_chunks.append(chunk[: MAX_OUTPUT - sum(len(item) for item in stderr_chunks)])
+        return_code = process.wait(timeout=5)
+        stderr = b"".join(stderr_chunks).decode(errors="replace")
+        if return_code != 0:
+            return return_code, stderr, total, digest.hexdigest()
+        os.link(temporary_path, destination)
+        destination.chmod(0o600)
+        return return_code, stderr, total, digest.hexdigest()
+    finally:
+        if selector is not None:
+            selector.close()
+        if process is not None and process.poll() is None:
+            process.kill()
+            process.wait()
+        temporary_path.unlink(missing_ok=True)
+
+
+def source_help() -> str:
+    return (
+        "Coordinator source commands:\n"
+        "  docker kandev source list\n"
+        "  docker kandev source inspect <container>\n"
+        "  docker kandev source logs <container> [--tail N] [--since 30m]\n"
+        "  docker kandev source db-dump <container> --target-task <UUID> [--name dump.sql]\n"
+    )
+
+
+def handle_coordinator_source(
+    task_root: Path, args: list[str]
+) -> dict[str, Any]:
+    context = coordinator_context(task_root)
+    operation_args = args[2:]
+    if not operation_args or operation_args == ["help"]:
+        audit_source(context, "help", result="ok")
+        return {"returncode": 0, "stdout": source_help(), "stderr": ""}
+    operation = operation_args[0]
+    # The attempt record survives validation/runtime failures; successful
+    # operations append a result record with only non-secret metadata.
+    audit_source(context, operation, result="attempt")
+
+    if operation == "list" and len(operation_args) == 1:
+        containers = list_workspace_containers(context["workspace_id"])
+        audit_source(context, operation, result="ok", count=len(containers))
+        return {
+            "returncode": 0,
+            "stdout": json.dumps(
+                {"workspace": context["workspace_name"], "containers": containers}, indent=2
+            )
+            + "\n",
+            "stderr": "",
+        }
+
+    if operation == "inspect" and len(operation_args) == 2:
+        name = operation_args[1]
+        info = require_workspace_container(name, context["workspace_id"])
+        audit_source(context, operation, source=name, result="ok")
+        return {
+            "returncode": 0,
+            "stdout": json.dumps(container_summary(info), indent=2) + "\n",
+            "stderr": "",
+        }
+
+    if operation == "logs" and len(operation_args) >= 2:
+        name = operation_args[1]
+        tail = 200
+        since = "30m"
+        index = 2
+        while index < len(operation_args):
+            option = operation_args[index]
+            if option not in {"--tail", "--since"} or index + 1 >= len(operation_args):
+                raise BrokerError(f"unsupported source logs option: {option}")
+            value = operation_args[index + 1]
+            if option == "--tail":
+                if not value.isdigit() or not 1 <= int(value) <= MAX_LOG_LINES:
+                    raise BrokerError(f"source log tail must be between 1 and {MAX_LOG_LINES}")
+                tail = int(value)
+            elif not re.fullmatch(r"[1-9][0-9]*[smhd]", value):
+                raise BrokerError("source log --since must be a duration such as 30m or 2h")
+            else:
+                since = value
+            index += 2
+        require_workspace_container(name, context["workspace_id"])
+        code, stdout, stderr = run_command(
+            [DOCKER_BIN, "logs", "--tail", str(tail), "--since", since, name],
+            Path("/tmp"),
+            timeout=60,
+        )
+        audit_source(context, operation, source=name, result="ok" if code == 0 else "error")
+        return {
+            "returncode": code,
+            "stdout": redact_logs(stdout),
+            "stderr": redact_logs(stderr),
+        }
+
+    if operation == "db-dump" and len(operation_args) >= 2:
+        name = operation_args[1]
+        target_task_id = ""
+        output_name = ""
+        index = 2
+        while index < len(operation_args):
+            option = operation_args[index]
+            if option not in {"--target-task", "--name"} or index + 1 >= len(operation_args):
+                raise BrokerError(f"unsupported source db-dump option: {option}")
+            value = operation_args[index + 1]
+            if option == "--target-task":
+                target_task_id = value
+            else:
+                output_name = value
+            index += 2
+        if not target_task_id:
+            raise BrokerError("source db-dump requires --target-task <UUID>")
+        if not output_name:
+            timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            output_name = f"{name}-{timestamp}.sql"
+        info = require_workspace_container(name, context["workspace_id"])
+        if str((info.get("State") or {}).get("Status")) != "running":
+            raise BrokerError("source database container is not running")
+        destination, container_destination = target_task_inbox(
+            target_task_id, context["workspace_id"], output_name
+        )
+        command, environment = database_export_command(info)
+        with EXPORT_LOCK:
+            code, stderr, size, checksum = run_bounded_export(
+                command, environment, destination
+            )
+        if code != 0:
+            destination.unlink(missing_ok=True)
+            audit_source(
+                context,
+                operation,
+                source=name,
+                target_task_id=target_task_id,
+                result="error",
+            )
+            raise BrokerError(f"logical database export failed: {redact_logs(stderr)}")
+        audit_source(
+            context,
+            operation,
+            source=name,
+            target_task_id=target_task_id,
+            output=container_destination,
+            bytes=size,
+            sha256=checksum,
+            result="ok",
+        )
+        return {
+            "returncode": 0,
+            "stdout": json.dumps(
+                {
+                    "source": name,
+                    "target_task_id": target_task_id,
+                    "path": container_destination,
+                    "bytes": size,
+                    "sha256": checksum,
+                },
+                indent=2,
+            )
+            + "\n",
+            "stderr": "",
+        }
+
+    raise BrokerError(f"unsupported coordinator source operation\n{source_help()}")
+
+
 def compose_config(cwd: Path, project: str, global_args: list[str]) -> dict[str, Any]:
     # Parse all agent-controlled Compose files inside the same Bubblewrap scope
     # as the agent. The broker never opens env/config/include files on the host.
@@ -416,6 +1041,10 @@ def handle_request(request: dict[str, Any], key: bytes) -> dict[str, Any]:
         raise BrokerError("working directory is outside this agent task")
     if not hmac.compare_digest(token, expected_token(key, task_root)):
         raise BrokerError("invalid task-scoped Docker token")
+
+    if args[:2] == ["kandev", "source"]:
+        return handle_coordinator_source(task_root, args)
+
     host_root = translate_to_host(task_root)
     project = project_name(task_root)
     global_args, command, command_args = split_compose_args(args, cwd, task_root)
