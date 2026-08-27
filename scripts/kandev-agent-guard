@@ -1,0 +1,212 @@
+#!/usr/bin/env bash
+# Kernel-enforced per-agent filesystem boundary for Kandev.
+set -euo pipefail
+
+GUARD_NAME="kandev-agent-guard"
+
+deny() {
+    echo "ERROR: $GUARD_NAME: $*" >&2
+    exit 78
+}
+
+[[ "${1:-}" == "--" ]] && shift
+[[ "$#" -gt 0 ]] || deny "no agent command supplied"
+command -v bwrap >/dev/null 2>&1 || deny "bubblewrap is not installed"
+
+cwd="$(pwd -P)" || deny "cannot resolve working directory"
+host_code="${KANDEV_HOST_CODE_DIR:-}"
+
+# Return the first child below a managed root. Dot-prefixed children are
+# intentionally excluded so recovery/staging directories can never become an
+# agent workspace.
+managed_child() {
+    local base="$1" path="$2" rel child
+    [[ "$path" == "$base"/* ]] || return 1
+    rel="${path#"$base"/}"
+    child="${rel%%/*}"
+    [[ -n "$child" && "$child" != .* && "$child" != "." && "$child" != ".." ]] || return 1
+    printf '%s/%s\n' "$base" "$child"
+}
+
+# Resolve the nearest Git repository containing path, without granting an
+# entire first-level Code directory when repositories are nested below it.
+# Hidden path components remain reserved for recovery/control data.
+git_root_below() {
+    local base="$1" path="$2" probe rel component
+    [[ "$path" == "$base"/* ]] || return 1
+    probe="$path"
+    while [[ "$probe" == "$base"/* ]]; do
+        if [[ -e "$probe/.git" && ! -L "$probe/.git" ]]; then
+            rel="${probe#"$base"/}"
+            while IFS= read -r component; do
+                [[ -n "$component" && "$component" != .* ]] || return 1
+            done < <(printf '%s\n' "$rel" | tr '/' '\n')
+            printf '%s\n' "$probe"
+            return 0
+        fi
+        probe="$(dirname "$probe")"
+    done
+    return 1
+}
+
+writable_root=""
+case "$cwd" in
+    /data/tasks/*)
+        writable_root="$(managed_child /data/tasks "$cwd")" || true
+        ;;
+    /data/quick-chat/*)
+        writable_root="$(managed_child /data/quick-chat "$cwd")" || true
+        ;;
+    /data/repos/workspaces/*)
+        # Managed clones are deeper than the workspace UUID. Prefer the nearest
+        # Git root so one clone cannot modify another clone in the workspace.
+        boundary="$(managed_child /data/repos/workspaces "$cwd")" || true
+        probe="$cwd"
+        while [[ -n "${boundary:-}" && "$probe" == "$boundary"/* ]]; do
+            if [[ -e "$probe/.git" ]]; then
+                writable_root="$probe"
+                break
+            fi
+            probe="$(dirname "$probe")"
+        done
+        [[ -n "$writable_root" ]] || writable_root="${boundary:-}"
+        ;;
+    /data/home/Code/*)
+        writable_root="$(git_root_below /data/home/Code "$cwd")" || true
+        ;;
+    *)
+        if [[ -n "$host_code" && "$cwd" == "$host_code"/* ]]; then
+            writable_root="$(git_root_below "$host_code" "$cwd")" || true
+        fi
+        ;;
+esac
+
+[[ -n "$writable_root" ]] || deny "working directory is outside an approved project/task root: $cwd"
+[[ -d "$writable_root" ]] || deny "approved writable root does not exist: $writable_root"
+writable_root="$(realpath -e -- "$writable_root")" || deny "cannot resolve writable root"
+[[ "$cwd" == "$writable_root" || "$cwd" == "$writable_root"/* ]] || deny "working directory escapes writable root"
+
+declare -a bwrap_args
+declare -A bound
+bwrap_args=(
+    --die-with-parent
+    --new-session
+    --unshare-user
+    --unshare-pid
+    --unshare-ipc
+    --unshare-uts
+    --ro-bind / /
+    --dev /dev
+    --tmpfs /tmp
+    --tmpfs /run
+    --bind "$writable_root" "$writable_root"
+)
+bound["$writable_root"]=1
+
+add_rw_bind() {
+    local path="$1" resolved
+    [[ -e "$path" && ! -L "$path" ]] || return 0
+    resolved="$(realpath -e -- "$path")" || deny "cannot resolve writable support path: $path"
+    case "$resolved" in
+        /data/home/Code|/data/home/Code/*)
+            deny "support path resolves into protected Code tree: $path"
+            ;;
+    esac
+    if [[ -n "$host_code" && ( "$resolved" == "$host_code" || "$resolved" == "$host_code"/* ) ]]; then
+        deny "support path resolves into protected host Code tree: $path"
+    fi
+    [[ -z "${bound[$resolved]:-}" ]] || return 0
+    bwrap_args+=(--bind "$resolved" "$resolved")
+    bound["$resolved"]=1
+}
+
+# Language runtimes, package caches, and per-agent state remain usable. SSH and
+# the global Git config are deliberately omitted and therefore stay read-only.
+for support_path in \
+    /data/.npm-global \
+    /data/home/.bundle \
+    /data/home/.cache \
+    /data/home/.cargo \
+    /data/home/.claude \
+    /data/home/.claude.json \
+    /data/home/.codex \
+    /data/home/.composer \
+    /data/home/.config \
+    /data/home/.copilot \
+    /data/home/.gem \
+    /data/home/.local \
+    /data/home/.npm \
+    /data/home/.rustup
+do
+    add_rw_bind "$support_path"
+done
+
+path_is_code_repo_gitdir() {
+    local path="$1" base rel repo_rel component
+    for base in /data/home/Code "$host_code"; do
+        [[ -n "$base" && "$path" == "$base"/*/.git ]] || continue
+        rel="${path#"$base"/}"
+        repo_rel="${rel%/.git}"
+        [[ -n "$repo_rel" && "$repo_rel" != "$rel" ]] || continue
+        while IFS= read -r component; do
+            [[ -n "$component" && "$component" != .* ]] || continue 2
+        done < <(printf '%s\n' "$repo_rel" | tr '/' '\n')
+        [[ -d "$base/$repo_rel" && ! -L "$base/$repo_rel" ]] && return 0
+    done
+    return 1
+}
+
+# Linked task worktrees store objects/refs in the source repository's .git
+# directory. Bind only that one Git common-dir; sibling working trees remain RO.
+declare -a git_markers
+git_markers=("$writable_root/.git")
+while IFS= read -r -d '' marker; do
+    git_markers+=("$marker")
+done < <(find "$writable_root" -mindepth 2 -maxdepth 2 -name .git -print0 2>/dev/null)
+
+for marker in "${git_markers[@]}"; do
+    [[ -f "$marker" && ! -L "$marker" ]] || continue
+    gitdir_line="$(sed -n 's/^gitdir: //p' "$marker" | head -n 1)"
+    [[ -n "$gitdir_line" ]] || deny "invalid Git worktree marker: $marker"
+    if [[ "$gitdir_line" != /* ]]; then
+        gitdir_line="$(dirname "$marker")/$gitdir_line"
+    fi
+    gitdir="$(realpath -e -- "$gitdir_line")" || deny "missing Git worktree directory for $marker"
+    common="$gitdir"
+    if [[ -f "$gitdir/commondir" ]]; then
+        common_rel="$(head -n 1 "$gitdir/commondir")"
+        common="$(realpath -e -- "$gitdir/$common_rel")" || deny "missing Git common directory for $marker"
+    fi
+    path_is_code_repo_gitdir "$common" || deny "Git common directory is outside an approved Code repository: $common"
+
+    # A task-controlled .git file must not be able to nominate some unrelated
+    # repository. Git records the reverse link in .git/worktrees/<id>/gitdir;
+    # require that registration to point back to this exact marker.
+    [[ "$gitdir" == "$common"/worktrees/* ]] || deny "Git worktree directory is outside its common directory: $gitdir"
+    gitdir_id="${gitdir#"$common"/worktrees/}"
+    [[ -n "$gitdir_id" && "$gitdir_id" != */* ]] || deny "invalid Git worktree directory: $gitdir"
+    [[ -f "$gitdir/gitdir" ]] || deny "Git worktree backlink is missing: $gitdir/gitdir"
+    backlink_line="$(head -n 1 "$gitdir/gitdir")"
+    [[ -n "$backlink_line" ]] || deny "Git worktree backlink is empty: $gitdir/gitdir"
+    if [[ "$backlink_line" != /* ]]; then
+        backlink_line="$gitdir/$backlink_line"
+    fi
+    backlink="$(realpath -e -- "$backlink_line")" || deny "Git worktree backlink is invalid: $gitdir/gitdir"
+    marker_real="$(realpath -e -- "$marker")" || deny "cannot resolve Git worktree marker: $marker"
+    [[ "$backlink" == "$marker_real" ]] || deny "Git worktree backlink does not match marker: $marker"
+    if [[ -z "${bound[$common]:-}" ]]; then
+        bwrap_args+=(--bind "$common" "$common")
+        bound["$common"]=1
+    fi
+done
+
+if [[ "${KANDEV_AGENT_GUARD_DEBUG:-0}" == "1" ]]; then
+    echo "$GUARD_NAME: cwd=$cwd writable_root=$writable_root" >&2
+    for path in "${!bound[@]}"; do echo "$GUARD_NAME: rw=$path" >&2; done
+fi
+
+exec bwrap "${bwrap_args[@]}" \
+    --setenv KANDEV_AGENT_GUARD_ACTIVE 1 \
+    --setenv TMPDIR /tmp \
+    --chdir "$cwd" \
+    -- "$@"

@@ -768,6 +768,19 @@ else
   fail "tests/nat-redirect-scoping.sh failed: $(grep '✗' <<<"$NAT_FUNC_OUT" | head -3 | tr '\n' ';')"
 fi
 
+# ── 15. Per-agent filesystem boundary ────────────────────────────────────────────────
+section "15. Per-agent filesystem boundary"
+
+# Stream the test into the running container so this also works from an
+# alternate Git worktree that is not one of the container's identity mounts.
+GUARD_TEST_OUT="$(docker exec -i -u kandev -w /data/tasks kandev bash -s \
+  < "$COMPOSE_DIR/tests/test-agent-guard.sh" 2>&1 || true)"
+if grep -q '^PASS: linked task worktrees work;' <<<"$GUARD_TEST_OUT"; then
+  ok "linked task worktrees work while source repos, Code root, sudo, and Docker socket stay blocked"
+else
+  fail "tests/test-agent-guard.sh failed: $(tail -3 <<<"$GUARD_TEST_OUT" | tr '\n' ';')"
+fi
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 TOTAL=$((PASS + FAIL))
 echo ""

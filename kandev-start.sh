@@ -304,6 +304,11 @@ cd "$COMPOSE_DIR"
 bash "$COMPOSE_DIR/scripts/require-main-branch.sh" "$COMPOSE_DIR"
 bash "$COMPOSE_DIR/scripts/check-codex-runtime.sh"
 
+# A peer restore above can replace the SQLite database. Reapply the mandatory
+# per-agent launcher after restore and immediately before every startup;
+# database triggers keep new or edited profiles guarded while Kandev runs.
+"$COMPOSE_DIR/scripts/enforce-agent-guard.sh" "$KANDEV_DATA/kandev.db"
+
 RECREATE_ARG=""
 [[ "$RECREATE" -eq 1 ]] && RECREATE_ARG="--force-recreate"
 

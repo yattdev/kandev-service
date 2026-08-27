@@ -337,4 +337,6 @@ RUN chmod +x /usr/local/bin/docker
 # paths and silently skips the read-only ones instead of aborting startup.
 COPY docker-entrypoint-local.sh /usr/local/bin/docker-entrypoint.sh
 COPY scripts/codex-sandbox-preflight.sh /usr/local/bin/codex-sandbox-preflight
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh /usr/local/bin/codex-sandbox-preflight
+COPY scripts/kandev-agent-guard /usr/local/bin/kandev-agent-guard
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh /usr/local/bin/codex-sandbox-preflight \
+    /usr/local/bin/kandev-agent-guard
