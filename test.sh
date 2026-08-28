@@ -713,6 +713,16 @@ else
   fail "install-office.sh does not enforce a clean main deployment checkout"
 fi
 
+# The startup guard must work under user systemd's minimal PATH. Do not depend
+# on a developer toolchain's sqlite3 executable (on this host it is supplied by
+# Android SDK and is intentionally absent from the service environment).
+if grep -Fq 'PYTHON="${PYTHON:-/usr/bin/python3}"' scripts/enforce-agent-guard.sh \
+   && ! grep -q 'command -v sqlite3' scripts/enforce-agent-guard.sh; then
+  ok "agent guard uses system Python sqlite3 under systemd's minimal PATH"
+else
+  fail "agent guard still depends on a PATH-provided sqlite3 executable"
+fi
+
 # ── 14. Port 80 → 38429 NAT redirect scoping ─────────────────────────────────
 section "14. NAT redirect scoping (port 80 → 38429)"
 
