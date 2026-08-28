@@ -723,6 +723,12 @@ else
   fail "agent guard still depends on a PATH-provided sqlite3 executable"
 fi
 
+if grep -Fq 'KANDEV_HEALTH_TIMEOUT_MS=180000' docker-compose.yml; then
+  ok "backend health timeout accommodates large restored boards"
+else
+  fail "backend still uses the 45-second health timeout"
+fi
+
 # ── 14. Port 80 → 38429 NAT redirect scoping ─────────────────────────────────
 section "14. NAT redirect scoping (port 80 → 38429)"
 

@@ -59,6 +59,11 @@ services:
       # WebSocket connects correctly from any remote host (e.g. board.office, board.home).
       - KANDEV_API_PORT=38429
 
+      # Large restored boards can need more than the launcher's 45-second
+      # default while reconciling hundreds of saved sessions. Keep the health
+      # gate, but allow startup enough time to reach its HTTP listener.
+      - KANDEV_HEALTH_TIMEOUT_MS=180000
+
       # Run Node.js (and kandev) in production mode.
       # Effects: disables development-only middleware and verbose error stack traces,
       # enables internal caching and performance optimisations, and reduces log noise.

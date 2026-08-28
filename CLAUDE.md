@@ -62,6 +62,11 @@ This is not hypothetical — see the crash-loop row in *Common failure modes* be
 A checkout back to `main` **does not fix a container that is already running**:
 after any branch switch, recreate it explicitly.
 
+The Compose deployment sets `KANDEV_HEALTH_TIMEOUT_MS=180000`. Restored boards
+with hundreds of sessions can spend more than the upstream 45-second default in
+startup reconciliation before opening the HTTP listener; the longer timeout
+retains the health gate without putting the container into a false crash loop.
+
 `~/Code/kandev` is the single canonical deployment checkout. The installed
 systemd unit checks that tracked files are clean and runs `git switch main`
 before startup. This lets a human temporarily use a `*-workflow` branch for
