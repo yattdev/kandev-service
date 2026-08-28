@@ -44,7 +44,10 @@ set -euo pipefail
 _KANDEV_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 [ -f "$_KANDEV_DIR/host.env" ] && . "$_KANDEV_DIR/host.env"
 
-COMPOSE_DIR="${COMPOSE_DIR:-$HOME/Code/kandev}"
+# Compose always follows the checkout containing this script. The installed
+# systemd unit owns the branch transition: it safely switches the single
+# canonical ~/Code/kandev checkout to main before invoking this script.
+COMPOSE_DIR="${COMPOSE_DIR:-$_KANDEV_DIR}"
 KANDEV_DATA="${KANDEV_DATA:-$HOME/.local/share/kandev/data}"
 MINI_HOST="${MINI_HOST:-10.0.0.20}"
 MINI_USER="${MINI_USER:-bob}"

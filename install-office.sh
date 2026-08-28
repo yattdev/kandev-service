@@ -44,6 +44,11 @@ After=default.target
 Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=%h/Code/kandev
+# Never deploy a workflow-editing branch. Refuse to carry tracked changes onto
+# main, then safely switch the single canonical checkout before every start.
+ExecStartPre=/usr/bin/git -C %h/Code/kandev diff --quiet
+ExecStartPre=/usr/bin/git -C %h/Code/kandev diff --cached --quiet
+ExecStartPre=/usr/bin/git -C %h/Code/kandev switch main
 ExecStart=/bin/bash %h/Code/kandev/kandev-start.sh
 ExecStop=/bin/bash %h/Code/kandev/kandev-start.sh --release-lock
 ExecStop=/usr/bin/docker compose -p kandev down
@@ -54,7 +59,7 @@ TimeoutStopSec=60
 [Install]
 WantedBy=default.target
 EOF
-echo "[install-office] systemd unit written (ExecStart → kandev-start.sh)"
+echo "[install-office] systemd unit written (deployment → ~/Code/kandev; auto-switches main)"
 
 # ── 2. Reload + enable ──────────────────────────────────────────────────────
 systemctl --user daemon-reload

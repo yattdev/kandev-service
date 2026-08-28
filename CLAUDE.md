@@ -62,8 +62,14 @@ This is not hypothetical — see the crash-loop row in *Common failure modes* be
 A checkout back to `main` **does not fix a container that is already running**:
 after any branch switch, recreate it explicitly.
 
+`~/Code/kandev` is the single canonical deployment checkout. The installed
+systemd unit checks that tracked files are clean and runs `git switch main`
+before startup. This lets a human temporarily use a `*-workflow` branch for
+workflow edits without ever deploying it. If tracked edits are still present,
+startup stops instead of stashing, carrying, or discarding them.
+
 ```bash
-cd ~/Code/kandev && git switch main && docker compose -p kandev up -d --force-recreate
+systemctl --user restart kandev
 ```
 
 ---

@@ -695,6 +695,24 @@ for entry in kandev-start.sh kandev-start-hub.sh update.sh kandev-pull.sh; do
   fi
 done
 
+# kandev-start.sh must use the checkout containing the script.
+if grep -Fq 'COMPOSE_DIR="${COMPOSE_DIR:-$_KANDEV_DIR}"' kandev-start.sh; then
+  ok "kandev-start.sh defaults Compose to its own checkout"
+else
+  fail "kandev-start.sh can fall back to a different checkout"
+fi
+
+# The systemd deployment must use the one canonical checkout, refuse tracked
+# edits, and switch it to main before kandev-start.sh runs.
+if grep -Fq 'WorkingDirectory=%h/Code/kandev' install-office.sh \
+   && grep -Fq 'ExecStartPre=/usr/bin/git -C %h/Code/kandev diff --quiet' install-office.sh \
+   && grep -Fq 'ExecStartPre=/usr/bin/git -C %h/Code/kandev diff --cached --quiet' install-office.sh \
+   && grep -Fq 'ExecStartPre=/usr/bin/git -C %h/Code/kandev switch main' install-office.sh; then
+  ok "install-office.sh safely switches the canonical deployment checkout to main"
+else
+  fail "install-office.sh does not enforce a clean main deployment checkout"
+fi
+
 # ── 14. Port 80 → 38429 NAT redirect scoping ─────────────────────────────────
 section "14. NAT redirect scoping (port 80 → 38429)"
 
