@@ -189,13 +189,16 @@ coordinator_metadata() {
     task_dir="${writable_root#/data/tasks/}"
     [[ "$task_dir" != */* && "$task_dir" =~ ^[A-Za-z0-9_-]+$ ]] || return 1
 
-    # Newer backends can explicitly attest all three launch identifiers. Any
-    # partial or malformed attestation fails closed instead of falling back to
-    # inference, so an agent cannot selectively unset a mismatched identifier.
+    # Kandev v0.92 exports the task/session pair but not workspace_id. Accept
+    # that exact pair and derive the workspace only from the matching DB task.
+    # Newer backends may also export workspace_id, which must then agree. Every
+    # other partial or malformed combination fails closed.
     if [[ -n "$attested_task" || -n "$attested_session" || -n "$attested_workspace" ]]; then
         [[ "$attested_task" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ \
-           && "$attested_session" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ \
-           && "$attested_workspace" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || return 1
+           && "$attested_session" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || return 1
+        if [[ -n "$attested_workspace" ]]; then
+            [[ "$attested_workspace" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || return 1
+        fi
         rows="$(sqlite3 -noheader -separator '|' "file:$kandev_db?mode=ro" "
             SELECT DISTINCT t.id, t.workspace_id, w.name, ts.id
             FROM task_environments te
@@ -204,7 +207,7 @@ coordinator_metadata() {
             JOIN task_sessions ts ON ts.task_id = t.id
             WHERE te.task_dir_name = '$task_dir'
               AND t.id = '$attested_task'
-              AND t.workspace_id = '$attested_workspace'
+              AND ('$attested_workspace' = '' OR t.workspace_id = '$attested_workspace')
               AND ts.id = '$attested_session'
               AND ts.state IN ('CREATED', 'STARTING', 'RUNNING', 'WAITING_FOR_INPUT')
               AND t.archived_at IS NULL

@@ -199,6 +199,18 @@ if (
     exit 1
 fi
 [[ ! -e "$unauthenticated_coordinator_probe" ]]
+partial_coordinator_probe="/data/home/Code/coordinator/.kandev-partial-attestation-probe-$$"
+if (
+    export KANDEV_TASK_ID=00000000-0000-0000-0000-000000000000
+    unset KANDEV_SESSION_ID KANDEV_WORKSPACE_ID
+    cd "$coordinator_root"
+    "$GUARD" -- touch "$partial_coordinator_probe"
+) 2>/dev/null; then
+    rm -f "$partial_coordinator_probe"
+    echo "ERROR: incomplete coordinator task/session pair received workspace elevation" >&2
+    exit 1
+fi
+[[ ! -e "$partial_coordinator_probe" ]]
 coordinator_sources="$(cd "$coordinator_root" && "$GUARD" -- docker kandev source list)"
 grep -q '"workspace"' <<<"$coordinator_sources"
 grep -q '"containers"' <<<"$coordinator_sources"
@@ -263,7 +275,9 @@ coordinator_guard() {
     (
         export KANDEV_TASK_ID="$coordinator_task_id"
         export KANDEV_SESSION_ID="$coordinator_session_id"
-        export KANDEV_WORKSPACE_ID="$coordinator_workspace_id"
+        # Match the live v0.92 launch environment: workspace_id is derived
+        # authoritatively after the exact task/session pair is validated.
+        unset KANDEV_WORKSPACE_ID
         cd "$coordinator_root"
         exec "$GUARD" -- "$@"
     )

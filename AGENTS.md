@@ -146,12 +146,13 @@ touching another workspace, or using unregistered host paths. Use
 its permissions from your private mount table.
 
 Coordinator identity comes from Kandev's live database and the verified Git
-backlink. Explicit task/session/workspace launch IDs are checked when present;
-on Kandev v0.92 the guard requires the sole active executor launch whose
-worktree path matches the exact materialized task root, including the short
-launch-order window where the session row is still `WAITING_FOR_INPUT`. Partial
-or mismatched IDs fail closed, and the selected session is rechecked every 15
-seconds.
+backlink. Kandev v0.92's exported task/session pair is checked exactly and its
+workspace is derived from that task; any exported workspace ID must also match.
+When no IDs are exported, the guard requires the sole active executor launch
+whose worktree path matches the exact materialized task root, including the
+short launch-order window where the session row is still `WAITING_FOR_INPUT`.
+Other partial or mismatched IDs fail closed, and the selected session is
+rechecked every 15 seconds.
 
 This authority belongs only to a metadata- and backlink-validated Coordinator
 worktree and does not extend to ordinary tasks, raw Docker/socket access,
