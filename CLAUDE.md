@@ -355,6 +355,13 @@ and runs a fresh guard-rooted mount/write/`git add --dry-run` check, avoiding th
 invalid inference that another agent's mounts can be read from the
 Coordinator's private namespace.
 
+For large coordinator-charter synchronization, use
+`docker kandev workspace description-update <file>`. It accepts only a UTF-8
+regular file inside the calling coordinator's exact task root and updates only
+that coordinator task through the normal backend API. A five-minute operator
+token is minted and revoked entirely inside the broker; it is never returned
+to the agent. The operation is size-bounded and audited by content hashes.
+
 **Standing owner authorization:** a broker-validated workspace Coordinator may
 autonomously use the supported `list`, curated `inspect`, bounded `logs`, and
 logical `db-dump` operations for legitimate work requested by a task in the
@@ -372,6 +379,14 @@ The current guard confines writes, not reads between same-UID agents. Treat DB
 dump inboxes and container logs as potentially sensitive, keep them short-lived,
 and do not claim cross-task confidentiality until per-task UIDs or encrypted
 broker delivery exist. Log redaction is best effort, not a secret scanner.
+
+Guarded mobile tasks receive the host Android SDK and AVD catalogue read-only,
+plus `/dev/kvm` for hardware acceleration. Use `emulator -list-avds`, launch
+with the `/usr/local/bin/emulator` wrapper, and control the instance through
+`adb`. The wrapper forces ephemeral headless/no-snapshot operation; writable
+Android user state is `/data/home/.android`. Host X11/Wayland and `/dev/dri` are
+not exposed. Concurrent agents share adb visibility, so always select the task's
+serial and kill its emulator after QA.
 
 1. `docker-ce-cli` + the compose/buildx plugins in `Dockerfile.local` — client only.
 2. The socket mount.
@@ -508,15 +523,16 @@ Use `kandev-ssh-agent.sh` when:
 | `docker-compose.yml` | Base service: upstream image, restart policy, `network_mode: host`, core env vars and volumes |
 | `docker-compose.override.yml` | Local build, `USER`/`LOGNAME` env, SSH/git/gh/glab identity mounts |
 | `docker-compose.ssh-agent.yml` | Optional SSH agent socket overlay |
-| `Dockerfile.local` | Extends upstream: adds SSH, gh, glab, Docker CLI (+ host-path wrapper), MariaDB/PostgreSQL clients, build toolchain, mise, Chrome + chromedriver, sqlite3 (for hot DB backup); installs the agent Docker broker and patches git/entrypoint |
+| `Dockerfile.local` | Extends upstream: adds SSH, gh, glab, Docker CLI (+ host-path wrapper), Android emulator/adb wrappers, MariaDB/PostgreSQL clients, build toolchain, mise, Chrome + chromedriver, sqlite3 (for hot DB backup); installs the agent Docker broker and patches git/entrypoint |
 | `docker-entrypoint-local.sh` | Upstream entrypoint + `|| true` chown fix for :ro mounts; starts and supervises the task-scoped agent Docker broker |
 | `docker-host-path-wrapper.sh` | Installed as `/usr/local/bin/docker`: rewrites container-only bind-mount paths to their host equivalents before calling the real CLI |
 | `scripts/kandev-agent-docker-broker` | Validates task-scoped Compose requests and same-workspace coordinator source inspection/logical DB exports without exposing the host daemon socket |
 | `scripts/kandev-agent-docker-client` | Docker-compatible agent-side client for the constrained Compose broker |
 | `scripts/kandev-agent-guard` | Bubblewrap filesystem boundary; mints a task token and exposes only the constrained broker socket |
+| `scripts/kandev-agent-emulator` / `scripts/kandev-agent-adb` | Expose host Android tools with ephemeral headless AVD defaults and persistent adb state |
 | `mise.default.toml` | System-wide mise config (`/etc/mise/config.toml`): global language versions matched to host |
 | `setup-toolchains.sh` | One-time helper: installs the mise language toolchains into the persistent `/data` volume |
-| `test.sh` | Automated tests covering image, container, service, identity, SSH, git, CLI tools, toolchains (incl. Java JDK and Go, plus login-shell PATH), sqlite3, headless browser, guarded agent Compose/coordinator source access, Docker host-path wrapper, branch guard, and port-80 NAT redirect scoping |
+| `test.sh` | Automated tests covering image, container, service, identity, SSH, git, CLI tools, toolchains (incl. Java JDK and Go), sqlite3, headless browser/Android QA, guarded agent Compose/coordinator source access, Docker host-path wrapper, branch guard, and port-80 NAT redirect scoping |
 | `update.sh` | Daily cron: pull upstream → rebuild local → restart if changed |
 | `CUSTOM-PROMPTS.md` | Operator runbook for discovering, inspecting, backing up, and explicitly updating live saved prompts through the API or a tightly scoped SQLite transaction |
 | `custom_prompts/` | Versioned Markdown mirrors of saved prompts; every owner-requested add/update must synchronize the live database and be committed and pushed from `main` |

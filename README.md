@@ -332,6 +332,7 @@ docker kandev source logs <container> --tail 200 --since 30m
 docker kandev source db-dump <container> \
   --target-task <full-task-uuid> --name source.sql
 docker kandev workspace probe <full-task-uuid>
+docker kandev workspace description-update PROMPT.md
 ```
 
 `list`, `inspect`, and bounded/redacted `logs` expose only containers whose
@@ -371,6 +372,13 @@ same-workspace task and reports mount modes, a reversible task write, and the
 `git add -A --dry-run` result. Use it instead of inferring target writability
 from the Coordinator's own private mount table.
 
+`docker kandev workspace description-update <file>` replaces only the calling
+Coordinator task's description from a UTF-8 file inside its own task root
+(maximum 1 MiB). The broker mints a five-minute operator token internally,
+calls the normal Kandev API so task-update events are published, verifies the
+persisted content, and revokes the token before replying. The credential is
+never exposed to the agent, and no target task ID can be supplied.
+
 Logical dumps may contain sensitive application data. The current Bubblewrap
 policy is a write-confinement boundary, not a distinct-UID confidentiality
 boundary: other guarded agents cannot modify the inbox but may be able to read
@@ -384,6 +392,42 @@ names outside the workspace, container environment output, or the host Docker
 socket. The shared main coordinator checkout is denied when it cannot identify
 one unique task/workspace; coordinators must run from their materialized Kandev
 task worktrees.
+
+### Android emulator access for guarded agents
+
+Mobile tasks can run hardware-accelerated, headless Android UI QA from any
+guarded agent session:
+
+```bash
+emulator -list-avds
+emulator -avd Pixel_8 &
+adb wait-for-device
+adb shell getprop sys.boot_completed
+```
+
+The local image supplies `emulator` and `adb` wrappers. Compose mounts the
+host's `~/Android/Sdk` and `~/.android/avd` at their original absolute paths
+**read-only**, and passes only `/dev/kvm` into the container and Bubblewrap
+session. The emulator wrapper adds `-read-only -no-snapshot -no-window
+-no-audio -no-boot-anim -no-metrics` and software GPU rendering to every AVD
+launch. Because the emulator still needs local lock files in read-only mode, the
+wrapper copies only `config.ini` into a disposable runtime AVD directory and
+disables the SD card; the large base images stay untouched. Mutable adb keys and
+tool state persist at `/data/home/.android`, outside `~/Code`; the base AVD
+images cannot be overwritten.
+
+This contract intentionally does not expose `/dev/dri`, `/tmp/.X11-unix`, a
+Wayland socket, or the host desktop. UI inspection and automation use adb,
+screenshots, uiautomator/Appium, or the project's test framework. All sessions
+share the host network and adb server, so emulator instances are not confidential
+from other same-host agents. Kandev uses its own adb server on port 5038 rather
+than the host's differently keyed server on 5037. Use `adb -s <serial>` when several are running and
+stop task-owned instances with `adb -s <serial> emu kill` when QA finishes.
+
+Host prerequisites are `~/Android/Sdk/emulator/emulator`, at least one AVD under
+`~/.android/avd`, `/dev/kvm`, and the correct KVM group ID. The office default is
+`KVM_GID=993`; override it in the launch environment if `getent group kvm`
+reports another value, then rebuild/recreate Kandev.
 
 ### Browser tests (headless Chrome)
 

@@ -160,3 +160,16 @@ arbitrary container `exec`, credential disclosure, cross-workspace data,
 unsupported broker operations, or bypassing a broker denial. Scope grants and
 revocations are audited; individual file writes are not yet kernel-audited, so
 keep board comments and commits legible when mutating another task's resources.
+
+## 8. Android UI QA stays inside the outer guard
+
+Any guarded mobile task may use `emulator -list-avds`, `emulator -avd <name>`,
+and `adb` for headless UI QA. The host SDK/AVDs are read-only and launches are
+ephemeral/no-snapshot through the wrapper; `/dev/kvm` is the only host device
+passed through. Never invoke the underlying SDK emulator binary to bypass those
+defaults, expose a host display socket, or modify the shared AVD catalogue.
+
+Default per-user language caches outside Code, including `/data/home/go`, are
+writable inside the guard. Keep project source and generated artifacts in the
+assigned task/worktree; never relocate source into a shared cache to escape the
+workspace boundary.

@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+sdk_root="${ANDROID_SDK_ROOT:-}"
+[[ -n "$sdk_root" && -x "$sdk_root/platform-tools/adb" ]] || {
+    echo "ERROR: adb is unavailable; check the read-only Android SDK mount" >&2
+    exit 78
+}
+exec "$sdk_root/platform-tools/adb" "$@"

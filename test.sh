@@ -386,6 +386,12 @@ else
   fail "sqlite3 missing from image — hot backup would fall back to a torn live-DB copy"
 fi
 
+if docker run --rm kandev-local:latest which lsof &>/dev/null; then
+  ok "lsof present for non-destructive lock-holder diagnostics"
+else
+  fail "lsof missing — guarded agents cannot verify stale lock files safely"
+fi
+
 # ── 9. Codex workspace-write sandbox ─────────────────────────────────────────
 section "9. Codex workspace-write sandbox"
 
@@ -849,8 +855,8 @@ fi
 # alternate Git worktree that is not one of the container's identity mounts.
 GUARD_TEST_OUT="$(docker exec -i -u kandev -w /data/tasks kandev bash -s \
   < "$COMPOSE_DIR/tests/test-agent-guard.sh" 2>&1 || true)"
-if grep -q '^PASS: linked-task Git isolation, writable task Compose, attested coordinator workspace/source/probe scope, and cross-workspace/Code-root/raw-socket/sudo boundaries work' <<<"$GUARD_TEST_OUT"; then
-  ok "ordinary tasks have isolated writable Git/Compose scope and attested coordinators have same-workspace authority"
+if grep -q '^PASS: linked-task Git isolation, writable task Compose/Android QA, attested coordinator workspace/source/probe scope, and cross-workspace/Code-root/raw-socket/sudo boundaries work' <<<"$GUARD_TEST_OUT"; then
+  ok "ordinary tasks have isolated writable Git/Compose/Android scope and attested coordinators have same-workspace authority"
 else
   fail "tests/test-agent-guard.sh failed: $(tail -3 <<<"$GUARD_TEST_OUT" | tr '\n' ';')"
 fi
@@ -863,6 +869,60 @@ if grep -q '^PASS: restic uses a non-recursive local fallback' <<<"$RESTIC_TEST_
   ok "backup falls back locally when the VPN/remote repo is unavailable"
 else
   fail "tests/test-restic-backup.sh failed: $(tail -3 <<<"$RESTIC_TEST_OUT" | tr '\n' ';')"
+fi
+
+# ── 17. Android emulator for guarded mobile QA ───────────────────────────────
+section "17. Android emulator for guarded mobile QA"
+
+if bash "$COMPOSE_DIR/tests/test-agent-emulator.sh" >/dev/null 2>&1; then
+  ok "Android launcher/adb wrapper policy tests pass"
+else
+  fail "tests/test-agent-emulator.sh failed"
+fi
+
+for bin in emulator adb; do
+  if docker run --rm kandev-local:latest which "$bin" &>/dev/null; then
+    ok "$bin agent wrapper present in image"
+  else
+    fail "$bin agent wrapper missing from image"
+  fi
+done
+
+ANDROID_ENV_OK=$(docker exec -u kandev kandev sh -ceu '
+  test -n "${ANDROID_SDK_ROOT:-}"
+  test -n "${ANDROID_AVD_HOME:-}"
+  test "${ANDROID_USER_HOME:-}" = /data/home/.android
+  test "${ANDROID_EMULATOR_HOME:-}" = /data/home/.android
+  test "${ANDROID_ADB_SERVER_PORT:-}" = 5038
+  test "${ADB_VENDOR_KEYS:-}" = /data/home/.android
+  echo yes
+' 2>/dev/null || echo no)
+if [[ "$ANDROID_ENV_OK" == "yes" ]]; then
+  ok "Android SDK, AVD, and persistent user-state environment is configured"
+else
+  fail "Android environment is missing from the running container"
+fi
+
+if docker exec -u kandev kandev sh -ceu '
+  test -c /dev/kvm && test -r /dev/kvm && test -w /dev/kvm
+' >/dev/null 2>&1; then
+  ok "/dev/kvm is usable by the kandev user"
+else
+  fail "/dev/kvm is absent or unusable in the running container"
+fi
+
+AVD_LIST="$(docker exec -u kandev kandev emulator -list-avds 2>/dev/null || true)"
+if [[ -n "$AVD_LIST" ]]; then
+  ok "emulator lists the host AVD catalogue read-only"
+else
+  fail "emulator -list-avds returned no host AVDs"
+fi
+
+AVD_MOUNT_MODE="$(docker exec -u kandev kandev sh -c 'findmnt -T "$ANDROID_AVD_HOME" -n -o OPTIONS' 2>/dev/null || true)"
+if [[ ",$AVD_MOUNT_MODE," == *,ro,* ]]; then
+  ok "host Android AVD catalogue is mounted read-only"
+else
+  fail "host Android AVD catalogue is not read-only ($AVD_MOUNT_MODE)"
 fi
 
 # ── Summary ───────────────────────────────────────────────────────────────────

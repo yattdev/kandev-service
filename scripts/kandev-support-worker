@@ -1,0 +1,71 @@
+#!/usr/bin/env python3
+"""Narrow host worker for coordinator-to-Codex support requests."""
+
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+import subprocess
+import time
+
+
+QUEUE = Path(os.environ.get("KANDEV_SUPPORT_QUEUE", Path.home() / ".local/share/kandev/support-broker"))
+REPOSITORY = Path(os.environ.get("KANDEV_SUPPORT_REPOSITORY", Path.home() / "Code/kandev"))
+THREAD_ID = os.environ.get("KANDEV_SUPPORT_THREAD_ID", "01a043b4-fe52-7020-94bb-de94e72f8a07")
+CODEX = os.environ.get("KANDEV_SUPPORT_CODEX", "codex")
+
+
+def prompt(record: dict[str, str]) -> str:
+    return "\n".join((
+        "KANDEV SUPPORT REQUEST",
+        f"Coordinator task ID: {record['coordinator_task_id']}",
+        f"Workspace/worktree: {record['worktree']}",
+        f"Problem: {record['problem']}",
+        f"Evidence: {record['evidence']}",
+        f"Expected outcome: {record['expected_outcome']}",
+        f"Security constraints: {record['security_constraints']}",
+        f"Broker request ID: {record['id']}",
+        "Respond with an actionable result for the coordinator. This request arrived through the reviewed Kandev Support broker.",
+    ))
+
+
+def process(path: Path) -> None:
+    processing = QUEUE / "processing" / path.name
+    path.replace(processing)
+    record = json.loads(processing.read_text(encoding="utf-8"))
+    try:
+        completed = subprocess.run(
+            [CODEX, "exec", "resume", THREAD_ID, prompt(record)],
+            cwd=REPOSITORY,
+            text=True,
+            capture_output=True,
+            timeout=3600,
+            check=False,
+            env={**os.environ, "KANDEV_SUPPORT_BROKER_REQUEST_ID": record["id"]},
+        )
+        response = {"returncode": completed.returncode, "stdout": completed.stdout[-1024 * 1024:], "stderr": completed.stderr[-256 * 1024:]}
+    except Exception as exc:
+        response = {"returncode": 70, "stdout": "", "stderr": f"Kandev Support worker failed: {exc}\n"}
+    responses = QUEUE / "responses"
+    responses.mkdir(parents=True, mode=0o700, exist_ok=True)
+    temporary = responses / f".{record['id']}.tmp"
+    temporary.write_text(json.dumps(response), encoding="utf-8")
+    temporary.chmod(0o600)
+    temporary.replace(responses / f"{record['id']}.json")
+    processing.unlink(missing_ok=True)
+
+
+def main() -> int:
+    for directory in ("pending", "processing", "records", "responses"):
+        (QUEUE / directory).mkdir(parents=True, mode=0o700, exist_ok=True)
+    while True:
+        pending = sorted((QUEUE / "pending").glob("*.json"))
+        if pending:
+            process(pending[0])
+        else:
+            time.sleep(2)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

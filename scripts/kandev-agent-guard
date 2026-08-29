@@ -128,6 +128,13 @@ bwrap_args=(
 )
 bound["$writable_root"]=1
 
+# Android agents receive only the KVM virtualization device. The SDK and base
+# AVD catalogue are inherited from the outer root as read-only mounts; graphics
+# and desktop sockets are intentionally absent, so UI QA runs headlessly.
+if [[ -c /dev/kvm ]]; then
+    bwrap_args+=(--dev-bind /dev/kvm /dev/kvm)
+fi
+
 # Expose only the constrained broker socket, never /var/run/docker.sock or the
 # broker's HMAC key. /run is otherwise a fresh tmpfs inside the agent boundary.
 if [[ -n "$agent_docker_token" ]]; then
@@ -340,6 +347,7 @@ for support_path in \
     /data/home/.bundle \
     /data/home/.cache \
     /data/home/.cargo \
+    /data/home/.android \
     /data/home/.claude \
     /data/home/.claude.json \
     /data/home/.codex \
@@ -347,6 +355,7 @@ for support_path in \
     /data/home/.config \
     /data/home/.copilot \
     /data/home/.gem \
+    /data/home/go \
     /data/home/.local \
     /data/home/.npm \
     /data/home/.rustup

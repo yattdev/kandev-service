@@ -83,6 +83,8 @@ WHERE command_prefix != '/usr/local/bin/kandev-agent-guard --'
 
 DROP TRIGGER IF EXISTS agent_profiles_require_guard_insert;
 DROP TRIGGER IF EXISTS agent_profiles_require_guard_update;
+DROP TRIGGER IF EXISTS task_sessions_require_guard_insert;
+DROP TRIGGER IF EXISTS task_sessions_require_guard_update;
 
 CREATE TRIGGER agent_profiles_require_guard_insert
 AFTER INSERT ON agent_profiles
@@ -150,6 +152,117 @@ BEGIN
         END
     WHERE id = NEW.id;
 END;
+
+-- Existing long-lived sessions resume from this immutable launch snapshot,
+-- not from agent_profiles. Migrate those snapshots too, otherwise an old
+-- provider filesystem sandbox can be resurrected inside the outer guard.
+UPDATE task_sessions AS ts
+SET agent_profile_snapshot = json_set(
+        CASE
+            WHEN json_valid(ts.agent_profile_snapshot)
+             AND json_type(ts.agent_profile_snapshot) = 'object'
+            THEN ts.agent_profile_snapshot
+            ELSE '{}'
+        END,
+        '$.command_prefix', '/usr/local/bin/kandev-agent-guard --',
+        '$.auto_approve', json('true'),
+        '$.dangerously_skip_permissions', json('true'),
+        '$.mode', CASE
+            WHEN (SELECT a.name FROM agent_profiles ap JOIN agents a ON a.id = ap.agent_id
+                  WHERE ap.id = ts.agent_profile_id) = 'codex-acp'
+            THEN 'agent-full-access'
+            WHEN (SELECT a.name FROM agent_profiles ap JOIN agents a ON a.id = ap.agent_id
+                  WHERE ap.id = ts.agent_profile_id) = 'claude-acp'
+            THEN 'bypassPermissions'
+            ELSE COALESCE(json_extract(ts.agent_profile_snapshot, '$.mode'), '')
+        END
+    )
+WHERE EXISTS (SELECT 1 FROM agent_profiles ap WHERE ap.id = ts.agent_profile_id);
+
+UPDATE task_sessions AS ts
+SET agent_profile_snapshot = json_set(
+        ts.agent_profile_snapshot,
+        '$.cli_flags', json(COALESCE(
+            (SELECT ap.cli_flags FROM agent_profiles ap WHERE ap.id = ts.agent_profile_id),
+            '[]'
+        ))
+    )
+WHERE EXISTS (
+    SELECT 1 FROM agent_profiles ap JOIN agents a ON a.id = ap.agent_id
+    WHERE ap.id = ts.agent_profile_id AND a.name = 'copilot-acp'
+);
+
+CREATE TRIGGER task_sessions_require_guard_insert
+AFTER INSERT ON task_sessions
+WHEN EXISTS (SELECT 1 FROM agent_profiles ap WHERE ap.id = NEW.agent_profile_id)
+BEGIN
+    UPDATE task_sessions
+    SET agent_profile_snapshot = json_set(
+            CASE
+                WHEN json_valid(NEW.agent_profile_snapshot)
+                 AND json_type(NEW.agent_profile_snapshot) = 'object'
+                THEN NEW.agent_profile_snapshot ELSE '{}'
+            END,
+            '$.command_prefix', '/usr/local/bin/kandev-agent-guard --',
+            '$.auto_approve', json('true'),
+            '$.dangerously_skip_permissions', json('true'),
+            '$.mode', CASE
+                WHEN (SELECT a.name FROM agent_profiles ap JOIN agents a ON a.id = ap.agent_id
+                      WHERE ap.id = NEW.agent_profile_id) = 'codex-acp'
+                THEN 'agent-full-access'
+                WHEN (SELECT a.name FROM agent_profiles ap JOIN agents a ON a.id = ap.agent_id
+                      WHERE ap.id = NEW.agent_profile_id) = 'claude-acp'
+                THEN 'bypassPermissions'
+                ELSE COALESCE(json_extract(NEW.agent_profile_snapshot, '$.mode'), '')
+            END
+        )
+    WHERE id = NEW.id;
+    UPDATE task_sessions
+    SET agent_profile_snapshot = json_set(
+            agent_profile_snapshot, '$.cli_flags',
+            json(COALESCE((SELECT ap.cli_flags FROM agent_profiles ap
+                           WHERE ap.id = NEW.agent_profile_id), '[]'))
+        )
+    WHERE id = NEW.id
+      AND EXISTS (SELECT 1 FROM agent_profiles ap JOIN agents a ON a.id = ap.agent_id
+                  WHERE ap.id = NEW.agent_profile_id AND a.name = 'copilot-acp');
+END;
+
+CREATE TRIGGER task_sessions_require_guard_update
+AFTER UPDATE OF agent_profile_id, agent_profile_snapshot ON task_sessions
+WHEN EXISTS (SELECT 1 FROM agent_profiles ap WHERE ap.id = NEW.agent_profile_id)
+BEGIN
+    UPDATE task_sessions
+    SET agent_profile_snapshot = json_set(
+            CASE
+                WHEN json_valid(NEW.agent_profile_snapshot)
+                 AND json_type(NEW.agent_profile_snapshot) = 'object'
+                THEN NEW.agent_profile_snapshot ELSE '{}'
+            END,
+            '$.command_prefix', '/usr/local/bin/kandev-agent-guard --',
+            '$.auto_approve', json('true'),
+            '$.dangerously_skip_permissions', json('true'),
+            '$.mode', CASE
+                WHEN (SELECT a.name FROM agent_profiles ap JOIN agents a ON a.id = ap.agent_id
+                      WHERE ap.id = NEW.agent_profile_id) = 'codex-acp'
+                THEN 'agent-full-access'
+                WHEN (SELECT a.name FROM agent_profiles ap JOIN agents a ON a.id = ap.agent_id
+                      WHERE ap.id = NEW.agent_profile_id) = 'claude-acp'
+                THEN 'bypassPermissions'
+                ELSE COALESCE(json_extract(NEW.agent_profile_snapshot, '$.mode'), '')
+            END
+        )
+    WHERE id = NEW.id;
+    UPDATE task_sessions
+    SET agent_profile_snapshot = json_set(
+            agent_profile_snapshot, '$.cli_flags',
+            json(COALESCE((SELECT ap.cli_flags FROM agent_profiles ap
+                           WHERE ap.id = NEW.agent_profile_id), '[]'))
+        )
+    WHERE id = NEW.id
+      AND EXISTS (SELECT 1 FROM agent_profiles ap JOIN agents a ON a.id = ap.agent_id
+                  WHERE ap.id = NEW.agent_profile_id AND a.name = 'copilot-acp');
+END;
 COMMIT;
 """
     )
@@ -178,6 +291,24 @@ COMMIT;
         """
     ).fetchone()[0]
     total = connection.execute("SELECT COUNT(*) FROM agent_profiles").fetchone()[0]
+    restricted_sessions = connection.execute(
+        """
+        SELECT COUNT(*)
+        FROM task_sessions ts
+        JOIN agent_profiles ap ON ap.id = ts.agent_profile_id
+        JOIN agents a ON a.id = ap.agent_id
+        WHERE NOT json_valid(ts.agent_profile_snapshot)
+           OR COALESCE(json_extract(ts.agent_profile_snapshot, '$.command_prefix'), '') != ?
+           OR COALESCE(json_extract(ts.agent_profile_snapshot, '$.auto_approve'), 0) != 1
+           OR COALESCE(json_extract(ts.agent_profile_snapshot, '$.dangerously_skip_permissions'), 0) != 1
+           OR (a.name = 'codex-acp' AND json_extract(ts.agent_profile_snapshot, '$.mode') != 'agent-full-access')
+           OR (a.name = 'claude-acp' AND json_extract(ts.agent_profile_snapshot, '$.mode') != 'bypassPermissions')
+        """,
+        (prefix,),
+    ).fetchone()[0]
+    total_sessions = connection.execute(
+        "SELECT COUNT(*) FROM task_sessions WHERE agent_profile_id IN (SELECT id FROM agent_profiles)"
+    ).fetchone()[0]
 except sqlite3.Error as error:
     print(f"ERROR: unable to enforce the Kandev agent guard: {error}", file=sys.stderr)
     sys.exit(78)
@@ -194,5 +325,14 @@ if restricted_profiles:
         file=sys.stderr,
     )
     sys.exit(78)
-print(f"Agent guard enforced for {total} profiles; all providers run full-access inside the guard")
+if restricted_sessions:
+    print(
+        f"ERROR: {restricted_sessions} session snapshots retain inner permission restrictions",
+        file=sys.stderr,
+    )
+    sys.exit(78)
+print(
+    f"Agent guard enforced for {total} profiles and {total_sessions} session snapshots; "
+    "all providers run full-access inside the guard"
+)
 PY

@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import copy
+from contextlib import contextmanager
 from datetime import datetime, timezone
 import json
 import os
@@ -26,6 +27,9 @@ import tempfile
 import threading
 import time
 from typing import Any
+import urllib.error
+import urllib.request
+import uuid
 
 
 SOCKET_PATH = Path(os.environ.get("KANDEV_AGENT_DOCKER_BROKER_SOCKET", "/run/kandev-agent-docker/broker.sock"))
@@ -45,11 +49,13 @@ COORDINATOR_AUDIT_LOG = Path(
         "KANDEV_COORDINATOR_AUDIT_LOG", "/data/logs/coordinator-source-audit.jsonl"
     )
 )
+SUPPORT_QUEUE = Path(os.environ.get("KANDEV_SUPPORT_QUEUE", "/data/support-broker"))
 MAX_REQUEST = 1024 * 1024
 MAX_OUTPUT = 16 * 1024 * 1024
 COMMAND_TIMEOUT = 30 * 60
 MAX_EXPORT = int(os.environ.get("KANDEV_COORDINATOR_MAX_EXPORT_BYTES", str(4 * 1024**3)))
 MAX_LOG_LINES = 1000
+MAX_DESCRIPTION_BYTES = 1024 * 1024
 CONTAINER_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 SAFE_OUTPUT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 TASK_ID_RE = re.compile(
@@ -871,7 +877,190 @@ def workspace_help() -> str:
     return (
         "Coordinator workspace commands:\n"
         "  docker kandev workspace probe <task-uuid>\n"
+        "  docker kandev workspace description-update <file>\n"
     )
+
+
+def support_help() -> str:
+    return (
+        "Kandev Support commands (validated coordinators only):\n"
+        "  docker kandev support send <request.json>\n"
+        "  docker kandev support status <request-id>\n"
+        "  docker kandev support receive <request-id>\n"
+    )
+
+
+def support_request_file(context: dict[str, str], task_root: Path, file_name: str) -> dict[str, Any]:
+    source = resolve_inside(file_name, task_root, task_root)
+    if not source.is_file() or source.is_symlink() or source.stat().st_size > 128 * 1024:
+        raise BrokerError("support request must be a regular JSON file inside the coordinator task")
+    try:
+        supplied = json.loads(source.read_text(encoding="utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise BrokerError(f"support request is not valid UTF-8 JSON: {exc}") from exc
+    required = ("problem", "evidence", "expected_outcome", "security_constraints")
+    if not isinstance(supplied, dict) or any(
+        not isinstance(supplied.get(field), str) or not supplied[field].strip()
+        for field in required
+    ):
+        raise BrokerError("support request requires non-empty problem, evidence, expected_outcome, and security_constraints strings")
+    request_id = str(uuid.uuid4())
+    record = {
+        "id": request_id,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "coordinator_task_id": context["task_id"],
+        "workspace_id": context["workspace_id"],
+        "workspace_name": context["workspace_name"],
+        "worktree": str(task_root),
+        **{field: supplied[field].strip() for field in required},
+    }
+    records = SUPPORT_QUEUE / "records"
+    pending = SUPPORT_QUEUE / "pending"
+    records.mkdir(parents=True, mode=0o700, exist_ok=True)
+    pending.mkdir(parents=True, mode=0o700, exist_ok=True)
+    record_path = records / f"{request_id}.json"
+    temporary = records / f".{request_id}.tmp"
+    temporary.write_text(json.dumps(record, indent=2), encoding="utf-8")
+    temporary.chmod(0o600)
+    temporary.replace(record_path)
+    pending_path = pending / f"{request_id}.json"
+    pending_path.write_text(json.dumps(record), encoding="utf-8")
+    pending_path.chmod(0o600)
+    audit_source(context, "support-send", result="ok", request_id=request_id)
+    return {"returncode": 0, "stdout": json.dumps({"request_id": request_id, "status": "queued"}, indent=2) + "\n", "stderr": ""}
+
+
+def support_result(context: dict[str, str], request_id: str, receive: bool) -> dict[str, Any]:
+    if not TASK_ID_RE.fullmatch(request_id):
+        raise BrokerError("support request ID must be a full UUID")
+    record_path = SUPPORT_QUEUE / "records" / f"{request_id}.json"
+    if not record_path.is_file():
+        raise BrokerError("support request is unavailable")
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    if record.get("coordinator_task_id") != context["task_id"] or record.get("workspace_id") != context["workspace_id"]:
+        raise BrokerError("support request belongs to another coordinator/workspace")
+    response_path = SUPPORT_QUEUE / "responses" / f"{request_id}.json"
+    if not response_path.is_file():
+        status = "processing" if (SUPPORT_QUEUE / "processing" / f"{request_id}.json").exists() else "queued"
+        return {"returncode": 0, "stdout": json.dumps({"request_id": request_id, "status": status}, indent=2) + "\n", "stderr": ""}
+    response = json.loads(response_path.read_text(encoding="utf-8"))
+    audit_source(context, "support-receive" if receive else "support-status", result="ok", request_id=request_id)
+    if receive:
+        return {"returncode": int(response.get("returncode", 70)), "stdout": str(response.get("stdout", "")), "stderr": str(response.get("stderr", ""))}
+    return {"returncode": 0, "stdout": json.dumps({"request_id": request_id, "status": "complete", "returncode": response.get("returncode", 70)}, indent=2) + "\n", "stderr": ""}
+
+
+def handle_coordinator_support(task_root: Path, args: list[str]) -> dict[str, Any]:
+    context = coordinator_context(task_root)
+    operation_args = args[2:]
+    if not operation_args or operation_args == ["help"]:
+        return {"returncode": 0, "stdout": support_help(), "stderr": ""}
+    if operation_args[0] == "send" and len(operation_args) == 2:
+        return support_request_file(context, task_root, operation_args[1])
+    if operation_args[0] in {"status", "receive"} and len(operation_args) == 2:
+        return support_result(context, operation_args[1], operation_args[0] == "receive")
+    raise BrokerError(f"unsupported support operation\n{support_help()}")
+
+
+@contextmanager
+def temporary_operator_token():
+    """Mint a five-minute PAT inside the broker and revoke it after one request.
+
+    The credential never crosses the broker socket. Authorization remains
+    coordinator/task-scoped in this process; the backend API performs the task
+    mutation so normal events and UI refreshes are preserved.
+    """
+    if not KANDEV_DB.is_file():
+        raise BrokerError("Kandev task metadata is unavailable")
+    prefix = secrets.token_hex(4)
+    token = f"kandev_pat_{prefix}_{secrets.token_urlsafe(32)}"
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    token_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc)
+    expires = now.timestamp() + 300
+    database = sqlite3.connect(KANDEV_DB, timeout=30)
+    try:
+        database.execute("PRAGMA busy_timeout = 30000")
+        user = database.execute(
+            "SELECT id FROM users WHERE role='admin' AND status='active' "
+            "ORDER BY created_at, id LIMIT 1"
+        ).fetchone()
+        if user is None:
+            raise BrokerError("no active Kandev administrator is available for API mutation")
+        database.execute(
+            "INSERT INTO auth_api_tokens "
+            "(id,user_id,name,prefix,token_sha256,created_at,expires_at) "
+            "VALUES (?,?,?,?,?,?,datetime(?,'unixepoch'))",
+            (token_id, user[0], "coordinator-description-broker", prefix, token_hash,
+             now.isoformat(), expires),
+        )
+        database.commit()
+        yield token
+    finally:
+        try:
+            database.execute("DELETE FROM auth_api_tokens WHERE id=?", (token_id,))
+            database.commit()
+        finally:
+            database.close()
+
+
+def backend_json(method: str, path: str, token: str, payload: dict[str, Any] | None = None) -> Any:
+    data = None if payload is None else json.dumps(payload).encode()
+    request = urllib.request.Request(
+        f"http://127.0.0.1:38429{path}",
+        data=data,
+        method=method,
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return json.loads(response.read())
+    except (urllib.error.URLError, json.JSONDecodeError) as exc:
+        raise BrokerError(f"Kandev API request failed: {exc}") from exc
+
+
+def coordinator_description_update(
+    context: dict[str, str], task_root: Path, file_name: str
+) -> dict[str, Any]:
+    source = resolve_inside(file_name, task_root, task_root)
+    if not source.is_file() or source.is_symlink():
+        raise BrokerError("description source must be a regular non-symlink file")
+    size = source.stat().st_size
+    if size > MAX_DESCRIPTION_BYTES:
+        raise BrokerError(f"description source exceeds {MAX_DESCRIPTION_BYTES} bytes")
+    try:
+        description = source.read_text(encoding="utf-8").strip()
+    except UnicodeDecodeError as exc:
+        raise BrokerError("description source must be UTF-8 text") from exc
+    new_sha = hashlib.sha256(description.encode()).hexdigest()
+    audit_source(
+        context, "description-update", result="attempt", source=str(source),
+        bytes=len(description.encode()), sha256=new_sha,
+    )
+    with temporary_operator_token() as token:
+        current = backend_json("GET", f"/api/v1/tasks/{context['task_id']}", token)
+        old_description = str(current.get("description") or "")
+        old_sha = hashlib.sha256(old_description.encode()).hexdigest()
+        if old_description != description:
+            updated = backend_json(
+                "PATCH", f"/api/v1/tasks/{context['task_id']}", token,
+                {"description": description},
+            )
+            if str(updated.get("description") or "") != description:
+                raise BrokerError("Kandev API did not persist the exact description")
+    audit_source(
+        context, "description-update", result="ok", source=str(source),
+        bytes=len(description.encode()), old_sha256=old_sha, sha256=new_sha,
+    )
+    return {
+        "returncode": 0,
+        "stdout": json.dumps({
+            "task_id": context["task_id"], "source": str(source),
+            "bytes": len(description.encode()), "sha256": new_sha,
+            "changed": old_sha != new_sha,
+        }, indent=2) + "\n",
+        "stderr": "",
+    }
 
 
 def workspace_task_probe(context: dict[str, str], target_task_id: str) -> dict[str, Any]:
@@ -959,6 +1148,8 @@ def handle_coordinator_workspace(task_root: Path, args: list[str]) -> dict[str, 
         return {"returncode": 0, "stdout": workspace_help(), "stderr": ""}
     if operation_args[0] == "probe" and len(operation_args) == 2:
         return workspace_task_probe(context, operation_args[1])
+    if operation_args[0] == "description-update" and len(operation_args) == 2:
+        return coordinator_description_update(context, task_root, operation_args[1])
     raise BrokerError(f"unsupported coordinator workspace operation\n{workspace_help()}")
 
 
@@ -1145,6 +1336,8 @@ def handle_request(request: dict[str, Any], key: bytes) -> dict[str, Any]:
         return handle_coordinator_source(task_root, args)
     if args[:2] == ["kandev", "workspace"]:
         return handle_coordinator_workspace(task_root, args)
+    if args[:2] == ["kandev", "support"]:
+        return handle_coordinator_support(task_root, args)
 
     host_root = translate_to_host(task_root)
     project = project_name(task_root)

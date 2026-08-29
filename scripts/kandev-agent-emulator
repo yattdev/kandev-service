@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# Safe default launcher for the host Android emulator exposed to Kandev agents.
+set -euo pipefail
+
+sdk_root="${ANDROID_SDK_ROOT:-}"
+[[ -n "$sdk_root" ]] || {
+    echo "ERROR: ANDROID_SDK_ROOT is not configured" >&2
+    exit 78
+}
+real_emulator="$sdk_root/emulator/emulator"
+[[ -x "$real_emulator" ]] || {
+    echo "ERROR: Android emulator is unavailable at $real_emulator" >&2
+    exit 78
+}
+
+# Informational operations do not open an AVD and need no launch policy.
+has_avd=0
+has_gpu=0
+avd_name=""
+expect_avd_name=0
+for arg in "$@"; do
+    if [[ "$expect_avd_name" == "1" ]]; then
+        avd_name="$arg"
+        expect_avd_name=0
+    elif [[ "$arg" == "-avd" ]]; then
+        has_avd=1
+        expect_avd_name=1
+    elif [[ "$arg" == @* ]]; then
+        has_avd=1
+        avd_name="${arg#@}"
+    fi
+    [[ "$arg" == "-gpu" ]] && has_gpu=1
+done
+if [[ "$has_avd" == "0" ]]; then
+    exec "$real_emulator" "$@"
+fi
+
+[[ "$expect_avd_name" == "0" && "$avd_name" =~ ^[A-Za-z0-9._-]+$ ]] || {
+    echo "ERROR: emulator requires a valid AVD name" >&2
+    exit 64
+}
+
+# Even `-read-only` needs to create lock/boot marker files beside config.ini.
+# Stage only that small metadata in a disposable writable directory while the
+# large host catalogue and system images remain kernel-enforced read-only.
+source_avd_home="${ANDROID_AVD_HOME:?ANDROID_AVD_HOME is not configured}"
+source_ini="$source_avd_home/$avd_name.ini"
+[[ -f "$source_ini" ]] || {
+    echo "ERROR: unknown Android AVD: $avd_name" >&2
+    exit 66
+}
+source_dir="$(sed -n 's/^path=//p' "$source_ini" | head -n 1)"
+[[ -n "$source_dir" && -f "$source_dir/config.ini" ]] || {
+    echo "ERROR: AVD metadata is incomplete for $avd_name" >&2
+    exit 66
+}
+
+runtime_parent="${ANDROID_USER_HOME:-/data/home/.android}/kandev-avd-runs"
+install -d -m 0700 "$runtime_parent"
+runtime_root="$(mktemp -d "$runtime_parent/run.XXXXXXXX")"
+runtime_home="$runtime_root/avd"
+runtime_avd="$runtime_home/$avd_name.avd"
+install -d -m 0700 "$runtime_avd"
+cp -- "$source_dir/config.ini" "$runtime_avd/config.ini"
+# Do not copy or attach a host sdcard image to the disposable runtime view.
+printf '\nhw.sdCard=no\n' >> "$runtime_avd/config.ini"
+if [[ -f "$source_dir/user-settings.ini" ]]; then
+    cp -- "$source_dir/user-settings.ini" "$runtime_avd/user-settings.ini"
+fi
+target="$(sed -n 's/^target=//p' "$source_ini" | head -n 1)"
+printf '%s\n' \
+    'avd.ini.encoding=UTF-8' \
+    "path=$runtime_avd" \
+    "path.rel=avd/$avd_name.avd" \
+    "target=$target" > "$runtime_home/$avd_name.ini"
+
+cleanup() {
+    case "$runtime_root" in
+        "$runtime_parent"/run.*) rm -rf -- "$runtime_root" ;;
+    esac
+}
+emulator_pid=""
+forward_signal() {
+    [[ -z "$emulator_pid" ]] || kill -TERM "$emulator_pid" 2>/dev/null || true
+}
+trap forward_signal HUP INT TERM
+trap cleanup EXIT
+
+export ANDROID_AVD_HOME="$runtime_home"
+# Keep every run ephemeral and headless: no snapshot/userdata changes reach the
+# host, and agents receive no X11/Wayland socket. The staged config disables
+# the SD card so a large host sdcard image is never copied or attached.
+safe_args=(-read-only -no-snapshot -no-snapstorage -no-window -no-audio -no-boot-anim -no-metrics)
+[[ "$has_gpu" == "1" ]] || safe_args+=(-gpu swiftshader_indirect)
+"$real_emulator" "$@" "${safe_args[@]}" &
+emulator_pid=$!
+wait "$emulator_pid"

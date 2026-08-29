@@ -25,6 +25,11 @@ connection.executescript(
         command_prefix TEXT NOT NULL DEFAULT '',
         updated_at TIMESTAMP
     );
+    CREATE TABLE task_sessions (
+        id TEXT PRIMARY KEY,
+        agent_profile_id TEXT,
+        agent_profile_snapshot TEXT DEFAULT '{}'
+    );
     INSERT INTO agents(id, name) VALUES
         ('codex', 'codex-acp'),
         ('claude', 'claude-acp'),
@@ -38,6 +43,10 @@ connection.executescript(
             {"flag":"--allow-all-urls","enabled":false},
             {"flag":"--no-ask-user","enabled":false}
         ]', '');
+    INSERT INTO task_sessions(id, agent_profile_id, agent_profile_snapshot) VALUES
+        ('codex-session', 'codex-existing', '{"mode":"agent","auto_approve":false,"dangerously_skip_permissions":false,"command_prefix":null}'),
+        ('claude-session', 'claude-existing', '{"mode":"plan","auto_approve":false,"dangerously_skip_permissions":false}'),
+        ('copilot-session', 'copilot-existing', '{"mode":"agent","cli_flags":[]}');
     """
 )
 connection.commit()
@@ -73,6 +82,26 @@ assert flags["--allow-all-tools"] is True
 assert flags["--allow-all-urls"] is True
 assert flags["--no-ask-user"] is False
 
+for session_id, expected_mode in (
+    ("codex-session", "agent-full-access"),
+    ("claude-session", "bypassPermissions"),
+):
+    snapshot = __import__("json").loads(connection.execute(
+        "SELECT agent_profile_snapshot FROM task_sessions WHERE id=?", (session_id,)
+    ).fetchone()[0])
+    assert snapshot["mode"] == expected_mode
+    assert snapshot["auto_approve"] is True
+    assert snapshot["dangerously_skip_permissions"] is True
+    assert snapshot["command_prefix"] == guard
+
+snapshot = __import__("json").loads(connection.execute(
+    "SELECT agent_profile_snapshot FROM task_sessions WHERE id='copilot-session'"
+).fetchone()[0])
+snapshot_flags = {item["flag"]: item["enabled"] for item in snapshot["cli_flags"]}
+assert snapshot_flags["--allow-all-paths"] is True
+assert snapshot_flags["--allow-all-tools"] is True
+assert snapshot_flags["--allow-all-urls"] is True
+
 # Inserts and later UI edits cannot silently restore Codex's incompatible
 # nested workspace-write sandbox or remove the outer guard.
 connection.execute(
@@ -88,6 +117,25 @@ connection.execute(
 assert connection.execute(
     "SELECT mode, command_prefix FROM agent_profiles WHERE id='codex-new'"
 ).fetchone() == ("agent-full-access", guard)
+
+# New sessions and later snapshot edits cannot resurrect a provider's nested
+# permission sandbox when a long-lived session is resumed.
+connection.execute(
+    "INSERT INTO task_sessions(id, agent_profile_id, agent_profile_snapshot) VALUES (?, ?, ?)",
+    ("codex-new-session", "codex-new", '{"mode":"agent"}'),
+)
+snapshot = __import__("json").loads(connection.execute(
+    "SELECT agent_profile_snapshot FROM task_sessions WHERE id='codex-new-session'"
+).fetchone()[0])
+assert snapshot["mode"] == "agent-full-access" and snapshot["command_prefix"] == guard
+connection.execute(
+    "UPDATE task_sessions SET agent_profile_snapshot=? WHERE id='codex-new-session'",
+    ('{"mode":"agent","command_prefix":""}',),
+)
+snapshot = __import__("json").loads(connection.execute(
+    "SELECT agent_profile_snapshot FROM task_sessions WHERE id='codex-new-session'"
+).fetchone()[0])
+assert snapshot["mode"] == "agent-full-access" and snapshot["command_prefix"] == guard
 connection.close()
 PY
 

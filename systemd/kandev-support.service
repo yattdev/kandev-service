@@ -1,0 +1,13 @@
+[Unit]
+Description=Kandev coordinator-to-Codex support broker
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=%h/Code/kandev/scripts/kandev-support-worker
+Restart=always
+RestartSec=3
+Environment=KANDEV_SUPPORT_THREAD_ID=01a043b4-fe52-7020-94bb-de94e72f8a07
+
+[Install]
+WantedBy=default.target

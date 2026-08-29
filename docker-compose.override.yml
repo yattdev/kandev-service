@@ -66,6 +66,19 @@ services:
       - KANDEV_HOST_DATA_DIR=${HOME}/.local/share/kandev
       - KANDEV_HOST_CODE_DIR=${HOME}/Code
 
+      # Android UI QA uses the host SDK and AVD catalogue read-only. The
+      # writable Android user state lives on Kandev's persistent data volume.
+      - ANDROID_SDK_ROOT=${HOME}/Android/Sdk
+      - ANDROID_HOME=${HOME}/Android/Sdk
+      - ANDROID_AVD_HOME=${HOME}/.android/avd
+      - ANDROID_USER_HOME=/data/home/.android
+      - ANDROID_EMULATOR_HOME=/data/home/.android
+      # Do not reuse the host adb server on 5037: it has a different key and
+      # makes headless emulators appear unauthorized. Agents share this
+      # Kandev-only server and must select their own emulator serial.
+      - ANDROID_ADB_SERVER_PORT=5038
+      - ADB_VENDOR_KEYS=/data/home/.android
+
     volumes:
       # ── SSH ──────────────────────────────────────────────────────────────────
       # Full ~/.ssh directory: keys, config, known_hosts.
@@ -98,6 +111,12 @@ services:
       #   DOCKER_GID=<gid> docker compose up -d
       - /var/run/docker.sock:/var/run/docker.sock
 
+      # ── Android UI QA ───────────────────────────────────────────────────────
+      # Keep the large SDK and the host AVD catalogue outside the image and
+      # immutable to agents. AVD launches use read-only ephemeral overlays.
+      - ${HOME}/Android/Sdk:${HOME}/Android/Sdk:ro
+      - ${HOME}/.android/avd:${HOME}/.android/avd:ro
+
       # ── Identity mounts (host path == container path) ─────────────────────────
       # The same two directories as above, mounted a second time at the exact
       # path the HOST knows them by. Nothing in kandev reads them here — they
@@ -111,5 +130,12 @@ services:
       - ${HOME}/.local/share/kandev:${HOME}/.local/share/kandev
       - ${HOME}/Code:${HOME}/Code
 
+    # Hardware acceleration only. Deliberately do not expose /dev/dri, X11, or
+    # Wayland: emulator QA is headless through adb and cannot control/observe
+    # the host desktop session.
+    devices:
+      - /dev/kvm:/dev/kvm
+
     group_add:
       - "${DOCKER_GID:-984}"
+      - "${KVM_GID:-993}"

@@ -7,6 +7,7 @@ import importlib.machinery
 import importlib.util
 import json
 import os
+from contextlib import contextmanager
 from pathlib import Path
 import sqlite3
 import tempfile
@@ -231,6 +232,40 @@ def main() -> None:
                 coordinator, "44444444-4444-4444-4444-444444444444"
             ),
             "unknown/cross-workspace task received coordinator probe",
+        )
+
+        # A coordinator can synchronize only its own description from a file
+        # inside its task root; the broad temporary PAT never reaches the
+        # agent-facing response or socket request.
+        charter = task_root / "PROMPT.md"
+        charter.write_text("# Coordinator charter\n\nExact content.\n", encoding="utf-8")
+        calls: list[tuple[str, str, dict[str, object] | None]] = []
+
+        @contextmanager
+        def fake_token():
+            yield "broker-only-token"
+
+        def fake_backend(method: str, path: str, token: str, payload=None):
+            assert token == "broker-only-token"
+            calls.append((method, path, payload))
+            if method == "GET":
+                return {"description": "old"}
+            return {"description": payload["description"]}
+
+        broker.temporary_operator_token = fake_token
+        broker.backend_json = fake_backend
+        broker.COORDINATOR_AUDIT_LOG = base / "description-audit.jsonl"
+        result = broker.coordinator_description_update(coordinator, task_root, "PROMPT.md")
+        response = json.loads(result["stdout"])
+        assert response["changed"] is True
+        assert calls[-1][0] == "PATCH"
+        assert calls[-1][2] == {"description": "# Coordinator charter\n\nExact content."}
+        assert "broker-only-token" not in result["stdout"]
+        expect_denied(
+            lambda: broker.coordinator_description_update(
+                coordinator, task_root, str(outside / "description.md")
+            ),
+            "outside description source was accepted",
         )
 
         same_workspace_info = {

@@ -36,6 +36,8 @@ if [ "$(id -u)" = '0' ]; then
     # (gh, claude, codex, auggie, copilot, amp, ...) survives pod restarts
     # and image upgrades. Make sure it exists before dropping privileges.
     mkdir -p /data/home
+    install -d -m 0700 /data/home/.android
+    [ ! -f /data/home/.android/adbkey ] || chmod 0600 /data/home/.android/adbkey
     # Patched: || true so that chown failures on read-only bind mounts
     # (e.g. ~/.ssh:ro, ~/.gitconfig:ro in docker-compose.override.yml) do not
     # abort startup under `set -e`. All writable paths under /data are still

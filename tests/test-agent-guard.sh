@@ -54,6 +54,39 @@ fi
     fi
 ')
 
+# Mobile tasks inherit the read-only SDK/AVD catalogue and only the KVM device.
+(cd "$task_root" && "$GUARD" -- sh -ceu '
+    test -c /dev/kvm
+    test -r /dev/kvm && test -w /dev/kvm
+    test -x "${ANDROID_SDK_ROOT:?}/emulator/emulator"
+    test -x "${ANDROID_SDK_ROOT:?}/platform-tools/adb"
+    test -n "$(emulator -list-avds)"
+    case ",$(findmnt -T "${ANDROID_AVD_HOME:?}" -n -o OPTIONS)," in
+        *,ro,*) ;;
+        *) echo "ERROR: shared Android AVD catalogue is not read-only" >&2; exit 1;;
+    esac
+    probe="$ANDROID_AVD_HOME/.kandev-avd-write-probe-$$"
+    if touch "$probe" 2>/dev/null; then
+        rm -f "$probe"
+        echo "ERROR: guarded agent modified the host AVD catalogue" >&2
+        exit 1
+    fi
+    test ! -e /tmp/.X11-unix
+    test ! -e /run/user/1000/wayland-0
+    mkdir -p "${ANDROID_USER_HOME:?}"
+    state_probe="$ANDROID_USER_HOME/.kandev-state-probe-$$"
+    printf state > "$state_probe"
+    rm -f "$state_probe"
+')
+
+# Persistent language caches outside Code are writable without widening the
+# guard to all of /data/home. Go's default GOMODCACHE lives below ~/go.
+(cd "$task_root" && "$GUARD" -- sh -ceu '
+    test -d /data/home/go
+    probe=$(mktemp /data/home/go/.kandev-go-cache-probe.XXXXXX)
+    rm -f "$probe"
+')
+
 # A linked task worktree may point to a repository nested at any depth below
 # Code. Verify that Git works, while the source repository's working tree stays
 # read-only. This is the layout used by inno-prod/projects/co-up.
@@ -389,4 +422,4 @@ if (cd / && "$GUARD" -- true) 2>/dev/null; then
     exit 1
 fi
 
-echo "PASS: linked-task Git isolation, writable task Compose, attested coordinator workspace/source/probe scope, and cross-workspace/Code-root/raw-socket/sudo boundaries work"
+echo "PASS: linked-task Git isolation, writable task Compose/Android QA, attested coordinator workspace/source/probe scope, and cross-workspace/Code-root/raw-socket/sudo boundaries work"
