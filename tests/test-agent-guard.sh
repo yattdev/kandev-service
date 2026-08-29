@@ -71,16 +71,15 @@ if (cd "$linked_root" && "$GUARD" -- sh -c 'touch "$1"' sh "$source_probe") 2>/d
 fi
 [[ ! -e "$source_probe" ]]
 
-# The agent can start an isolated Compose project through the broker. The
-# broker forces task bind mounts read-only and keeps mutable state in a
-# task-prefixed named volume. It must reject any source outside this task.
+# The agent can start an isolated Compose project through the broker. Task-local
+# bind mounts may be read-write, while any source outside this task is rejected.
 (cd "$linked_root" && "$GUARD" -- sh -ceu '
     runtime_dir="$PWD/.kandev-docker-guard-test-$$"
     mkdir "$runtime_dir"
     cleanup() {
         (cd "$runtime_dir" && docker compose down -v --remove-orphans >/dev/null 2>&1) || true
         rm -f "$runtime_dir/Containerfile.test" "$runtime_dir/docker-compose.yml" \
-            "$runtime_dir/outside.yml" "$runtime_dir/should-not-write"
+            "$runtime_dir/outside.yml" "$runtime_dir/container-write"
         rmdir "$runtime_dir" 2>/dev/null || true
     }
     trap cleanup EXIT HUP INT TERM
@@ -104,11 +103,8 @@ fi
     cd "$runtime_dir"
     docker compose up -d --build >/dev/null
     docker compose exec -T probe test -f /state/ready
-    if docker compose exec -T probe touch /workspace/should-not-write >/dev/null 2>&1; then
-        echo "ERROR: broker allowed a container to write through a task bind" >&2
-        exit 1
-    fi
-    test ! -e should-not-write
+    docker compose exec -T probe sh -c "echo container-write >/workspace/container-write"
+    test "$(cat container-write)" = container-write
     printf "%s\n" \
         "services:" \
         "  escape:" \
@@ -154,9 +150,18 @@ coordinator_sources="$(cd "$coordinator_root" && "$GUARD" -- docker kandev sourc
 grep -q '"workspace"' <<<"$coordinator_sources"
 grep -q '"containers"' <<<"$coordinator_sources"
 
+# A coordinator worktree can fast-forward/publish the shared knowledge checkout.
+coordinator_probe="/data/home/Code/coordinator/.kandev-shared-write-probe-$$"
+(cd "$coordinator_root" && "$GUARD" -- sh -ceu '
+    printf coordinator > "$1"
+    test "$(cat "$1")" = coordinator
+    rm -f "$1"
+' sh "$coordinator_probe")
+[[ ! -e "$coordinator_probe" ]]
+
 if (cd / && "$GUARD" -- true) 2>/dev/null; then
     echo "ERROR: guard accepted an unscoped root workspace" >&2
     exit 1
 fi
 
-echo "PASS: linked tasks, isolated Compose, and coordinator source scope work; task writes allowed; source/Code-root writes, raw Docker socket, sudo, and / workspace blocked"
+echo "PASS: linked tasks, writable isolated Compose, and coordinator shared/source scope work; task writes allowed; unrelated source/Code-root writes, raw Docker socket, sudo, and / workspace blocked"

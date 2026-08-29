@@ -347,8 +347,11 @@ def validate_model(
             if mount.get("type") == "bind":
                 if not source:
                     raise BrokerError(f"Compose service {service_name} has a bind without a source")
+                # A bind that resolves inside this task retains its declared
+                # mode (Compose defaults to read-write). Test containers may
+                # therefore modify the same worktree the agent can already
+                # modify, while paths outside the task remain rejected.
                 mount["source"] = str(scoped_path_to_host(str(source), cwd, task_root, host_root))
-                mount["read_only"] = True
 
     for section in ("configs", "secrets"):
         for logical_name, config in (sanitized.get(section) or {}).items():

@@ -62,8 +62,15 @@ def main() -> None:
             json.loads(json.dumps(model)), repository, task_root, task_root, project
         )
         bind = sanitized["services"]["app"]["volumes"][0]
-        assert bind["read_only"] is True
+        assert bind["read_only"] is False
         assert bind["source"] == str(repository)
+
+        read_only_model = json.loads(json.dumps(model))
+        read_only_model["services"]["app"]["volumes"][0]["read_only"] = True
+        sanitized_read_only = broker.validate_model(
+            read_only_model, repository, task_root, task_root, project
+        )
+        assert sanitized_read_only["services"]["app"]["volumes"][0]["read_only"] is True
 
         build_model = json.loads(json.dumps(model))
         dockerfile = repository / "Containerfile"

@@ -179,6 +179,8 @@ path_is_code_repo_gitdir() {
 
 # Linked task worktrees store objects/refs in the source repository's .git
 # directory. Bind only that one Git common-dir; sibling working trees remain RO.
+coordinator_source="/data/home/Code/coordinator"
+coordinator_host_source="${host_code:+$host_code/coordinator}"
 declare -a git_markers
 git_markers=("$writable_root/.git")
 while IFS= read -r -d '' marker; do
@@ -218,6 +220,19 @@ for marker in "${git_markers[@]}"; do
     if [[ -z "${bound[$common]:-}" ]]; then
         bwrap_args+=(--bind "$common" "$common")
         bound["$common"]=1
+    fi
+
+    # Coordinator worktrees maintain a shared versioned knowledge base in the
+    # canonical coordinator checkout. The verified worktree backlink above is
+    # the authority: only worktrees belonging to that repository receive its
+    # shared working tree as an additional writable bind.
+    source_root="${common%/.git}"
+    if [[ "$source_root" == "$coordinator_source" \
+          || ( -n "$coordinator_host_source" && "$source_root" == "$coordinator_host_source" ) ]]; then
+        if [[ -z "${bound[$source_root]:-}" ]]; then
+            bwrap_args+=(--bind "$source_root" "$source_root")
+            bound["$source_root"]=1
+        fi
     fi
 done
 

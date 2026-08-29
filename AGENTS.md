@@ -138,6 +138,9 @@ document/list tools is not a prerequisite blocker.
 
 This authority belongs only to a validated Coordinator worktree and does not
 extend to ordinary tasks, raw Docker/socket access, arbitrary `exec`, secrets,
-source mutation, destructive actions, cross-workspace data, unsupported
-operations, or bypassing a broker denial. Those boundaries still require the
-normal escalation path.
+destructive actions, cross-workspace data, unsupported operations, or bypassing
+a broker denial. A validated coordinator worktree may update the canonical
+`~/Code/coordinator` checkout solely to fast-forward/publish its shared
+versioned knowledge base; this exception does not authorize mutation of any
+other source repository. Those boundaries still require the normal escalation
+path.

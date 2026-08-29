@@ -56,7 +56,7 @@ In the **Add Local Repository** dialog enter:
 ├── kandev-start.sh                # Start helper: freshest-wins litestream restore → compose up
 ├── kandev-start-hub.sh           # Hub start helper: restore from freshest satellite replica
 ├── kandev-pull.sh                 # Manual/cron: check for newer data → pull if behind → start
-├── kandev-restic-backup.sh        # Daily restic snapshot → home-server repo
+├── kandev-restic-backup.sh        # Daily restic snapshot → remote or local fallback
 ├── install-hub.sh                # Setup for home-server (hub: replica dir, restic repo, crons)
 ├── install-office.sh                 # Setup for office-desktop (systemd, UFW, NAT, Litestream, crons)
 ├── install-laptop.sh             # Setup for laptop (systemd, iptables, board.local, Litestream)
@@ -693,7 +693,8 @@ bash ~/Code/kandev/install-laptop.sh
 
 ```
 kandev.db  ──Litestream──► ~/litestream-replicas/kandev/  on home-server  (live WAL, seconds lag)
-kandev/    ────Restic────► ~/restic-repos/kandev-backup   on home-server  (daily snapshots)
+kandev/    ────Restic────► ~/restic-repos/kandev-backup   on home-server
+                    └────► ~/Backups/restic/kandev-backup local fallback when offline
 ```
 
 **home-server is the hub.** It stores the Litestream SFTP replica and the restic repo. It does NOT run Litestream itself.
@@ -772,7 +773,10 @@ Daily at 03:00 on each satellite host, `kandev-restic-backup.sh` (runs with
 2. Runs `restic backup` → new named snapshot in home's repo, **excluding** the
    live `kandev.db`/`-wal`/`-shm` (which would be torn if copied mid-write) and
    including the consistent snapshot in their place
-3. Removes the local snapshot file and prunes old repo snapshots (keeps 7 daily,
+   If the hub/VPN/SFTP path is unavailable, the same snapshot is written to the
+   local fallback repo at `~/Backups/restic/kandev-backup` instead. This path is
+   deliberately outside both `~/Code` and the Kandev data tree.
+3. Removes the temporary database snapshot and prunes the selected repo (keeps 7 daily,
    4 weekly, 3 monthly)
 
 > Because kandev is an AI-agent orchestrator, stopping it would kill every

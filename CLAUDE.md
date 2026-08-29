@@ -318,9 +318,14 @@ agents do **not** inherit the socket: their `/run` is a fresh tmpfs and
 `kandev-agent-docker-broker`. The broker resolves Compose input inside the
 agent's Bubblewrap scope, forces a task-derived project name, rejects privileged
 or external resources, rewrites built image tags into the task project, and
-forces host bind mounts read-only before invoking the host daemon. Agents use
-named volumes for mutable database/runtime state. Raw `docker run`, raw API
+allows read-write bind mounts only when their source resolves inside that
+task's own root. Raw `docker run`, raw API
 access, and the host socket remain unavailable.
+
+Coordinator worktrees linked to `/data/home/Code/coordinator` additionally
+receive that one canonical checkout read-write so they can fast-forward and
+publish the shared `PROMPT.md` knowledge base. Other source repositories and
+the `Code` root remain read-only.
 
 Coordinator worktrees receive a separate, narrower `docker kandev source`
 capability. The broker resolves the coordinator task and `workspace_id` from

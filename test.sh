@@ -832,10 +832,20 @@ fi
 # alternate Git worktree that is not one of the container's identity mounts.
 GUARD_TEST_OUT="$(docker exec -i -u kandev -w /data/tasks kandev bash -s \
   < "$COMPOSE_DIR/tests/test-agent-guard.sh" 2>&1 || true)"
-if grep -q '^PASS: linked tasks, isolated Compose, and coordinator source scope work;' <<<"$GUARD_TEST_OUT"; then
-  ok "linked tasks, isolated Compose, and coordinator source scope work while source repos, Code root, sudo, and the raw Docker socket stay blocked"
+if grep -q '^PASS: linked tasks, writable isolated Compose, and coordinator shared/source scope work;' <<<"$GUARD_TEST_OUT"; then
+  ok "linked tasks, writable isolated Compose, and coordinator shared/source scope work while unrelated repos, Code root, sudo, and the raw Docker socket stay blocked"
 else
   fail "tests/test-agent-guard.sh failed: $(tail -3 <<<"$GUARD_TEST_OUT" | tr '\n' ';')"
+fi
+
+# ── 16. Restic local fallback ─────────────────────────────────────────────────
+section "16. Restic local fallback"
+
+RESTIC_TEST_OUT="$(bash "$COMPOSE_DIR/tests/test-restic-backup.sh" 2>&1 || true)"
+if grep -q '^PASS: restic uses a non-recursive local fallback' <<<"$RESTIC_TEST_OUT"; then
+  ok "backup falls back locally when the VPN/remote repo is unavailable"
+else
+  fail "tests/test-restic-backup.sh failed: $(tail -3 <<<"$RESTIC_TEST_OUT" | tr '\n' ';')"
 fi
 
 # ── Summary ───────────────────────────────────────────────────────────────────
