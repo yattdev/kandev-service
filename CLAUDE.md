@@ -328,8 +328,11 @@ workspace, and Git backlink all agree. A validated Coordinator receives exact
 active task roots, registered repository checkouts, and registered folder
 sources in that `workspace_id` read-write, including the canonical coordinator
 checkout. The Code/task parents and every other workspace remain read-only.
-Eligibility is rechecked every 15 seconds; losing it terminates the guarded
-process. Grants/revocations are recorded in
+Explicit launch IDs are verified when the backend exports them. On Kandev v0.92,
+the guard instead requires exactly one `STARTING`/`RUNNING` session matching the
+exact materialized task root; any partial or mismatched exported IDs fail closed.
+The selected session is rechecked every 15 seconds; losing eligibility terminates
+the guarded process. Grants/revocations include the selected session ID and are recorded in
 `/data/logs/coordinator-workspace-audit.jsonl` (scope audit, not per-file audit).
 
 Coordinator worktrees receive a separate, narrower `docker kandev source`

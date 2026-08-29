@@ -145,6 +145,12 @@ touching another workspace, or using unregistered host paths. Use
 `docker kandev workspace probe <task-uuid>` to verify another task; never infer
 its permissions from your private mount table.
 
+Coordinator identity comes from Kandev's live database and the verified Git
+backlink. Explicit task/session/workspace launch IDs are checked when present;
+on Kandev v0.92 the guard requires the sole `STARTING`/`RUNNING` session whose
+workspace path matches the exact materialized task root. Partial or mismatched
+IDs fail closed, and the selected session is rechecked every 15 seconds.
+
 This authority belongs only to a metadata- and backlink-validated Coordinator
 worktree and does not extend to ordinary tasks, raw Docker/socket access,
 arbitrary container `exec`, credential disclosure, cross-workspace data,

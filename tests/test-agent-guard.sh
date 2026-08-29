@@ -184,12 +184,18 @@ done < <(sqlite3 /data/data/kandev.db "
     echo "ERROR: no registered coordinator task worktree available for source policy test" >&2
     exit 1
 }
-# A coordinator-looking Git backlink without Kandev's injected task/session/
-# workspace attestations must remain ordinary-task scoped.
+# An explicit but mismatched/partial launch attestation must fail closed even
+# when the Git backlink looks like a coordinator worktree.
 unauthenticated_coordinator_probe="/data/home/Code/coordinator/.kandev-unattested-probe-$$"
-if (cd "$coordinator_root" && "$GUARD" -- touch "$unauthenticated_coordinator_probe") 2>/dev/null; then
+if (
+    export KANDEV_TASK_ID=00000000-0000-0000-0000-000000000000
+    export KANDEV_SESSION_ID=00000000-0000-0000-0000-000000000000
+    export KANDEV_WORKSPACE_ID=00000000-0000-0000-0000-000000000000
+    cd "$coordinator_root"
+    "$GUARD" -- touch "$unauthenticated_coordinator_probe"
+) 2>/dev/null; then
     rm -f "$unauthenticated_coordinator_probe"
-    echo "ERROR: unattested coordinator worktree received workspace elevation" >&2
+    echo "ERROR: mismatched coordinator attestation received workspace elevation" >&2
     exit 1
 fi
 [[ ! -e "$unauthenticated_coordinator_probe" ]]
@@ -218,6 +224,38 @@ coordinator_session_id="$(sqlite3 /data/data/kandev.db "
     echo "ERROR: no live coordinator session available for attestation test" >&2
     exit 1
 }
+
+# Kandev v0.92 does not export launch IDs. Verify the authoritative fallback:
+# the exact task root plus one RUNNING session in a read-only DB grants scope.
+fallback_db="${coordinator_root%/coordinator}/.kandev-guard-fallback-$$.db"
+fallback_audit="${coordinator_root%/coordinator}/.kandev-guard-fallback-audit-$$.jsonl"
+fallback_session_id=11111111-1111-1111-1111-111111111111
+sqlite3 "$fallback_db" <<SQL
+CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT);
+CREATE TABLE tasks (id TEXT PRIMARY KEY, workspace_id TEXT, archived_at TEXT);
+CREATE TABLE task_environments (task_id TEXT, task_dir_name TEXT);
+CREATE TABLE task_sessions (id TEXT PRIMARY KEY, task_id TEXT, state TEXT, workspace_path TEXT);
+CREATE TABLE task_repositories (task_id TEXT, repository_id TEXT);
+CREATE TABLE repositories (id TEXT PRIMARY KEY, workspace_id TEXT, local_path TEXT, deleted_at TEXT);
+CREATE TABLE task_workspace_folders (task_id TEXT, local_path TEXT);
+INSERT INTO workspaces VALUES ('$coordinator_workspace_id', 'fallback-test');
+INSERT INTO tasks VALUES ('$coordinator_task_id', '$coordinator_workspace_id', NULL);
+INSERT INTO task_environments VALUES ('$coordinator_task_id', '$coordinator_task_dir');
+INSERT INTO task_sessions VALUES ('$fallback_session_id', '$coordinator_task_id', 'RUNNING', '$coordinator_root');
+INSERT INTO repositories VALUES ('22222222-2222-2222-2222-222222222222', '$coordinator_workspace_id', '/data/home/Code/coordinator', NULL);
+INSERT INTO task_repositories VALUES ('$coordinator_task_id', '22222222-2222-2222-2222-222222222222');
+SQL
+fallback_probe="/data/home/Code/coordinator/.kandev-fallback-probe-$$"
+(
+    unset KANDEV_TASK_ID KANDEV_SESSION_ID KANDEV_WORKSPACE_ID
+    export KANDEV_DB="$fallback_db"
+    export KANDEV_COORDINATOR_SCOPE_AUDIT_LOG="$fallback_audit"
+    cd "$coordinator_root"
+    "$GUARD" -- sh -ceu 'printf fallback > "$1"; rm -f "$1"' sh "$fallback_probe"
+)
+[[ ! -e "$fallback_probe" ]]
+grep -q "\"session_id\": \"$fallback_session_id\"" "$fallback_audit"
+rm -f "$fallback_db" "$fallback_audit"
 coordinator_guard() {
     (
         export KANDEV_TASK_ID="$coordinator_task_id"

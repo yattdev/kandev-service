@@ -352,9 +352,13 @@ already exist. Every coordinator source request is appended to
 The validated Coordinator also receives exact active task roots, registered
 repository checkouts, and registered folder sources for its own workspace
 read-write. The Code/task parent directories and every other workspace remain
-read-only. Eligibility is derived from live task/environment/repository records
-plus the coordinator Git backlink on every launch and is rechecked every 15
-seconds; a failed recheck terminates the elevated process. Scope grants and
+read-only. Eligibility is derived from live task/environment/repository/session
+records plus the coordinator Git backlink on every launch. Explicit backend
+task/session/workspace IDs are checked when present; on Kandev v0.92, which does
+not export them to the agent command, the guard requires exactly one
+`STARTING`/`RUNNING` session matching the exact materialized task root. Partial
+or mismatched exported IDs fail closed. The selected session is rechecked every
+15 seconds; a failed recheck terminates the elevated process. Scope grants and
 revocations are recorded in
 `/data/logs/coordinator-workspace-audit.jsonl`. This records elevated scope,
 not every individual filesystem write; full per-file auditing still requires a

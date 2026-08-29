@@ -19,6 +19,7 @@ kandev_db="${KANDEV_DB:-/data/data/kandev.db}"
 coordinator_source="/data/home/Code/coordinator"
 coordinator_host_source="${host_code:+$host_code/coordinator}"
 coordinator_task_id=""
+coordinator_session_id=""
 coordinator_workspace_id=""
 coordinator_workspace_name=""
 declare -a coordinator_scope_paths
@@ -184,25 +185,87 @@ coordinator_metadata() {
     attested_task="${KANDEV_TASK_ID:-}"
     attested_session="${KANDEV_SESSION_ID:-}"
     attested_workspace="${KANDEV_WORKSPACE_ID:-}"
-    [[ "$attested_task" =~ ^[0-9a-f-]{36}$ \
-       && "$attested_session" =~ ^[0-9a-f-]{36}$ \
-       && "$attested_workspace" =~ ^[0-9a-f-]{36}$ ]] || return 1
     task_dir="${writable_root#/data/tasks/}"
     [[ "$task_dir" != */* && "$task_dir" =~ ^[A-Za-z0-9_-]+$ ]] || return 1
-    rows="$(sqlite3 -noheader -separator '|' "file:$kandev_db?mode=ro" "
-        SELECT DISTINCT t.id, t.workspace_id, w.name
+
+    # Newer backends can explicitly attest all three launch identifiers. Any
+    # partial or malformed attestation fails closed instead of falling back to
+    # inference, so an agent cannot selectively unset a mismatched identifier.
+    if [[ -n "$attested_task" || -n "$attested_session" || -n "$attested_workspace" ]]; then
+        [[ "$attested_task" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ \
+           && "$attested_session" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ \
+           && "$attested_workspace" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || return 1
+        rows="$(sqlite3 -noheader -separator '|' "file:$kandev_db?mode=ro" "
+            SELECT DISTINCT t.id, t.workspace_id, w.name, ts.id
+            FROM task_environments te
+            JOIN tasks t ON t.id = te.task_id
+            JOIN workspaces w ON w.id = t.workspace_id
+            JOIN task_sessions ts ON ts.task_id = t.id
+            WHERE te.task_dir_name = '$task_dir'
+              AND t.id = '$attested_task'
+              AND t.workspace_id = '$attested_workspace'
+              AND ts.id = '$attested_session'
+              AND ts.state IN ('CREATED', 'STARTING', 'RUNNING', 'WAITING_FOR_INPUT')
+              AND t.archived_at IS NULL
+              AND (SELECT COUNT(*) FROM task_repositories tr WHERE tr.task_id = t.id) = 1
+              AND EXISTS (
+                  SELECT 1
+                  FROM task_repositories tr
+                  JOIN repositories r ON r.id = tr.repository_id
+                  WHERE tr.task_id = t.id
+                    AND r.workspace_id = t.workspace_id
+                    AND r.local_path = '$coordinator_source'
+                    AND r.deleted_at IS NULL
+              );
+        ")" || return 1
+    else
+        # Kandev v0.92 does not export launch identifiers to agent commands.
+        # In that case, derive them from the exact materialized task root and
+        # require one—and only one—currently starting/running session. The DB,
+        # not an agent-controlled name or environment value, is authoritative.
+        rows="$(sqlite3 -noheader -separator '|' "file:$kandev_db?mode=ro" "
+            SELECT DISTINCT t.id, t.workspace_id, w.name, ts.id
+            FROM task_environments te
+            JOIN tasks t ON t.id = te.task_id
+            JOIN workspaces w ON w.id = t.workspace_id
+            JOIN task_sessions ts ON ts.task_id = t.id
+            WHERE te.task_dir_name = '$task_dir'
+              AND t.archived_at IS NULL
+              AND ts.state IN ('STARTING', 'RUNNING')
+              AND (ts.workspace_path = '$writable_root'
+                   OR ts.workspace_path LIKE '$writable_root/%')
+              AND (SELECT COUNT(*) FROM task_repositories tr WHERE tr.task_id = t.id) = 1
+              AND EXISTS (
+                  SELECT 1
+                  FROM task_repositories tr
+                  JOIN repositories r ON r.id = tr.repository_id
+                  WHERE tr.task_id = t.id
+                    AND r.workspace_id = t.workspace_id
+                    AND r.local_path = '$coordinator_source'
+                    AND r.deleted_at IS NULL
+              );
+        ")" || return 1
+    fi
+    [[ -n "$rows" && "$rows" != *$'\n'* ]] || return 1
+    IFS='|' read -r coordinator_task_id coordinator_workspace_id coordinator_workspace_name coordinator_session_id <<<"$rows"
+    [[ "$coordinator_task_id" =~ ^[0-9a-f-]{36}$ \
+       && "$coordinator_session_id" =~ ^[0-9a-f-]{36}$ \
+       && "$coordinator_workspace_id" =~ ^[0-9a-f-]{36}$ ]] || return 1
+}
+
+coordinator_still_authorized() {
+    local rows
+    rows="$(sqlite3 -noheader "file:$kandev_db?mode=ro" "
+        SELECT t.id
         FROM task_environments te
         JOIN tasks t ON t.id = te.task_id
-        JOIN workspaces w ON w.id = t.workspace_id
-        WHERE te.task_dir_name = '$task_dir'
-          AND t.id = '$attested_task'
-          AND t.workspace_id = '$attested_workspace'
+        JOIN task_sessions ts ON ts.task_id = t.id
+        WHERE te.task_dir_name = '${writable_root#/data/tasks/}'
+          AND t.id = '$coordinator_task_id'
+          AND t.workspace_id = '$coordinator_workspace_id'
+          AND ts.id = '$coordinator_session_id'
+          AND ts.state IN ('CREATED', 'STARTING', 'RUNNING', 'WAITING_FOR_INPUT')
           AND t.archived_at IS NULL
-          AND EXISTS (
-              SELECT 1 FROM task_sessions ts
-              WHERE ts.id = '$attested_session' AND ts.task_id = t.id
-                AND ts.state IN ('CREATED', 'STARTING', 'RUNNING', 'WAITING_FOR_INPUT')
-          )
           AND (SELECT COUNT(*) FROM task_repositories tr WHERE tr.task_id = t.id) = 1
           AND EXISTS (
               SELECT 1
@@ -214,30 +277,20 @@ coordinator_metadata() {
                 AND r.deleted_at IS NULL
           );
     ")" || return 1
-    [[ -n "$rows" && "$rows" != *$'\n'* ]] || return 1
-    IFS='|' read -r coordinator_task_id coordinator_workspace_id coordinator_workspace_name <<<"$rows"
-    [[ "$coordinator_task_id" =~ ^[0-9a-f-]{36}$ \
-       && "$coordinator_workspace_id" =~ ^[0-9a-f-]{36}$ ]] || return 1
-}
-
-coordinator_still_authorized() {
-    local prior_task="$coordinator_task_id" prior_workspace="$coordinator_workspace_id"
-    coordinator_metadata || return 1
-    [[ "$coordinator_task_id" == "$prior_task" \
-       && "$coordinator_workspace_id" == "$prior_workspace" ]]
+    [[ "$rows" == "$coordinator_task_id" ]]
 }
 
 audit_coordinator_scope() {
     local event="$1"
     shift
-    /usr/bin/python3 - "$event" "$coordinator_task_id" "$coordinator_workspace_id" \
+    /usr/bin/python3 - "$event" "$coordinator_task_id" "$coordinator_session_id" "$coordinator_workspace_id" \
         "$cwd" "${coordinator_scope_paths[@]}" <<'PY'
 import datetime
 import json
 import os
 import sys
 
-event, task_id, workspace_id, cwd, *paths = sys.argv[1:]
+event, task_id, session_id, workspace_id, cwd, *paths = sys.argv[1:]
 audit_path = os.environ.get(
     "KANDEV_COORDINATOR_SCOPE_AUDIT_LOG",
     "/data/logs/coordinator-workspace-audit.jsonl",
@@ -246,6 +299,7 @@ record = {
     "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
     "event": event,
     "task_id": task_id,
+    "session_id": session_id,
     "workspace_id": workspace_id,
     "cwd": cwd,
     "rw_scope": paths,
