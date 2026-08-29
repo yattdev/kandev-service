@@ -2,7 +2,7 @@
 # kandev-restic-backup.sh — Daily restic snapshot of kandev data.
 #
 # Creates a named, deduplicated snapshot in home-server's restic repo, falling
-# back to a local repository outside ~/Code when the VPN/remote is unavailable.
+# back to a hidden local repository outside ~/Code when the VPN/remote is unavailable.
 # Snapshots are browsable with `restic snapshots` — like `git log` for your data.
 # Retention: 7 daily + 4 weekly + 3 monthly (pruned automatically).
 #
@@ -44,7 +44,9 @@ MINI_HOST="${MINI_HOST:-10.0.0.20}"
 MINI_USER="${MINI_USER:-bob}"
 RESTIC="${RESTIC:-$(command -v restic 2>/dev/null || echo "$USER_HOME/bin/restic")}"
 REMOTE_RESTIC_REPO="${RESTIC_REPO:-sftp:${MINI_USER}@${MINI_HOST}:restic-repos/kandev-backup}"
-LOCAL_RESTIC_REPO="${LOCAL_RESTIC_REPO:-$USER_HOME/Backups/restic/kandev-backup}"
+LOCAL_RESTIC_REPO_CONFIGURED="${LOCAL_RESTIC_REPO+x}"
+LOCAL_RESTIC_REPO="${LOCAL_RESTIC_REPO:-$USER_HOME/.Backups/restic/kandev-backup}"
+LEGACY_LOCAL_RESTIC_REPO="${LEGACY_LOCAL_RESTIC_REPO:-$USER_HOME/Backups/restic/kandev-backup}"
 RESTIC_PASSWORD_FILE="${RESTIC_PASSWORD_FILE:-$USER_HOME/.config/restic/kandev-backup-password}"
 KANDEV_DATA="${KANDEV_DATA:-$USER_HOME/.local/share/kandev}"
 COMPOSE_DIR="${COMPOSE_DIR:-$USER_HOME/Code/kandev}"
@@ -64,8 +66,29 @@ fi
 
 log "--- kandev restic backup start (host: $(hostname)) ---"
 
+# Migrate the former visible default with an atomic same-filesystem rename.
+# Explicit LOCAL_RESTIC_REPO overrides are never moved behind the operator's
+# back. The process lock above prevents a concurrent cron run from using it.
+if [[ -z "$LOCAL_RESTIC_REPO_CONFIGURED" \
+      && -d "$LEGACY_LOCAL_RESTIC_REPO" \
+      && ! -e "$LOCAL_RESTIC_REPO" ]]; then
+  mkdir -p "$(dirname "$LOCAL_RESTIC_REPO")"
+  if mv -- "$LEGACY_LOCAL_RESTIC_REPO" "$LOCAL_RESTIC_REPO"; then
+    rmdir -- "$(dirname "$LEGACY_LOCAL_RESTIC_REPO")" 2>/dev/null || true
+    rmdir -- "$USER_HOME/Backups" 2>/dev/null || true
+    log "Moved legacy local repo to hidden location: $LOCAL_RESTIC_REPO"
+  else
+    log "ERROR: could not move legacy local repo to $LOCAL_RESTIC_REPO"
+    exit 1
+  fi
+elif [[ -z "$LOCAL_RESTIC_REPO_CONFIGURED" \
+        && -d "$LEGACY_LOCAL_RESTIC_REPO" \
+        && -e "$LOCAL_RESTIC_REPO" ]]; then
+  log "WARNING: both legacy and hidden local repos exist; using $LOCAL_RESTIC_REPO"
+fi
+
 # Never place the fallback repository inside the tree being backed up (which
-# would recurse forever). The default is ~/Backups/restic/kandev-backup.
+# would recurse forever). The default is ~/.Backups/restic/kandev-backup.
 case "$LOCAL_RESTIC_REPO" in
   "$KANDEV_DATA"|"$KANDEV_DATA"/*)
     log "ERROR: LOCAL_RESTIC_REPO must be outside KANDEV_DATA: $LOCAL_RESTIC_REPO"

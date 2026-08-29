@@ -6,9 +6,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-mkdir -p "$TMP/bin" "$TMP/data-one" "$TMP/data-two"
+mkdir -p "$TMP/bin" "$TMP/data-one" "$TMP/data-two" "$TMP/data-three"
 printf payload > "$TMP/data-one/state"
 printf payload > "$TMP/data-two/state"
+printf payload > "$TMP/data-three/state"
 printf password > "$TMP/password"
 
 cat > "$TMP/bin/ping-down" <<'SH'
@@ -102,5 +103,23 @@ LOG="$TMP/recursive.log" \
 LOCK="$TMP/recursive.lock" \
 bash "$ROOT/kandev-restic-backup.sh" >/dev/null || recursive_rc=$?
 test "$recursive_rc" -eq 78
+
+# The former visible default is atomically migrated to the documented hidden
+# location when no explicit LOCAL_RESTIC_REPO override is configured.
+mkdir -p "$TMP/home/Backups/restic/kandev-backup"
+: > "$TMP/home/Backups/restic/kandev-backup/.initialized"
+export RESTIC_TEST_CALLS="$TMP/calls-three"
+unset RESTIC_TEST_FAIL_REMOTE
+PING="$TMP/bin/ping-down" \
+RESTIC="$TMP/bin/restic" \
+RESTIC_REPO="$REMOTE" \
+RESTIC_PASSWORD_FILE="$TMP/password" \
+USER_HOME="$TMP/home" \
+KANDEV_DATA="$TMP/data-three" \
+LOG="$TMP/three.log" \
+LOCK="$TMP/three.lock" \
+bash "$ROOT/kandev-restic-backup.sh" >/dev/null
+test -f "$TMP/home/.Backups/restic/kandev-backup/.backup-ran"
+test ! -e "$TMP/home/Backups/restic/kandev-backup"
 
 echo "PASS: restic uses a non-recursive local fallback when remote access is unavailable or fails"
