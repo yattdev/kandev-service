@@ -355,9 +355,10 @@ read-write. The Code/task parent directories and every other workspace remain
 read-only. Eligibility is derived from live task/environment/repository/session
 records plus the coordinator Git backlink on every launch. Explicit backend
 task/session/workspace IDs are checked when present; on Kandev v0.92, which does
-not export them to the agent command, the guard requires exactly one
-`STARTING`/`RUNNING` session matching the exact materialized task root. Partial
-or mismatched exported IDs fail closed. The selected session is rechecked every
+not export them to the agent command, the guard requires exactly one active
+executor launch matching the exact materialized task root. This handles the
+brief launch window where the session row still says `WAITING_FOR_INPUT` without
+authorizing an idle session. Partial or mismatched exported IDs fail closed. The selected session is rechecked every
 15 seconds; a failed recheck terminates the elevated process. Scope grants and
 revocations are recorded in
 `/data/logs/coordinator-workspace-audit.jsonl`. This records elevated scope,

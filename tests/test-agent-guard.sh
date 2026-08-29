@@ -226,7 +226,8 @@ coordinator_session_id="$(sqlite3 /data/data/kandev.db "
 }
 
 # Kandev v0.92 does not export launch IDs. Verify the authoritative fallback:
-# the exact task root plus one RUNNING session in a read-only DB grants scope.
+# the exact task root plus one active executor launch in a read-only DB grants
+# scope even during the launch-order window where the session still says idle.
 fallback_db="${coordinator_root%/coordinator}/.kandev-guard-fallback-$$.db"
 fallback_audit="${coordinator_root%/coordinator}/.kandev-guard-fallback-audit-$$.jsonl"
 fallback_session_id=11111111-1111-1111-1111-111111111111
@@ -235,13 +236,15 @@ CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT);
 CREATE TABLE tasks (id TEXT PRIMARY KEY, workspace_id TEXT, archived_at TEXT);
 CREATE TABLE task_environments (task_id TEXT, task_dir_name TEXT);
 CREATE TABLE task_sessions (id TEXT PRIMARY KEY, task_id TEXT, state TEXT, workspace_path TEXT);
+CREATE TABLE executors_running (session_id TEXT, task_id TEXT, status TEXT, agent_execution_id TEXT, worktree_path TEXT);
 CREATE TABLE task_repositories (task_id TEXT, repository_id TEXT);
 CREATE TABLE repositories (id TEXT PRIMARY KEY, workspace_id TEXT, local_path TEXT, deleted_at TEXT);
 CREATE TABLE task_workspace_folders (task_id TEXT, local_path TEXT);
 INSERT INTO workspaces VALUES ('$coordinator_workspace_id', 'fallback-test');
 INSERT INTO tasks VALUES ('$coordinator_task_id', '$coordinator_workspace_id', NULL);
 INSERT INTO task_environments VALUES ('$coordinator_task_id', '$coordinator_task_dir');
-INSERT INTO task_sessions VALUES ('$fallback_session_id', '$coordinator_task_id', 'RUNNING', '$coordinator_root');
+INSERT INTO task_sessions VALUES ('$fallback_session_id', '$coordinator_task_id', 'WAITING_FOR_INPUT', '$coordinator_root');
+INSERT INTO executors_running VALUES ('$fallback_session_id', '$coordinator_task_id', 'starting', '33333333-3333-3333-3333-333333333333', '$coordinator_root');
 INSERT INTO repositories VALUES ('22222222-2222-2222-2222-222222222222', '$coordinator_workspace_id', '/data/home/Code/coordinator', NULL);
 INSERT INTO task_repositories VALUES ('$coordinator_task_id', '22222222-2222-2222-2222-222222222222');
 SQL

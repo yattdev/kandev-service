@@ -20,6 +20,7 @@ coordinator_source="/data/home/Code/coordinator"
 coordinator_host_source="${host_code:+$host_code/coordinator}"
 coordinator_task_id=""
 coordinator_session_id=""
+coordinator_session_source=""
 coordinator_workspace_id=""
 coordinator_workspace_name=""
 declare -a coordinator_scope_paths
@@ -218,22 +219,27 @@ coordinator_metadata() {
                     AND r.deleted_at IS NULL
               );
         ")" || return 1
+        coordinator_session_source="explicit"
     else
         # Kandev v0.92 does not export launch identifiers to agent commands.
         # In that case, derive them from the exact materialized task root and
-        # require one—and only one—currently starting/running session. The DB,
-        # not an agent-controlled name or environment value, is authoritative.
+        # require one—and only one—active executor launch. The session row is
+        # still WAITING_FOR_INPUT for a narrow window after the subprocess is
+        # spawned, so executors_running is the authoritative launch signal.
         rows="$(sqlite3 -noheader -separator '|' "file:$kandev_db?mode=ro" "
             SELECT DISTINCT t.id, t.workspace_id, w.name, ts.id
             FROM task_environments te
             JOIN tasks t ON t.id = te.task_id
             JOIN workspaces w ON w.id = t.workspace_id
             JOIN task_sessions ts ON ts.task_id = t.id
+            JOIN executors_running er ON er.session_id = ts.id AND er.task_id = t.id
             WHERE te.task_dir_name = '$task_dir'
               AND t.archived_at IS NULL
-              AND ts.state IN ('STARTING', 'RUNNING')
-              AND (ts.workspace_path = '$writable_root'
-                   OR ts.workspace_path LIKE '$writable_root/%')
+              AND ts.state IN ('STARTING', 'RUNNING', 'WAITING_FOR_INPUT')
+              AND er.status IN ('starting', 'running')
+              AND er.agent_execution_id <> ''
+              AND (er.worktree_path = '$writable_root'
+                   OR er.worktree_path LIKE '$writable_root/%')
               AND (SELECT COUNT(*) FROM task_repositories tr WHERE tr.task_id = t.id) = 1
               AND EXISTS (
                   SELECT 1
@@ -245,6 +251,7 @@ coordinator_metadata() {
                     AND r.deleted_at IS NULL
               );
         ")" || return 1
+        coordinator_session_source="database"
     fi
     [[ -n "$rows" && "$rows" != *$'\n'* ]] || return 1
     IFS='|' read -r coordinator_task_id coordinator_workspace_id coordinator_workspace_name coordinator_session_id <<<"$rows"
@@ -254,7 +261,20 @@ coordinator_metadata() {
 }
 
 coordinator_still_authorized() {
-    local rows
+    local rows executor_row
+    if [[ "$coordinator_session_source" == "database" ]]; then
+        executor_row="$(sqlite3 -noheader "file:$kandev_db?mode=ro" "
+            SELECT er.session_id
+            FROM executors_running er
+            WHERE er.session_id = '$coordinator_session_id'
+              AND er.task_id = '$coordinator_task_id'
+              AND er.status IN ('starting', 'running')
+              AND er.agent_execution_id <> ''
+              AND (er.worktree_path = '$writable_root'
+                   OR er.worktree_path LIKE '$writable_root/%');
+        ")" || return 1
+        [[ "$executor_row" == "$coordinator_session_id" ]] || return 1
+    fi
     rows="$(sqlite3 -noheader "file:$kandev_db?mode=ro" "
         SELECT t.id
         FROM task_environments te

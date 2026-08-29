@@ -329,8 +329,9 @@ active task roots, registered repository checkouts, and registered folder
 sources in that `workspace_id` read-write, including the canonical coordinator
 checkout. The Code/task parents and every other workspace remain read-only.
 Explicit launch IDs are verified when the backend exports them. On Kandev v0.92,
-the guard instead requires exactly one `STARTING`/`RUNNING` session matching the
-exact materialized task root; any partial or mismatched exported IDs fail closed.
+the guard instead requires exactly one active executor launch matching the exact
+materialized task root, including the brief window where its session row still
+says `WAITING_FOR_INPUT`; any partial or mismatched exported IDs fail closed.
 The selected session is rechecked every 15 seconds; losing eligibility terminates
 the guarded process. Grants/revocations include the selected session ID and are recorded in
 `/data/logs/coordinator-workspace-audit.jsonl` (scope audit, not per-file audit).
