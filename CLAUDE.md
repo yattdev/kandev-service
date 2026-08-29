@@ -355,6 +355,39 @@ and runs a fresh guard-rooted mount/write/`git add --dry-run` check, avoiding th
 invalid inference that another agent's mounts can be read from the
 Coordinator's private namespace.
 
+Validated Coordinators can contact the autonomous host-side Kandev Support
+worker without involving the instance owner:
+
+```bash
+docker kandev support send support-request.json
+docker kandev support status <request-uuid>
+docker kandev support receive <request-uuid>
+```
+
+The request file must be a bounded UTF-8 JSON object inside the Coordinator's
+exact task root with non-empty `problem`, `evidence`, `expected_outcome`, and
+`security_constraints` strings. Records and responses are scoped to the
+originating coordinator task and workspace. The host worker uses a dedicated
+persistent Codex thread, separate from the operator's interactive support chat,
+so normal conversation cannot hold its thread-store writer lock. The worker
+runs with automatic approval review: it may autonomously perform safe support
+work, but a Coordinator request cannot widen broker scope, grant raw host or
+Docker access, expose secrets, or authorize destructive action. A non-zero
+`returncode` from `status`/`receive` is a failed support attempt, even though the
+broker attempt itself reached terminal `complete` state.
+Status progresses through `queued`, `processing`, and `complete`; only
+`complete` with `returncode: 0` is success. Old terminal failures are not
+replayed—send a fresh request after a worker fix.
+
+The dedicated thread ID is host-local state in mode-0600
+`~/.config/kandev/support.env` as `KANDEV_SUPPORT_THREAD_ID=<uuid>`; it is not
+committed to this sanitized repository. `systemd/kandev-support.service` reads
+that file and intentionally fails closed when it is absent. The live unit is a
+copy, not a symlink, so after changing the tracked unit install it into
+`~/.config/systemd/user/`, run `systemctl --user daemon-reload`, and restart the
+service. Worker restarts atomically requeue an interrupted `processing` record
+and preserve oldest-first delivery.
+
 For large coordinator-charter synchronization, use
 `docker kandev workspace description-update <file>`. It accepts only a UTF-8
 regular file inside the calling coordinator's exact task root and updates only
@@ -530,6 +563,7 @@ Use `kandev-ssh-agent.sh` when:
 | `scripts/kandev-agent-docker-client` | Docker-compatible agent-side client for the constrained Compose broker |
 | `scripts/kandev-agent-guard` | Bubblewrap filesystem boundary; mints a task token and exposes only the constrained broker socket |
 | `scripts/kandev-agent-emulator` / `scripts/kandev-agent-adb` | Expose host Android tools with ephemeral headless AVD defaults and persistent adb state |
+| `scripts/kandev-support-worker` / `systemd/kandev-support.service` | Host-side worker that drains validated Coordinator support requests through a dedicated persistent Codex thread, isolated from the operator's interactive thread lock |
 | `mise.default.toml` | System-wide mise config (`/etc/mise/config.toml`): global language versions matched to host |
 | `setup-toolchains.sh` | One-time helper: installs the mise language toolchains into the persistent `/data` volume |
 | `test.sh` | Automated tests covering image, container, service, identity, SSH, git, CLI tools, toolchains (incl. Java JDK and Go), sqlite3, headless browser/Android QA, guarded agent Compose/coordinator source access, Docker host-path wrapper, branch guard, and port-80 NAT redirect scoping |

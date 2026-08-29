@@ -7,7 +7,7 @@ Type=simple
 ExecStart=%h/Code/kandev/scripts/kandev-support-worker
 Restart=always
 RestartSec=3
-Environment=KANDEV_SUPPORT_THREAD_ID=01a043b4-fe52-7020-94bb-de94e72f8a07
+EnvironmentFile=%h/.config/kandev/support.env
 
 [Install]
 WantedBy=default.target

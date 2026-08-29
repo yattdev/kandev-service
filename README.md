@@ -333,6 +333,9 @@ docker kandev source db-dump <container> \
   --target-task <full-task-uuid> --name source.sql
 docker kandev workspace probe <full-task-uuid>
 docker kandev workspace description-update PROMPT.md
+docker kandev support send support-request.json
+docker kandev support status <request-uuid>
+docker kandev support receive <request-uuid>
 ```
 
 `list`, `inspect`, and bounded/redacted `logs` expose only containers whose
@@ -378,6 +381,21 @@ Coordinator task's description from a UTF-8 file inside its own task root
 calls the normal Kandev API so task-update events are published, verifies the
 persisted content, and revokes the token before replying. The credential is
 never exposed to the agent, and no target task ID can be supplied.
+
+`docker kandev support send` accepts a JSON request file inside the calling
+Coordinator task with four required strings: `problem`, `evidence`,
+`expected_outcome`, and `security_constraints`. It returns a request UUID;
+`status` polls it and `receive` returns the Support worker's final response.
+Status values are `queued`, `processing`, and `complete`; a completed request
+is successful only when its `returncode` is zero. Requests that failed before a
+worker fix remain terminal and must be replaced with a fresh request.
+Delivery runs on the host through a dedicated persistent Codex support thread,
+so it does not contend with an operator's interactive Codex conversation. The
+worker is approval-reviewed and the broker still validates Coordinator identity
+and scopes every request/response to its originating task and workspace.
+Its persistent thread ID is kept outside the repository in the mode-0600 host
+file `~/.config/kandev/support.env`; the user service fails closed if that file
+is absent.
 
 Logical dumps may contain sensitive application data. The current Bubblewrap
 policy is a write-confinement boundary, not a distinct-UID confidentiality

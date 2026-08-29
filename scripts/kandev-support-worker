@@ -12,7 +12,7 @@ import time
 
 QUEUE = Path(os.environ.get("KANDEV_SUPPORT_QUEUE", Path.home() / ".local/share/kandev/support-broker"))
 REPOSITORY = Path(os.environ.get("KANDEV_SUPPORT_REPOSITORY", Path.home() / "Code/kandev"))
-THREAD_ID = os.environ.get("KANDEV_SUPPORT_THREAD_ID", "01a043b4-fe52-7020-94bb-de94e72f8a07")
+THREAD_ID = os.environ.get("KANDEV_SUPPORT_THREAD_ID", "")
 CODEX = os.environ.get("KANDEV_SUPPORT_CODEX", "codex")
 WRITER_CONFLICT = "already has an active writer"
 
@@ -37,7 +37,7 @@ def process(path: Path) -> None:
     record = json.loads(processing.read_text(encoding="utf-8"))
     try:
         completed = subprocess.run(
-            [CODEX, "exec", "resume", THREAD_ID, prompt(record)],
+            [CODEX, "exec", "--approve-for-me", "resume", THREAD_ID, prompt(record)],
             cwd=REPOSITORY,
             text=True,
             capture_output=True,
@@ -67,11 +67,36 @@ def process(path: Path) -> None:
     processing.unlink(missing_ok=True)
 
 
+def recover_interrupted() -> None:
+    """Return requests interrupted by a worker restart to the pending queue."""
+    for processing in (QUEUE / "processing").glob("*.json"):
+        request_id = processing.stem
+        if (QUEUE / "responses" / f"{request_id}.json").exists():
+            processing.unlink(missing_ok=True)
+        else:
+            processing.replace(QUEUE / "pending" / processing.name)
+
+
+def pending_requests() -> list[Path]:
+    """Return requests oldest-first; UUID filenames do not preserve queue order."""
+    candidates: list[tuple[str, str, Path]] = []
+    for path in (QUEUE / "pending").glob("*.json"):
+        try:
+            created_at = str(json.loads(path.read_text()).get("created_at", ""))
+        except (OSError, ValueError, json.JSONDecodeError):
+            created_at = ""
+        candidates.append((created_at, path.name, path))
+    return [path for _, _, path in sorted(candidates)]
+
+
 def main() -> int:
+    if not THREAD_ID:
+        raise SystemExit("KANDEV_SUPPORT_THREAD_ID is required")
     for directory in ("pending", "processing", "records", "responses"):
         (QUEUE / directory).mkdir(parents=True, mode=0o700, exist_ok=True)
+    recover_interrupted()
     while True:
-        pending = sorted((QUEUE / "pending").glob("*.json"))
+        pending = pending_requests()
         ready = None
         now = time.time()
         for candidate in pending:

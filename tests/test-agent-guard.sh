@@ -357,16 +357,21 @@ done < <(sqlite3 -separator '|' /data/data/kandev.db "
 
 # Coordinator elevation covers exact registered same-workspace task roots and
 # repositories, while the managed parents and another workspace remain RO.
-registered_repo="$(sqlite3 /data/data/kandev.db "
+registered_repo=""
+while IFS= read -r candidate_repo; do
+    if [[ -d "$candidate_repo" ]]; then
+        registered_repo="$candidate_repo"
+        break
+    fi
+done < <(sqlite3 /data/data/kandev.db "
     SELECT local_path FROM repositories
     WHERE workspace_id = '$coordinator_workspace_id' AND deleted_at IS NULL
       AND local_path <> '/data/home/Code/coordinator'
       AND (local_path LIKE '/data/home/Code/%'
            OR local_path LIKE '/data/repos/workspaces/$coordinator_workspace_id/%')
     ORDER BY CASE WHEN local_path LIKE '/data/repos/workspaces/%' THEN 0 ELSE 1 END,
-             local_path
-    LIMIT 1;
-")"
+             local_path;
+")
 [[ -d "$registered_repo" ]] || { echo "ERROR: no registered source repository for coordinator test" >&2; exit 1; }
 foreign_task_root=""
 while IFS= read -r candidate_dir; do
