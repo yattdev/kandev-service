@@ -1,5 +1,13 @@
 #!/usr/bin/env bash
 # Persistently force every Kandev agent profile through kandev-agent-guard.
+#
+# Provider-level permission prompts and filesystem sandboxes are deliberately
+# disabled *inside* that guard. The outer Bubblewrap guard is the authoritative
+# boundary: it exposes only the task root and the backlink-verified common .git
+# directory read-write, while sibling tasks and unrelated Code repositories
+# remain read-only. In particular, Codex's workspace-write sandbox otherwise
+# reclassifies a linked worktree's common .git directory as read-only and makes
+# every git add/commit fail with a read-only index.lock.
 set -euo pipefail
 
 DB="${1:-${KANDEV_DB:-$HOME/.local/share/kandev/data/kandev.db}}"
@@ -25,27 +33,121 @@ try:
 BEGIN IMMEDIATE;
 UPDATE agent_profiles
 SET command_prefix = '/usr/local/bin/kandev-agent-guard --',
+    auto_approve = 1,
+    dangerously_skip_permissions = 1,
+    mode = CASE
+        WHEN agent_id IN (SELECT id FROM agents WHERE name = 'codex-acp')
+        THEN 'agent-full-access'
+        WHEN agent_id IN (SELECT id FROM agents WHERE name = 'claude-acp')
+        THEN 'bypassPermissions'
+        ELSE mode
+    END,
+    cli_flags = CASE
+        WHEN agent_id IN (SELECT id FROM agents WHERE name = 'copilot-acp')
+        THEN (
+            SELECT json_group_array(json(
+                CASE
+                    WHEN json_extract(value, '$.flag') IN (
+                        '--allow-all-paths', '--allow-all-tools', '--allow-all-urls'
+                    )
+                    THEN json_set(value, '$.enabled', json('true'))
+                    ELSE value
+                END
+            ))
+            FROM json_each(agent_profiles.cli_flags)
+        )
+        ELSE cli_flags
+    END,
     updated_at = CURRENT_TIMESTAMP
-WHERE command_prefix != '/usr/local/bin/kandev-agent-guard --';
+WHERE command_prefix != '/usr/local/bin/kandev-agent-guard --'
+   OR auto_approve != 1
+   OR dangerously_skip_permissions != 1
+   OR (
+       agent_id IN (SELECT id FROM agents WHERE name = 'codex-acp')
+       AND mode != 'agent-full-access'
+   )
+   OR (
+       agent_id IN (SELECT id FROM agents WHERE name = 'claude-acp')
+       AND mode != 'bypassPermissions'
+   )
+   OR (
+       agent_id IN (SELECT id FROM agents WHERE name = 'copilot-acp')
+       AND EXISTS (
+           SELECT 1 FROM json_each(agent_profiles.cli_flags)
+           WHERE json_extract(value, '$.flag') IN (
+               '--allow-all-paths', '--allow-all-tools', '--allow-all-urls'
+           )
+             AND json_extract(value, '$.enabled') != 1
+       )
+   );
 
 DROP TRIGGER IF EXISTS agent_profiles_require_guard_insert;
 DROP TRIGGER IF EXISTS agent_profiles_require_guard_update;
 
 CREATE TRIGGER agent_profiles_require_guard_insert
 AFTER INSERT ON agent_profiles
-WHEN NEW.command_prefix != '/usr/local/bin/kandev-agent-guard --'
 BEGIN
     UPDATE agent_profiles
-    SET command_prefix = '/usr/local/bin/kandev-agent-guard --'
+    SET command_prefix = '/usr/local/bin/kandev-agent-guard --',
+        auto_approve = 1,
+        dangerously_skip_permissions = 1,
+        mode = CASE
+            WHEN NEW.agent_id IN (SELECT id FROM agents WHERE name = 'codex-acp')
+            THEN 'agent-full-access'
+            WHEN NEW.agent_id IN (SELECT id FROM agents WHERE name = 'claude-acp')
+            THEN 'bypassPermissions'
+            ELSE NEW.mode
+        END,
+        cli_flags = CASE
+            WHEN NEW.agent_id IN (SELECT id FROM agents WHERE name = 'copilot-acp')
+            THEN (
+                SELECT json_group_array(json(
+                    CASE
+                        WHEN json_extract(value, '$.flag') IN (
+                            '--allow-all-paths', '--allow-all-tools', '--allow-all-urls'
+                        )
+                        THEN json_set(value, '$.enabled', json('true'))
+                        ELSE value
+                    END
+                ))
+                FROM json_each(NEW.cli_flags)
+            )
+            ELSE NEW.cli_flags
+        END
     WHERE id = NEW.id;
 END;
 
 CREATE TRIGGER agent_profiles_require_guard_update
-AFTER UPDATE OF command_prefix ON agent_profiles
-WHEN NEW.command_prefix != '/usr/local/bin/kandev-agent-guard --'
+AFTER UPDATE OF command_prefix, mode, agent_id, auto_approve,
+    dangerously_skip_permissions, cli_flags ON agent_profiles
 BEGIN
     UPDATE agent_profiles
-    SET command_prefix = '/usr/local/bin/kandev-agent-guard --'
+    SET command_prefix = '/usr/local/bin/kandev-agent-guard --',
+        auto_approve = 1,
+        dangerously_skip_permissions = 1,
+        mode = CASE
+            WHEN NEW.agent_id IN (SELECT id FROM agents WHERE name = 'codex-acp')
+            THEN 'agent-full-access'
+            WHEN NEW.agent_id IN (SELECT id FROM agents WHERE name = 'claude-acp')
+            THEN 'bypassPermissions'
+            ELSE NEW.mode
+        END,
+        cli_flags = CASE
+            WHEN NEW.agent_id IN (SELECT id FROM agents WHERE name = 'copilot-acp')
+            THEN (
+                SELECT json_group_array(json(
+                    CASE
+                        WHEN json_extract(value, '$.flag') IN (
+                            '--allow-all-paths', '--allow-all-tools', '--allow-all-urls'
+                        )
+                        THEN json_set(value, '$.enabled', json('true'))
+                        ELSE value
+                    END
+                ))
+                FROM json_each(NEW.cli_flags)
+            )
+            ELSE NEW.cli_flags
+        END
     WHERE id = NEW.id;
 END;
 COMMIT;
@@ -53,6 +155,27 @@ COMMIT;
     )
     unguarded = connection.execute(
         "SELECT COUNT(*) FROM agent_profiles WHERE command_prefix != ?", (prefix,)
+    ).fetchone()[0]
+    restricted_profiles = connection.execute(
+        """
+        SELECT COUNT(*)
+        FROM agent_profiles ap
+        JOIN agents a ON a.id = ap.agent_id
+        WHERE ap.auto_approve != 1
+           OR ap.dangerously_skip_permissions != 1
+           OR (a.name = 'codex-acp' AND ap.mode != 'agent-full-access')
+           OR (a.name = 'claude-acp' AND ap.mode != 'bypassPermissions')
+           OR (
+               a.name = 'copilot-acp'
+               AND EXISTS (
+                   SELECT 1 FROM json_each(ap.cli_flags)
+                   WHERE json_extract(value, '$.flag') IN (
+                       '--allow-all-paths', '--allow-all-tools', '--allow-all-urls'
+                   )
+                     AND json_extract(value, '$.enabled') != 1
+               )
+           )
+        """
     ).fetchone()[0]
     total = connection.execute("SELECT COUNT(*) FROM agent_profiles").fetchone()[0]
 except sqlite3.Error as error:
@@ -65,5 +188,11 @@ finally:
 if unguarded:
     print(f"ERROR: {unguarded} Kandev profiles remain unguarded", file=sys.stderr)
     sys.exit(78)
-print(f"Agent guard enforced for {total} profiles")
+if restricted_profiles:
+    print(
+        f"ERROR: {restricted_profiles} profiles retain inner permission restrictions",
+        file=sys.stderr,
+    )
+    sys.exit(78)
+print(f"Agent guard enforced for {total} profiles; all providers run full-access inside the guard")
 PY

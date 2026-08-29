@@ -193,6 +193,26 @@ The image entrypoint runs `codex-sandbox-preflight` before Kandev accepts work.
 If nested user namespaces, seccomp, or AppArmor are incompatible, startup exits
 with an actionable error instead of letting every agent fail at `apply_patch`.
 
+### Full agent permissions inside the outer guard
+
+Every agent provider runs without its own redundant approval/filesystem
+restrictions **inside** `kandev-agent-guard`: Codex uses
+`agent-full-access`, Claude uses `bypassPermissions`, and Copilot receives its
+`--allow-all-paths`, `--allow-all-tools`, and `--allow-all-urls` flags. This
+does not give agents full host access. The outer Bubblewrap guard remains the
+kernel-enforced boundary and bind-mounts only the agent's task root plus the
+backlink-verified Git common directory read-write. Sibling tasks, unrelated
+repositories, the Code root, the raw Docker socket, and host privilege
+escalation remain unavailable.
+
+This split is especially necessary for linked worktrees. Codex's nested
+`workspace-write` sandbox reclassifies the external common Git directory as
+read-only, so source edits appear to work but `git add`/`git commit` fail when
+Git tries to create `.git/worktrees/<id>/index.lock`. The startup policy in
+`scripts/enforce-agent-guard.sh` updates existing profiles and installs
+database triggers so newly created or edited profiles retain this
+full-access-inside-the-guard invariant for every provider.
+
 Operator diagnostic (runs the same preflight in the actual worker image and
 with the same two policies as Compose):
 

@@ -734,6 +734,12 @@ else
   fail "agent guard still depends on a PATH-provided sqlite3 executable"
 fi
 
+if bash "$COMPOSE_DIR/tests/test-enforce-agent-guard.sh" >/dev/null 2>&1; then
+  ok "profile policy keeps every provider full-access inside the outer task/Git guard"
+else
+  fail "tests/test-enforce-agent-guard.sh failed"
+fi
+
 if grep -Fq 'KANDEV_HEALTH_TIMEOUT_MS=180000' docker-compose.yml; then
   ok "backend health timeout accommodates large restored boards"
 else
