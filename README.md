@@ -446,7 +446,9 @@ source checkout is a fork: `upstream/main` (`kdlbs/kandev`) is canonical, while
 remote/base revision before creating a clean diagnostic worktree. Support must
 also wait for every yielded build, hook, or linter execution to finish before
 starting a dependent operation; a running tool cell is not a completed command
-and must not be misreported as external contention. The broker still validates
+and must not be misreported as external contention. A replacement local binary
+overlay must also retain every still-required fix in the currently deployed
+pair; a request for one new fix cannot silently remove another. The broker still validates
 Coordinator identity and scopes every request/response to
 its originating task and workspace.
 Its persistent thread ID is kept outside the repository in the mode-0600 host

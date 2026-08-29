@@ -73,6 +73,7 @@ class WorkerTest(unittest.TestCase):
         self.assertIn("Inspect both checkouts", command[7])
         self.assertIn("upstream/main is the canonical project base", command[7])
         self.assertIn("A yielded tool is not a completed tool", command[7])
+        self.assertIn("replacement must preserve all still-required fixes", command[7])
         response = json.loads((worker.QUEUE / "responses/request-success.json").read_text())
         self.assertEqual(response["returncode"], 0)
         self.assertEqual(response["resolution_status"], "resolved")
