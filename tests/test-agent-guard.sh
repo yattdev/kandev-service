@@ -153,14 +153,16 @@ while IFS= read -r candidate; do
     candidate_gitdir="$(sed -n 's/^gitdir: //p' "$candidate" | head -n 1)"
     [[ -n "$candidate_gitdir" && -f "$candidate_gitdir/commondir" ]] || continue
     candidate_common="$(realpath -e -- "$candidate_gitdir/$(head -n 1 "$candidate_gitdir/commondir")" 2>/dev/null || true)"
-    if [[ "$candidate_common" == /data/repos/workspaces/*/.git ]]; then
+    candidate_root="$(dirname "$candidate")"
+    if [[ "$candidate_common" == /data/repos/workspaces/*/github/kdlbs/kandev/.git \
+          && -f "$candidate_root/mise.toml" ]]; then
         managed_marker="$candidate"
         managed_gitdir="$(realpath -e -- "$candidate_gitdir")"
         managed_common="$candidate_common"
         break
     fi
 done < <(find /data/tasks -mindepth 3 -maxdepth 3 -type f -name .git -print)
-[[ -n "$managed_marker" ]] || { echo "ERROR: no managed-repository task worktree available" >&2; exit 1; }
+[[ -n "$managed_marker" ]] || { echo "ERROR: no managed kdlbs/kandev task worktree with mise.toml available for guard test" >&2; exit 1; }
 managed_root="$(dirname "$managed_marker")"
 managed_source="${managed_common%/.git}"
 (cd "$managed_root" && "$GUARD" -- sh -ceu '
@@ -169,6 +171,11 @@ managed_source="${managed_common%/.git}"
     case ",$(findmnt -T "$3" -n -o OPTIONS)," in *,ro,*) ;; *) exit 1;; esac
     git -C "$1" status --porcelain >/dev/null
     git -C "$1" add -A --dry-run >/dev/null
+    case ":${MISE_TRUSTED_CONFIG_PATHS:-}:" in
+        *":$1:"*) ;;
+        *) echo "ERROR: managed kdlbs/kandev mise config is not trusted inside guard" >&2; exit 1 ;;
+    esac
+    npx --version >/dev/null
 ' sh "$managed_root" "$managed_common" "$managed_source")
 managed_source_probe="$managed_source/.kandev-guard-managed-source-escape-$$"
 if (cd "$managed_root" && "$GUARD" -- sh -c 'touch "$1"' sh "$managed_source_probe") 2>/dev/null; then

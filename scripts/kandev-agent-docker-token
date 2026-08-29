@@ -1,4 +1,8 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
+# The guard invokes this before Bubblewrap creates its sanitized environment.
+# Do not use `/usr/bin/env python3`: a project-local mise shim on PATH can
+# reject an untrusted mise.toml before the guard has applied its narrow trust
+# path, preventing token minting and therefore ACP startup.
 """Mint a scope token before entering the agent's Bubblewrap namespace."""
 
 from __future__ import annotations

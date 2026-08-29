@@ -385,6 +385,8 @@ path_is_approved_repo_gitdir() {
 # from corrupting a sibling worktree's index/HEAD metadata.
 declare -a git_markers
 git_markers=("$writable_root/.git")
+declare -a mise_trusted_config_paths
+mise_trusted_config_paths=()
 coordinator_backlink=0
 while IFS= read -r -d '' marker; do
     git_markers+=("$marker")
@@ -420,6 +422,16 @@ for marker in "${git_markers[@]}"; do
     backlink="$(realpath -e -- "$backlink_line")" || deny "Git worktree backlink is invalid: $gitdir/gitdir"
     marker_real="$(realpath -e -- "$marker")" || deny "cannot resolve Git worktree marker: $marker"
     [[ "$backlink" == "$marker_real" ]] || deny "Git worktree backlink does not match marker: $marker"
+
+    # Mise shims are on the agent PATH.  A linked worktree's project mise.toml
+    # must therefore be trusted *inside the sandbox*, otherwise even `npx`
+    # exits before the ACP handshake.  Only accept the project root after its
+    # common Git directory and reverse worktree backlink have been validated
+    # above; do not inherit a broader caller-supplied trust path.
+    project_root="$(dirname "$marker")"
+    if [[ -f "$project_root/mise.toml" && ! -L "$project_root/mise.toml" ]]; then
+        mise_trusted_config_paths+=("$project_root")
+    fi
     if [[ -z "${bound[$common]:-}" ]]; then
         bwrap_args+=(--bind "$common" "$common")
         bound["$common"]=1
@@ -438,6 +450,11 @@ for marker in "${git_markers[@]}"; do
         coordinator_backlink=1
     fi
 done
+
+mise_trusted_config_path=""
+if (( ${#mise_trusted_config_paths[@]} > 0 )); then
+    mise_trusted_config_path="$(IFS=:; printf '%s' "${mise_trusted_config_paths[*]}")"
+fi
 
 # A validated Coordinator receives exact registered resources from its own
 # workspace. The parent Code/tasks mounts remain read-only, and eligibility is
@@ -482,6 +499,7 @@ run_guarded=(
     bwrap "${bwrap_args[@]}"
     --setenv KANDEV_AGENT_GUARD_ACTIVE 1
     --setenv TMPDIR /tmp
+    --setenv MISE_TRUSTED_CONFIG_PATHS "$mise_trusted_config_path"
     "${agent_docker_env[@]}"
     --chdir "$cwd"
     -- "$@"
