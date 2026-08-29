@@ -77,12 +77,12 @@ def temporary_operator_token():
             database.close()
 
 
-def coordinator_session(record: dict[str, str]) -> str:
+def coordinator_session(record: dict[str, str]) -> tuple[str, str]:
     """Resolve the newest live primary session for the requesting coordinator."""
     database = sqlite3.connect(f"file:{KANDEV_DB}?mode=ro", uri=True, timeout=30)
     try:
         row = database.execute(
-            "SELECT id FROM task_sessions WHERE task_id=? "
+            "SELECT id,state FROM task_sessions WHERE task_id=? "
             "AND state IN ('RUNNING','WAITING_FOR_INPUT','STARTING') "
             "ORDER BY is_primary DESC, updated_at DESC LIMIT 1",
             (record["coordinator_task_id"],),
@@ -91,7 +91,7 @@ def coordinator_session(record: dict[str, str]) -> str:
         database.close()
     if row is None:
         raise RuntimeError("requesting coordinator has no live session")
-    return str(row[0])
+    return str(row[0]), str(row[1])
 
 
 def notification_content(record: dict[str, str], response: dict[str, object]) -> str:
@@ -112,7 +112,7 @@ def notification_content(record: dict[str, str], response: dict[str, object]) ->
     return "\n".join(parts)
 
 
-def notification_is_durable(record: dict[str, str]) -> bool:
+def delivered_notification_exists(record: dict[str, str]) -> bool:
     database = sqlite3.connect(f"file:{KANDEV_DB}?mode=ro", uri=True, timeout=30)
     try:
         row = database.execute(
@@ -125,12 +125,38 @@ def notification_is_durable(record: dict[str, str]) -> bool:
         database.close()
 
 
+def queued_notification_entry(record: dict[str, str], session_id: str) -> str:
+    database = sqlite3.connect(f"file:{KANDEV_DB}?mode=ro", uri=True, timeout=30)
+    try:
+        row = database.execute(
+            "SELECT id FROM queued_messages WHERE task_id=? AND session_id=? "
+            "AND instr(content, ?) > 0 ORDER BY position LIMIT 1",
+            (record["coordinator_task_id"], session_id, f"Request ID: {record['id']}"),
+        ).fetchone()
+        return "" if row is None else str(row[0])
+    finally:
+        database.close()
+
+
 def notify_coordinator(record: dict[str, str], response: dict[str, object]) -> str:
+    if delivered_notification_exists(record):
+        return "already-delivered"
+    session_id, session_state = coordinator_session(record)
+    entry_id = queued_notification_entry(record, session_id)
+    if entry_id:
+        mode = "send_now"
+    elif session_state in {"RUNNING", "STARTING"}:
+        mode = "queue"
+    else:
+        mode = "add"
     payload = {
         "task_id": record["coordinator_task_id"],
-        "session_id": coordinator_session(record),
+        "session_id": session_id,
         "content": notification_content(record, response),
+        "mode": mode,
     }
+    if entry_id:
+        payload["entry_id"] = entry_id
     with temporary_operator_token() as token:
         payload["token"] = token
         completed = subprocess.run(
@@ -147,7 +173,15 @@ def notify_coordinator(record: dict[str, str], response: dict[str, object]) -> s
         message_id = str(json.loads(completed.stdout)["message_id"])
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise RuntimeError("coordinator notification returned no message receipt") from exc
-    if not notification_is_durable(record):
+    if mode == "queue":
+        if queued_notification_entry(record, session_id) != message_id:
+            raise RuntimeError("coordinator notification queue receipt is not durable")
+        raise RuntimeError(f"coordinator busy; Support result queued as {message_id}")
+    for _ in range(10):
+        if delivered_notification_exists(record):
+            return message_id
+        time.sleep(0.1)
+    if not delivered_notification_exists(record):
         raise RuntimeError("coordinator notification was acknowledged but is not durable")
     return message_id
 
@@ -300,7 +334,7 @@ def recover_interrupted() -> None:
             processing.replace(QUEUE / "pending" / processing.name)
 
 
-def retry_notifications(*, ignore_backoff: bool = False) -> None:
+def retry_notifications(*, ignore_backoff: bool = False) -> bool:
     """Retry result delivery independently from Support request execution."""
     for path in sorted((QUEUE / "notifications").glob("*.json")):
         record = json.loads(path.read_text(encoding="utf-8"))
@@ -327,13 +361,15 @@ def retry_notifications(*, ignore_backoff: bool = False) -> None:
         response_path.chmod(0o600)
         path.unlink()
         print(f"Kandev Support notification delivered {record['id']}", flush=True)
+        return True
+    return False
 
 
 def notification_loop() -> None:
     """Keep delivery live while a long Support remediation turn is running."""
     while True:
-        retry_notifications()
-        time.sleep(2)
+        delivered = retry_notifications()
+        time.sleep(60 if delivered else 2)
 
 
 def audit_notifications() -> None:
@@ -346,7 +382,7 @@ def audit_notifications() -> None:
         if not record_path.exists():
             continue
         record = json.loads(record_path.read_text(encoding="utf-8"))
-        if notification_is_durable(record):
+        if delivered_notification_exists(record):
             response["coordinator_message_id"] = "legacy-observed"
             response_path.write_text(json.dumps(response), encoding="utf-8")
             response_path.chmod(0o600)

@@ -17,6 +17,11 @@ for (const field of ["token", "task_id", "session_id", "content"]) {
 }
 
 const requestId = crypto.randomUUID();
+const mode = request.mode ?? "add";
+if (!["add", "queue", "send_now"].includes(mode)) {
+  process.stderr.write("invalid delivery mode\n");
+  process.exit(64);
+}
 const socket = new WebSocket(
   `ws://127.0.0.1:38429/ws?token=${encodeURIComponent(request.token)}`,
 );
@@ -27,16 +32,37 @@ const timeout = setTimeout(() => {
 }, 15000);
 
 socket.addEventListener("open", () => {
+  let action = "message.add";
+  let payload = {
+    task_id: request.task_id,
+    session_id: request.session_id,
+    client_message_id: crypto.randomUUID(),
+    content: request.content,
+  };
+  if (mode === "queue") {
+    action = "message.queue.add";
+    payload = {
+      task_id: request.task_id,
+      session_id: request.session_id,
+      content: request.content,
+    };
+  } else if (mode === "send_now") {
+    if (typeof request.entry_id !== "string" || request.entry_id.length === 0) {
+      process.stderr.write("send_now requires entry_id\n");
+      process.exit(64);
+    }
+    action = "message.queue.send_now";
+    payload = {
+      session_id: request.session_id,
+      scope: "entry",
+      entry_id: request.entry_id,
+    };
+  }
   socket.send(JSON.stringify({
     id: requestId,
     type: "request",
-    action: "message.add",
-    payload: {
-      task_id: request.task_id,
-      session_id: request.session_id,
-      client_message_id: crypto.randomUUID(),
-      content: request.content,
-    },
+    action,
+    payload,
   }));
 });
 
@@ -56,12 +82,13 @@ socket.addEventListener("message", (event) => {
   }
   if (message.type !== "response") return;
   const payload = message.payload ?? {};
-  if (typeof payload.id !== "string" || payload.id.length === 0) {
+  const messageId = mode === "send_now" ? request.entry_id : payload.id;
+  if (typeof messageId !== "string" || messageId.length === 0) {
     process.stderr.write("message.add response omitted durable message id\n");
     socket.close();
     process.exit(70);
   }
-  process.stdout.write(`${JSON.stringify({ message_id: payload.id })}\n`);
+  process.stdout.write(`${JSON.stringify({ message_id: messageId, mode })}\n`);
   socket.close();
 });
 

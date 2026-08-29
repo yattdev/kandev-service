@@ -414,6 +414,13 @@ Busy-session errors and acknowledgements without durable storage remain queued
 for retry; startup audits and repairs receipts written by older notifier code.
 Notification retries run on an independent capped-backoff loop, so a long
 source build or host remediation cannot delay delivery to another Coordinator.
+When a Coordinator is continuously busy, Support first persists one exact
+result entry through `message.queue.add`, then dispatches only that entry through
+`message.queue.send_now`. Retries reuse the durable entry ID, and a post-delivery
+cooldown prevents a second result from interrupting its acceptance turn.
+If Kandev auto-merges adjacent Support entries, each request ID is checked in
+the eventual durable message before any resend, so the merged sibling is not
+duplicated.
 An initial `BLOCKED` answer is not terminal: the worker automatically requeues
 it for up to two higher-scrutiny passes, carrying the prior evidence forward and
 explicitly auditing agent-facing restrictions versus Support's reviewed host
