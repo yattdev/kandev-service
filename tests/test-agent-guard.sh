@@ -90,11 +90,20 @@ fi
 # A linked task worktree may point to a repository nested at any depth below
 # Code. Verify that Git works, while the source repository's working tree stays
 # read-only. This is the layout used by inno-prod/projects/co-up.
-linked_marker="$(find /data/tasks -mindepth 3 -maxdepth 3 -type f -name .git -print -quit)"
+linked_marker=""
+while IFS= read -r candidate; do
+    candidate_gitdir="$(sed -n 's/^gitdir: //p' "$candidate" | head -n 1)"
+    [[ -n "$candidate_gitdir" && -f "$candidate_gitdir/commondir" ]] || continue
+    candidate_common="$(realpath -e -- "$candidate_gitdir/$(head -n 1 "$candidate_gitdir/commondir")" 2>/dev/null || true)"
+    if [[ "$candidate_common" == /data/home/Code/*/.git ]]; then
+        linked_marker="$candidate"
+        gitdir="$(realpath -e -- "$candidate_gitdir")"
+        common="$candidate_common"
+        break
+    fi
+done < <(find /data/tasks -mindepth 3 -maxdepth 3 -type f -name .git -print)
 [[ -n "$linked_marker" ]] || { echo "ERROR: no linked task worktree available for guard test" >&2; exit 1; }
 linked_root="$(dirname "$linked_marker")"
-gitdir="$(sed -n 's/^gitdir: //p' "$linked_marker" | head -n 1)"
-common="$(realpath -e -- "$gitdir/$(head -n 1 "$gitdir/commondir")")"
 source_root="${common%/.git}"
 sibling_gitdir=""
 while IFS= read -r candidate; do
@@ -135,11 +144,43 @@ if (cd "$linked_root" && "$GUARD" -- sh -c 'touch "$1"' sh "$source_probe") 2>/d
 fi
 [[ ! -e "$source_probe" ]]
 
+# Kandev-managed task worktrees keep their shared Git directory below the
+# workspace-scoped repository store rather than below /data/home/Code. The
+# backlink check below must authorize this normal layout without making the
+# managed repository's working tree writable.
+managed_marker=""
+while IFS= read -r candidate; do
+    candidate_gitdir="$(sed -n 's/^gitdir: //p' "$candidate" | head -n 1)"
+    [[ -n "$candidate_gitdir" && -f "$candidate_gitdir/commondir" ]] || continue
+    candidate_common="$(realpath -e -- "$candidate_gitdir/$(head -n 1 "$candidate_gitdir/commondir")" 2>/dev/null || true)"
+    if [[ "$candidate_common" == /data/repos/workspaces/*/.git ]]; then
+        managed_marker="$candidate"
+        managed_gitdir="$(realpath -e -- "$candidate_gitdir")"
+        managed_common="$candidate_common"
+        break
+    fi
+done < <(find /data/tasks -mindepth 3 -maxdepth 3 -type f -name .git -print)
+[[ -n "$managed_marker" ]] || { echo "ERROR: no managed-repository task worktree available" >&2; exit 1; }
+managed_root="$(dirname "$managed_marker")"
+managed_source="${managed_common%/.git}"
+(cd "$managed_root" && "$GUARD" -- sh -ceu '
+    case ",$(findmnt -T "$1" -n -o OPTIONS)," in *,rw,*) ;; *) exit 1;; esac
+    case ",$(findmnt -T "$2" -n -o OPTIONS)," in *,rw,*) ;; *) exit 1;; esac
+    case ",$(findmnt -T "$3" -n -o OPTIONS)," in *,ro,*) ;; *) exit 1;; esac
+    git -C "$1" status --porcelain >/dev/null
+    git -C "$1" add -A --dry-run >/dev/null
+' sh "$managed_root" "$managed_common" "$managed_source")
+managed_source_probe="$managed_source/.kandev-guard-managed-source-escape-$$"
+if (cd "$managed_root" && "$GUARD" -- sh -c 'touch "$1"' sh "$managed_source_probe") 2>/dev/null; then
+    echo "ERROR: managed worktree guard wrote to the source repository working tree" >&2
+    exit 1
+fi
+[[ ! -e "$managed_source_probe" ]]
+
 # The agent can start an isolated Compose project through the broker. Task-local
 # bind mounts may be read-write, while any source outside this task is rejected.
 (cd "$linked_root" && "$GUARD" -- sh -ceu '
-    runtime_dir="$PWD/.kandev-docker-guard-test-$$"
-    mkdir "$runtime_dir"
+    runtime_dir="$(mktemp -d "$PWD/.kandev-docker-guard-test.XXXXXX")"
     cleanup() {
         (cd "$runtime_dir" && docker compose down -v --remove-orphans >/dev/null 2>&1) || true
         rm -f "$runtime_dir/Containerfile.test" "$runtime_dir/docker-compose.yml" \
@@ -165,7 +206,15 @@ fi
         "volumes:" \
         "  state: {}" > "$runtime_dir/docker-compose.yml"
     cd "$runtime_dir"
-    docker compose up -d --build >/dev/null
+    attempt=0
+    until docker compose up -d --build >/dev/null; do
+        attempt=$((attempt + 1))
+        if [ "$attempt" -ge 5 ]; then
+            echo "ERROR: task Compose project did not settle after $attempt attempts" >&2
+            exit 1
+        fi
+        sleep "$attempt"
+    done
     docker compose exec -T probe test -f /state/ready
     docker compose exec -T probe sh -c "echo container-write >/workspace/container-write"
     test "$(cat container-write)" = container-write

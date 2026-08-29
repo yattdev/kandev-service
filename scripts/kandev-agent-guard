@@ -363,9 +363,9 @@ do
     add_rw_bind "$support_path"
 done
 
-path_is_code_repo_gitdir() {
+path_is_approved_repo_gitdir() {
     local path="$1" base rel repo_rel component
-    for base in /data/home/Code "$host_code"; do
+    for base in /data/home/Code /data/repos/workspaces "$host_code"; do
         [[ -n "$base" && "$path" == "$base"/*/.git ]] || continue
         rel="${path#"$base"/}"
         repo_rel="${rel%/.git}"
@@ -403,7 +403,7 @@ for marker in "${git_markers[@]}"; do
         common_rel="$(head -n 1 "$gitdir/commondir")"
         common="$(realpath -e -- "$gitdir/$common_rel")" || deny "missing Git common directory for $marker"
     fi
-    path_is_code_repo_gitdir "$common" || deny "Git common directory is outside an approved Code repository: $common"
+    path_is_approved_repo_gitdir "$common" || deny "Git common directory is outside an approved repository: $common"
 
     # A task-controlled .git file must not be able to nominate some unrelated
     # repository. Git records the reverse link in .git/worktrees/<id>/gitdir;

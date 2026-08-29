@@ -363,3 +363,17 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh /usr/local/bin/codex-sandbox-pr
     /usr/local/bin/kandev-agent-guard /usr/local/bin/kandev-agent-docker-broker \
     /usr/local/bin/kandev-agent-docker-client /usr/local/bin/kandev-agent-docker-token \
     /usr/local/bin/emulator /usr/local/bin/adb
+
+# Optional tested binary overlay while a local agentctl source fix is waiting
+# for an upstream image release. Both binaries are required as a pair: the
+# native executable serves the current container and linux-amd64 is copied into
+# task runtimes. Keeping the overlay in the ordinary build context means
+# update.sh cannot silently discard the fix on the next local image rebuild.
+COPY .local-hotfix/ /opt/kandev-local-hotfix/
+RUN native=/opt/kandev-local-hotfix/agentctl \
+    && remote=/opt/kandev-local-hotfix/agentctl-linux-amd64 \
+    && if [ -e "$native" ] || [ -e "$remote" ]; then \
+         test -x "$native" && test -x "$remote"; \
+         install -m 0755 "$native" /usr/local/bin/agentctl; \
+         install -m 0755 "$remote" /app/apps/backend/bin/agentctl-linux-amd64; \
+       fi

@@ -10,6 +10,8 @@ host.env
 .DS_Store
 __pycache__/
 *.py[cod]
+.local-hotfix/*
+!.local-hotfix/README.md
 *.swp
 *~
 
