@@ -8,6 +8,8 @@ host.env
 
 # ── Editor / OS noise ─────────────────────────────────────────────────────────
 .DS_Store
+__pycache__/
+*.py[cod]
 *.swp
 *~
 

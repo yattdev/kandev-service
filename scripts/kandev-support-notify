@@ -1,0 +1,72 @@
+#!/usr/bin/env node
+"use strict";
+
+// Deliver one host-brokered Support result through Kandev's normal message.add
+// path. The short-lived bearer token arrives over stdin and is never exposed to
+// the coordinator agent or written to disk.
+
+const fs = require("node:fs");
+const crypto = require("node:crypto");
+
+const request = JSON.parse(fs.readFileSync(0, "utf8"));
+for (const field of ["token", "task_id", "session_id", "content"]) {
+  if (typeof request[field] !== "string" || request[field].length === 0) {
+    process.stderr.write(`missing ${field}\n`);
+    process.exit(64);
+  }
+}
+
+const requestId = crypto.randomUUID();
+const socket = new WebSocket(
+  `ws://127.0.0.1:38429/ws?token=${encodeURIComponent(request.token)}`,
+);
+const timeout = setTimeout(() => {
+  process.stderr.write("Kandev Support notification timed out\n");
+  socket.close();
+  process.exit(70);
+}, 15000);
+
+socket.addEventListener("open", () => {
+  socket.send(JSON.stringify({
+    id: requestId,
+    type: "request",
+    action: "message.add",
+    payload: {
+      task_id: request.task_id,
+      session_id: request.session_id,
+      client_message_id: crypto.randomUUID(),
+      content: request.content,
+    },
+  }));
+});
+
+socket.addEventListener("message", (event) => {
+  let message;
+  try {
+    message = JSON.parse(String(event.data));
+  } catch {
+    return;
+  }
+  if (message.id !== requestId) return;
+  clearTimeout(timeout);
+  if (message.type === "error") {
+    process.stderr.write(`${JSON.stringify(message.payload ?? message)}\n`);
+    socket.close();
+    process.exit(70);
+  }
+  if (message.type !== "response") return;
+  const payload = message.payload ?? {};
+  if (typeof payload.id !== "string" || payload.id.length === 0) {
+    process.stderr.write("message.add response omitted durable message id\n");
+    socket.close();
+    process.exit(70);
+  }
+  process.stdout.write(`${JSON.stringify({ message_id: payload.id })}\n`);
+  socket.close();
+});
+
+socket.addEventListener("error", () => {
+  clearTimeout(timeout);
+  process.stderr.write("Kandev Support notification WebSocket failed\n");
+  process.exit(70);
+});

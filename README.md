@@ -402,10 +402,31 @@ unresolved external boundary is `resolution_status: blocked` with return code
 code 70. Request lifecycle and outcome are also written to the user-service
 journal. Requests that failed before a
 worker fix remain terminal and must be replaced with a fresh request.
+Completed results are proactively delivered through Kandev's normal
+`message.add` path to the newest live primary session of the originating
+Coordinator. Delivery uses a five-minute local operator token that is minted
+for one request and revoked immediately; the token never enters the agent
+container. Failed notifications are retained and retried independently, so a
+Coordinator does not need to poll or ask the human to notice a result.
+The notifier accepts only a WebSocket `response` carrying a durable message ID,
+then verifies the request ID exists in the exact target task's message table.
+Busy-session errors and acknowledgements without durable storage remain queued
+for retry; startup audits and repairs receipts written by older notifier code.
+Notification retries run on an independent capped-backoff loop, so a long
+source build or host remediation cannot delay delivery to another Coordinator.
+An initial `BLOCKED` answer is not terminal: the worker automatically requeues
+it for up to two higher-scrutiny passes, carrying the prior evidence forward and
+explicitly auditing agent-facing restrictions versus Support's reviewed host
+authority. Only a blocker that survives those remediation passes is delivered
+as terminal. Writer contention remains queued with capped backoff.
 Delivery runs on the host through a dedicated persistent Codex support thread,
 so it does not contend with an operator's interactive Codex conversation. The
-worker is approval-reviewed and the broker still validates Coordinator identity
-and scopes every request/response to its originating task and workspace.
+worker is approval-reviewed and receives explicit writable scope for both the
+deployment checkout and `~/Code/kandev-source`. This lets it inspect and repair
+platform source rather than incorrectly classifying a locally fixable defect as
+upstream-only; sibling project repositories remain outside its write scope. The
+broker still validates Coordinator identity and scopes every request/response to
+its originating task and workspace.
 Its persistent thread ID is kept outside the repository in the mode-0600 host
 file `~/.config/kandev/support.env`; the user service fails closed if that file
 is absent.
