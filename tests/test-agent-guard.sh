@@ -379,6 +379,11 @@ coordinator_guard sh -ceu '
 ' sh "$coordinator_probe"
 [[ ! -e "$coordinator_probe" ]]
 
+# Coordinator processes are supervised in the background for periodic scope
+# rechecks. Their original stdin must remain connected for ACP JSON-RPC.
+printf 'coordinator-stdin\n' \
+    | coordinator_guard sh -ceu 'IFS= read -r line; test "$line" = coordinator-stdin'
+
 if (cd / && "$GUARD" -- true) 2>/dev/null; then
     echo "ERROR: guard accepted an unscoped root workspace" >&2
     exit 1

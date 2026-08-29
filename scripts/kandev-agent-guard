@@ -482,7 +482,11 @@ if [[ -z "$coordinator_task_id" ]]; then
     exec "${run_guarded[@]}"
 fi
 
-"${run_guarded[@]}" &
+# Bash otherwise connects an asynchronous command's stdin to /dev/null when
+# job control is unavailable. ACP agents use stdin for their JSON-RPC channel,
+# so explicitly preserve the launcher's original descriptor while the parent
+# remains alive to perform authorization rechecks.
+"${run_guarded[@]}" <&0 &
 guarded_pid=$!
 forward_signal() {
     kill -TERM "$guarded_pid" 2>/dev/null || true
