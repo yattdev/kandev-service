@@ -94,6 +94,19 @@ RUN if getent group docker > /dev/null 2>&1; then \
     fi \
     && usermod -aG docker kandev
 
+# ── KVM device group ──────────────────────────────────────────────────────────
+# `group_add` gives the container's initial process this host GID, but Kandev's
+# entrypoint/agentctl switches to the `kandev` user and recomputes supplementary
+# groups from /etc/group. Without a matching image group, that transition drops
+# KVM even though a fresh `docker exec -u kandev` misleadingly works.
+ARG KVM_GID=993
+RUN KVM_GROUP="$(getent group "${KVM_GID}" | cut -d: -f1)" \
+    && if [ -z "$KVM_GROUP" ]; then \
+        groupadd -g "${KVM_GID}" kvm; \
+        KVM_GROUP=kvm; \
+    fi \
+    && usermod -aG "$KVM_GROUP" kandev
+
 # NOTE: the host-path wrapper that shadows this CLI is installed near the end of
 # this file, so that editing it does not invalidate the cache for the expensive
 # toolchain and Chrome layers below.

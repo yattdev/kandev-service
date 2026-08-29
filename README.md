@@ -205,6 +205,13 @@ backlink-verified Git common directory read-write. Sibling tasks, unrelated
 repositories, the Code root, the raw Docker socket, and host privilege
 escalation remain unavailable.
 
+The policy is enforced in both the profile/session launch snapshot and the
+persisted per-session runtime configuration. Kandev applies runtime selections
+after the profile, so protecting only the profile is insufficient: a stale
+`runtime_config.mode=agent` would silently restore Codex's inner
+`workspace-write` sandbox. Database triggers prevent later UI/turn-state writes
+from reintroducing that override.
+
 For an ordinary linked worktree, the shared Git common directory is writable
 for objects and refs, but its `worktrees/` registry is overlaid read-only and
 only that task's own administrative entry is rebound read-write. This preserves
@@ -451,7 +458,11 @@ stop task-owned instances with `adb -s <serial> emu kill` when QA finishes.
 Host prerequisites are `~/Android/Sdk/emulator/emulator`, at least one AVD under
 `~/.android/avd`, `/dev/kvm`, and the correct KVM group ID. The office default is
 `KVM_GID=993`; override it in the launch environment if `getent group kvm`
-reports another value, then rebuild/recreate Kandev.
+reports another value, then rebuild/recreate Kandev. The value is both a Compose
+runtime `group_add` and a Dockerfile build argument: the image creates the
+matching group and adds `kandev` to it so the entrypoint/agentctl user transition
+cannot discard access. A direct `docker exec -u kandev` check alone is
+insufficient because Docker applies `group_add` specially to that fresh exec.
 
 ### Browser tests (headless Chrome)
 

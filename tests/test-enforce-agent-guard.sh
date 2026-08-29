@@ -28,7 +28,8 @@ connection.executescript(
     CREATE TABLE task_sessions (
         id TEXT PRIMARY KEY,
         agent_profile_id TEXT,
-        agent_profile_snapshot TEXT DEFAULT '{}'
+        agent_profile_snapshot TEXT DEFAULT '{}',
+        metadata TEXT DEFAULT '{}'
     );
     INSERT INTO agents(id, name) VALUES
         ('codex', 'codex-acp'),
@@ -43,10 +44,10 @@ connection.executescript(
             {"flag":"--allow-all-urls","enabled":false},
             {"flag":"--no-ask-user","enabled":false}
         ]', '');
-    INSERT INTO task_sessions(id, agent_profile_id, agent_profile_snapshot) VALUES
-        ('codex-session', 'codex-existing', '{"mode":"agent","auto_approve":false,"dangerously_skip_permissions":false,"command_prefix":null}'),
-        ('claude-session', 'claude-existing', '{"mode":"plan","auto_approve":false,"dangerously_skip_permissions":false}'),
-        ('copilot-session', 'copilot-existing', '{"mode":"agent","cli_flags":[]}');
+    INSERT INTO task_sessions(id, agent_profile_id, agent_profile_snapshot, metadata) VALUES
+        ('codex-session', 'codex-existing', '{"mode":"agent","auto_approve":false,"dangerously_skip_permissions":false,"command_prefix":null}', '{"session_mode":"agent","runtime_config":{"mode":"agent","config_options":{"mode":"agent"}}}'),
+        ('claude-session', 'claude-existing', '{"mode":"plan","auto_approve":false,"dangerously_skip_permissions":false}', '{"session_mode":"plan","runtime_config":{"mode":"plan","config_options":{"mode":"plan"}}}'),
+        ('copilot-session', 'copilot-existing', '{"mode":"agent","cli_flags":[]}', '{}');
     """
 )
 connection.commit()
@@ -93,6 +94,12 @@ for session_id, expected_mode in (
     assert snapshot["auto_approve"] is True
     assert snapshot["dangerously_skip_permissions"] is True
     assert snapshot["command_prefix"] == guard
+    metadata = __import__("json").loads(connection.execute(
+        "SELECT metadata FROM task_sessions WHERE id=?", (session_id,)
+    ).fetchone()[0])
+    assert metadata["session_mode"] == expected_mode
+    assert metadata["runtime_config"]["mode"] == expected_mode
+    assert metadata["runtime_config"]["config_options"]["mode"] == expected_mode
 
 snapshot = __import__("json").loads(connection.execute(
     "SELECT agent_profile_snapshot FROM task_sessions WHERE id='copilot-session'"
@@ -121,13 +128,19 @@ assert connection.execute(
 # New sessions and later snapshot edits cannot resurrect a provider's nested
 # permission sandbox when a long-lived session is resumed.
 connection.execute(
-    "INSERT INTO task_sessions(id, agent_profile_id, agent_profile_snapshot) VALUES (?, ?, ?)",
-    ("codex-new-session", "codex-new", '{"mode":"agent"}'),
+    "INSERT INTO task_sessions(id, agent_profile_id, agent_profile_snapshot, metadata) VALUES (?, ?, ?, ?)",
+    ("codex-new-session", "codex-new", '{"mode":"agent"}', '{"session_mode":"agent","runtime_config":{"mode":"agent","config_options":{"mode":"agent"}}}'),
 )
 snapshot = __import__("json").loads(connection.execute(
     "SELECT agent_profile_snapshot FROM task_sessions WHERE id='codex-new-session'"
 ).fetchone()[0])
 assert snapshot["mode"] == "agent-full-access" and snapshot["command_prefix"] == guard
+metadata = __import__("json").loads(connection.execute(
+    "SELECT metadata FROM task_sessions WHERE id='codex-new-session'"
+).fetchone()[0])
+assert metadata["session_mode"] == "agent-full-access"
+assert metadata["runtime_config"]["mode"] == "agent-full-access"
+assert metadata["runtime_config"]["config_options"]["mode"] == "agent-full-access"
 connection.execute(
     "UPDATE task_sessions SET agent_profile_snapshot=? WHERE id='codex-new-session'",
     ('{"mode":"agent","command_prefix":""}',),
@@ -136,6 +149,16 @@ snapshot = __import__("json").loads(connection.execute(
     "SELECT agent_profile_snapshot FROM task_sessions WHERE id='codex-new-session'"
 ).fetchone()[0])
 assert snapshot["mode"] == "agent-full-access" and snapshot["command_prefix"] == guard
+connection.execute(
+    "UPDATE task_sessions SET metadata=? WHERE id='codex-new-session'",
+    ('{"session_mode":"agent","runtime_config":{"mode":"agent","config_options":{"mode":"agent"}}}',),
+)
+metadata = __import__("json").loads(connection.execute(
+    "SELECT metadata FROM task_sessions WHERE id='codex-new-session'"
+).fetchone()[0])
+assert metadata["session_mode"] == "agent-full-access"
+assert metadata["runtime_config"]["mode"] == "agent-full-access"
+assert metadata["runtime_config"]["config_options"]["mode"] == "agent-full-access"
 connection.close()
 PY
 

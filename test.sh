@@ -911,6 +911,17 @@ else
   fail "/dev/kvm is absent or unusable in the running container"
 fi
 
+if docker exec -u root kandev sh -ceu '
+  gid="$(stat -c %g /dev/kvm)"
+  group="$(getent group "$gid" | cut -d: -f1)"
+  test -n "$group"
+  id -G kandev | tr " " "\n" | grep -qx "$gid"
+' >/dev/null 2>&1; then
+  ok "agentctl user transitions preserve the host KVM group"
+else
+  fail "image /etc/group does not preserve KVM access after switching to kandev"
+fi
+
 AVD_LIST="$(docker exec -u kandev kandev emulator -list-avds 2>/dev/null || true)"
 if [[ -n "$AVD_LIST" ]]; then
   ok "emulator lists the host AVD catalogue read-only"

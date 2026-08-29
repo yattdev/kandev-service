@@ -18,6 +18,8 @@ services:
       args:
         BASE_IMAGE: ghcr.io/kdlbs/kandev:latest
         BASE_IMAGE_ID: ${KANDEV_BASE_IMAGE_ID:-unknown}
+        DOCKER_GID: ${DOCKER_GID:-984}
+        KVM_GID: ${KVM_GID:-993}
     image: kandev-local:latest
 
     # Docker's default /dev/shm is 64 MB, which is far too small for Chrome:
@@ -105,8 +107,9 @@ services:
       # Forwards the host Docker daemon socket into the container so that
       # `docker` and `docker compose` commands run against the host daemon.
       # The kandev user is added to the docker group (GID 984) during the image
-      # build; group_add ensures the running process inherits that GID even if
-      # the group table inside the container is not fully synchronised.
+      # build; group_add ensures the running process inherits that GID. Device
+      # GIDs are also baked into /etc/group because agentctl's user transition
+      # recomputes supplementary groups from that database.
       # Override DOCKER_GID if your host docker group GID differs from 984:
       #   DOCKER_GID=<gid> docker compose up -d
       - /var/run/docker.sock:/var/run/docker.sock

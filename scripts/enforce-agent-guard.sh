@@ -85,6 +85,7 @@ DROP TRIGGER IF EXISTS agent_profiles_require_guard_insert;
 DROP TRIGGER IF EXISTS agent_profiles_require_guard_update;
 DROP TRIGGER IF EXISTS task_sessions_require_guard_insert;
 DROP TRIGGER IF EXISTS task_sessions_require_guard_update;
+DROP TRIGGER IF EXISTS task_sessions_require_full_access_metadata_update;
 
 CREATE TRIGGER agent_profiles_require_guard_insert
 AFTER INSERT ON agent_profiles
@@ -192,6 +193,38 @@ WHERE EXISTS (
     WHERE ap.id = ts.agent_profile_id AND a.name = 'copilot-acp'
 );
 
+-- Kandev persists live per-session selections separately from the immutable
+-- profile snapshot. That runtime layer is applied after the profile and wins.
+-- Rewrite it too; otherwise an old `mode: agent` silently restores Codex's
+-- inner workspace-write sandbox even though the profile says full access.
+UPDATE task_sessions AS ts
+SET metadata = json_set(
+        CASE
+            WHEN json_valid(ts.metadata) AND json_type(ts.metadata) = 'object'
+            THEN ts.metadata ELSE '{}'
+        END,
+        '$.session_mode', CASE
+            WHEN (SELECT a.name FROM agent_profiles ap JOIN agents a ON a.id = ap.agent_id
+                  WHERE ap.id = ts.agent_profile_id) = 'codex-acp'
+            THEN 'agent-full-access'
+            ELSE 'bypassPermissions'
+        END,
+        '$.runtime_config.mode', CASE
+            WHEN (SELECT a.name FROM agent_profiles ap JOIN agents a ON a.id = ap.agent_id
+                  WHERE ap.id = ts.agent_profile_id) = 'codex-acp'
+            THEN 'agent-full-access'
+            ELSE 'bypassPermissions'
+        END,
+        '$.runtime_config.config_options.mode', CASE
+            WHEN (SELECT a.name FROM agent_profiles ap JOIN agents a ON a.id = ap.agent_id
+                  WHERE ap.id = ts.agent_profile_id) = 'codex-acp'
+            THEN 'agent-full-access'
+            ELSE 'bypassPermissions'
+        END
+    )
+WHERE (SELECT a.name FROM agent_profiles ap JOIN agents a ON a.id = ap.agent_id
+       WHERE ap.id = ts.agent_profile_id) IN ('codex-acp', 'claude-acp');
+
 CREATE TRIGGER task_sessions_require_guard_insert
 AFTER INSERT ON task_sessions
 WHEN EXISTS (SELECT 1 FROM agent_profiles ap WHERE ap.id = NEW.agent_profile_id)
@@ -217,6 +250,31 @@ BEGIN
             END
         )
     WHERE id = NEW.id;
+    UPDATE task_sessions
+    SET metadata = json_set(
+            CASE
+                WHEN json_valid(NEW.metadata) AND json_type(NEW.metadata) = 'object'
+                THEN NEW.metadata ELSE '{}'
+            END,
+            '$.session_mode', CASE
+                WHEN (SELECT a.name FROM agent_profiles ap JOIN agents a ON a.id = ap.agent_id
+                      WHERE ap.id = NEW.agent_profile_id) = 'codex-acp'
+                THEN 'agent-full-access' ELSE 'bypassPermissions'
+            END,
+            '$.runtime_config.mode', CASE
+                WHEN (SELECT a.name FROM agent_profiles ap JOIN agents a ON a.id = ap.agent_id
+                      WHERE ap.id = NEW.agent_profile_id) = 'codex-acp'
+                THEN 'agent-full-access' ELSE 'bypassPermissions'
+            END,
+            '$.runtime_config.config_options.mode', CASE
+                WHEN (SELECT a.name FROM agent_profiles ap JOIN agents a ON a.id = ap.agent_id
+                      WHERE ap.id = NEW.agent_profile_id) = 'codex-acp'
+                THEN 'agent-full-access' ELSE 'bypassPermissions'
+            END
+        )
+    WHERE id = NEW.id
+      AND (SELECT a.name FROM agent_profiles ap JOIN agents a ON a.id = ap.agent_id
+           WHERE ap.id = NEW.agent_profile_id) IN ('codex-acp', 'claude-acp');
     UPDATE task_sessions
     SET agent_profile_snapshot = json_set(
             agent_profile_snapshot, '$.cli_flags',
@@ -254,6 +312,31 @@ BEGIN
         )
     WHERE id = NEW.id;
     UPDATE task_sessions
+    SET metadata = json_set(
+            CASE
+                WHEN json_valid(NEW.metadata) AND json_type(NEW.metadata) = 'object'
+                THEN NEW.metadata ELSE '{}'
+            END,
+            '$.session_mode', CASE
+                WHEN (SELECT a.name FROM agent_profiles ap JOIN agents a ON a.id = ap.agent_id
+                      WHERE ap.id = NEW.agent_profile_id) = 'codex-acp'
+                THEN 'agent-full-access' ELSE 'bypassPermissions'
+            END,
+            '$.runtime_config.mode', CASE
+                WHEN (SELECT a.name FROM agent_profiles ap JOIN agents a ON a.id = ap.agent_id
+                      WHERE ap.id = NEW.agent_profile_id) = 'codex-acp'
+                THEN 'agent-full-access' ELSE 'bypassPermissions'
+            END,
+            '$.runtime_config.config_options.mode', CASE
+                WHEN (SELECT a.name FROM agent_profiles ap JOIN agents a ON a.id = ap.agent_id
+                      WHERE ap.id = NEW.agent_profile_id) = 'codex-acp'
+                THEN 'agent-full-access' ELSE 'bypassPermissions'
+            END
+        )
+    WHERE id = NEW.id
+      AND (SELECT a.name FROM agent_profiles ap JOIN agents a ON a.id = ap.agent_id
+           WHERE ap.id = NEW.agent_profile_id) IN ('codex-acp', 'claude-acp');
+    UPDATE task_sessions
     SET agent_profile_snapshot = json_set(
             agent_profile_snapshot, '$.cli_flags',
             json(COALESCE((SELECT ap.cli_flags FROM agent_profiles ap
@@ -262,6 +345,54 @@ BEGIN
     WHERE id = NEW.id
       AND EXISTS (SELECT 1 FROM agent_profiles ap JOIN agents a ON a.id = ap.agent_id
                   WHERE ap.id = NEW.agent_profile_id AND a.name = 'copilot-acp');
+END;
+
+-- Runtime config is refreshed after turns and through the UI. Prevent either
+-- path from reintroducing a provider sandbox inside the kernel guard.
+CREATE TRIGGER task_sessions_require_full_access_metadata_update
+AFTER UPDATE OF metadata ON task_sessions
+WHEN EXISTS (
+    SELECT 1
+    FROM agent_profiles ap JOIN agents a ON a.id = ap.agent_id
+    WHERE ap.id = NEW.agent_profile_id
+      AND (
+          (a.name = 'codex-acp' AND (
+              COALESCE(json_extract(NEW.metadata, '$.session_mode'), '') != 'agent-full-access'
+              OR COALESCE(json_extract(NEW.metadata, '$.runtime_config.mode'), '') != 'agent-full-access'
+              OR COALESCE(json_extract(NEW.metadata, '$.runtime_config.config_options.mode'), '') != 'agent-full-access'
+          ))
+          OR
+          (a.name = 'claude-acp' AND (
+              COALESCE(json_extract(NEW.metadata, '$.session_mode'), '') != 'bypassPermissions'
+              OR COALESCE(json_extract(NEW.metadata, '$.runtime_config.mode'), '') != 'bypassPermissions'
+              OR COALESCE(json_extract(NEW.metadata, '$.runtime_config.config_options.mode'), '') != 'bypassPermissions'
+          ))
+      )
+)
+BEGIN
+    UPDATE task_sessions
+    SET metadata = json_set(
+            CASE
+                WHEN json_valid(NEW.metadata) AND json_type(NEW.metadata) = 'object'
+                THEN NEW.metadata ELSE '{}'
+            END,
+            '$.session_mode', CASE
+                WHEN (SELECT a.name FROM agent_profiles ap JOIN agents a ON a.id = ap.agent_id
+                      WHERE ap.id = NEW.agent_profile_id) = 'codex-acp'
+                THEN 'agent-full-access' ELSE 'bypassPermissions'
+            END,
+            '$.runtime_config.mode', CASE
+                WHEN (SELECT a.name FROM agent_profiles ap JOIN agents a ON a.id = ap.agent_id
+                      WHERE ap.id = NEW.agent_profile_id) = 'codex-acp'
+                THEN 'agent-full-access' ELSE 'bypassPermissions'
+            END,
+            '$.runtime_config.config_options.mode', CASE
+                WHEN (SELECT a.name FROM agent_profiles ap JOIN agents a ON a.id = ap.agent_id
+                      WHERE ap.id = NEW.agent_profile_id) = 'codex-acp'
+                THEN 'agent-full-access' ELSE 'bypassPermissions'
+            END
+        )
+    WHERE id = NEW.id;
 END;
 COMMIT;
 """
@@ -303,6 +434,16 @@ COMMIT;
            OR COALESCE(json_extract(ts.agent_profile_snapshot, '$.dangerously_skip_permissions'), 0) != 1
            OR (a.name = 'codex-acp' AND json_extract(ts.agent_profile_snapshot, '$.mode') != 'agent-full-access')
            OR (a.name = 'claude-acp' AND json_extract(ts.agent_profile_snapshot, '$.mode') != 'bypassPermissions')
+           OR (a.name = 'codex-acp' AND (
+               COALESCE(json_extract(ts.metadata, '$.session_mode'), '') != 'agent-full-access'
+               OR COALESCE(json_extract(ts.metadata, '$.runtime_config.mode'), '') != 'agent-full-access'
+               OR COALESCE(json_extract(ts.metadata, '$.runtime_config.config_options.mode'), '') != 'agent-full-access'
+           ))
+           OR (a.name = 'claude-acp' AND (
+               COALESCE(json_extract(ts.metadata, '$.session_mode'), '') != 'bypassPermissions'
+               OR COALESCE(json_extract(ts.metadata, '$.runtime_config.mode'), '') != 'bypassPermissions'
+               OR COALESCE(json_extract(ts.metadata, '$.runtime_config.config_options.mode'), '') != 'bypassPermissions'
+           ))
         """,
         (prefix,),
     ).fetchone()[0]
