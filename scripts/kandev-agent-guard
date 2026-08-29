@@ -15,6 +15,14 @@ command -v bwrap >/dev/null 2>&1 || deny "bubblewrap is not installed"
 
 cwd="$(pwd -P)" || deny "cannot resolve working directory"
 host_code="${KANDEV_HOST_CODE_DIR:-}"
+kandev_db="${KANDEV_DB:-/data/data/kandev.db}"
+coordinator_source="/data/home/Code/coordinator"
+coordinator_host_source="${host_code:+$host_code/coordinator}"
+coordinator_task_id=""
+coordinator_workspace_id=""
+coordinator_workspace_name=""
+declare -a coordinator_scope_paths
+coordinator_scope_paths=()
 
 # Return the first child below a managed root. Dot-prefixed children are
 # intentionally excluded so recovery/staging directories can never become an
@@ -141,6 +149,113 @@ add_rw_bind() {
     bound["$resolved"]=1
 }
 
+add_coordinator_rw_bind() {
+    local kind="$1" path="$2" resolved child
+    [[ -e "$path" && ! -L "$path" ]] || return 0
+    resolved="$(realpath -e -- "$path")" || deny "cannot resolve coordinator workspace path: $path"
+    case "$kind:$resolved" in
+        task:/data/tasks/*)
+            child="$(managed_child /data/tasks "$resolved")" \
+                || deny "invalid coordinator task scope: $resolved"
+            [[ "$child" == "$resolved" ]] \
+                || deny "coordinator task scope is not a direct task root: $resolved"
+            ;;
+        repo:/data/home/Code/*|folder:/data/home/Code/*)
+            ;;
+        repo:/data/repos/workspaces/"$coordinator_workspace_id"/*|folder:/data/repos/workspaces/"$coordinator_workspace_id"/*)
+            ;;
+        repo:/data/tasks/*|folder:/data/tasks/*)
+            ;;
+        *)
+            deny "registered coordinator workspace path is outside approved roots: $resolved"
+            ;;
+    esac
+    [[ "$resolved" != "/data/home/Code" && "$resolved" != "/data/tasks" ]] \
+        || deny "coordinator scope cannot make a managed parent writable: $resolved"
+    [[ -z "${bound[$resolved]:-}" ]] || return 0
+    bwrap_args+=(--bind "$resolved" "$resolved")
+    bound["$resolved"]=1
+    coordinator_scope_paths+=("$kind:$resolved")
+}
+
+coordinator_metadata() {
+    local task_dir rows attested_task attested_session attested_workspace
+    [[ -f "$kandev_db" && "$writable_root" == /data/tasks/* ]] || return 1
+    attested_task="${KANDEV_TASK_ID:-}"
+    attested_session="${KANDEV_SESSION_ID:-}"
+    attested_workspace="${KANDEV_WORKSPACE_ID:-}"
+    [[ "$attested_task" =~ ^[0-9a-f-]{36}$ \
+       && "$attested_session" =~ ^[0-9a-f-]{36}$ \
+       && "$attested_workspace" =~ ^[0-9a-f-]{36}$ ]] || return 1
+    task_dir="${writable_root#/data/tasks/}"
+    [[ "$task_dir" != */* && "$task_dir" =~ ^[A-Za-z0-9_-]+$ ]] || return 1
+    rows="$(sqlite3 -noheader -separator '|' "file:$kandev_db?mode=ro" "
+        SELECT DISTINCT t.id, t.workspace_id, w.name
+        FROM task_environments te
+        JOIN tasks t ON t.id = te.task_id
+        JOIN workspaces w ON w.id = t.workspace_id
+        WHERE te.task_dir_name = '$task_dir'
+          AND t.id = '$attested_task'
+          AND t.workspace_id = '$attested_workspace'
+          AND t.archived_at IS NULL
+          AND EXISTS (
+              SELECT 1 FROM task_sessions ts
+              WHERE ts.id = '$attested_session' AND ts.task_id = t.id
+                AND ts.state IN ('CREATED', 'STARTING', 'RUNNING', 'WAITING_FOR_INPUT')
+          )
+          AND (SELECT COUNT(*) FROM task_repositories tr WHERE tr.task_id = t.id) = 1
+          AND EXISTS (
+              SELECT 1
+              FROM task_repositories tr
+              JOIN repositories r ON r.id = tr.repository_id
+              WHERE tr.task_id = t.id
+                AND r.workspace_id = t.workspace_id
+                AND r.local_path = '$coordinator_source'
+                AND r.deleted_at IS NULL
+          );
+    ")" || return 1
+    [[ -n "$rows" && "$rows" != *$'\n'* ]] || return 1
+    IFS='|' read -r coordinator_task_id coordinator_workspace_id coordinator_workspace_name <<<"$rows"
+    [[ "$coordinator_task_id" =~ ^[0-9a-f-]{36}$ \
+       && "$coordinator_workspace_id" =~ ^[0-9a-f-]{36}$ ]] || return 1
+}
+
+coordinator_still_authorized() {
+    local prior_task="$coordinator_task_id" prior_workspace="$coordinator_workspace_id"
+    coordinator_metadata || return 1
+    [[ "$coordinator_task_id" == "$prior_task" \
+       && "$coordinator_workspace_id" == "$prior_workspace" ]]
+}
+
+audit_coordinator_scope() {
+    local event="$1"
+    shift
+    /usr/bin/python3 - "$event" "$coordinator_task_id" "$coordinator_workspace_id" \
+        "$cwd" "${coordinator_scope_paths[@]}" <<'PY'
+import datetime
+import json
+import os
+import sys
+
+event, task_id, workspace_id, cwd, *paths = sys.argv[1:]
+audit_path = os.environ.get(
+    "KANDEV_COORDINATOR_SCOPE_AUDIT_LOG",
+    "/data/logs/coordinator-workspace-audit.jsonl",
+)
+record = {
+    "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    "event": event,
+    "task_id": task_id,
+    "workspace_id": workspace_id,
+    "cwd": cwd,
+    "rw_scope": paths,
+}
+os.makedirs(os.path.dirname(audit_path), mode=0o700, exist_ok=True)
+with open(audit_path, "a", encoding="utf-8") as handle:
+    handle.write(json.dumps(record, sort_keys=True) + "\n")
+PY
+}
+
 # Language runtimes, package caches, and per-agent state remain usable. SSH and
 # the global Git config are deliberately omitted and therefore stay read-only.
 for support_path in \
@@ -178,11 +293,13 @@ path_is_code_repo_gitdir() {
 }
 
 # Linked task worktrees store objects/refs in the source repository's .git
-# directory. Bind only that one Git common-dir; sibling working trees remain RO.
-coordinator_source="/data/home/Code/coordinator"
-coordinator_host_source="${host_code:+$host_code/coordinator}"
+# directory. The common directory must be writable for normal Git operations,
+# but its worktrees registry is overlaid read-only and only this worktree's
+# administrative entry is rebound writable. This prevents an ordinary task
+# from corrupting a sibling worktree's index/HEAD metadata.
 declare -a git_markers
 git_markers=("$writable_root/.git")
+coordinator_backlink=0
 while IFS= read -r -d '' marker; do
     git_markers+=("$marker")
 done < <(find "$writable_root" -mindepth 2 -maxdepth 2 -name .git -print0 2>/dev/null)
@@ -222,28 +339,90 @@ for marker in "${git_markers[@]}"; do
         bound["$common"]=1
     fi
 
-    # Coordinator worktrees maintain a shared versioned knowledge base in the
-    # canonical coordinator checkout. The verified worktree backlink above is
-    # the authority: only worktrees belonging to that repository receive its
-    # shared working tree as an additional writable bind.
+    if [[ -d "$common/worktrees" ]]; then
+        bwrap_args+=(--ro-bind "$common/worktrees" "$common/worktrees")
+        bwrap_args+=(--bind "$gitdir" "$gitdir")
+    fi
+
+    # The backlink is necessary but not sufficient for coordinator elevation;
+    # live platform metadata is validated below on every guarded launch.
     source_root="${common%/.git}"
     if [[ "$source_root" == "$coordinator_source" \
           || ( -n "$coordinator_host_source" && "$source_root" == "$coordinator_host_source" ) ]]; then
-        if [[ -z "${bound[$source_root]:-}" ]]; then
-            bwrap_args+=(--bind "$source_root" "$source_root")
-            bound["$source_root"]=1
-        fi
+        coordinator_backlink=1
     fi
 done
+
+# A validated Coordinator receives exact registered resources from its own
+# workspace. The parent Code/tasks mounts remain read-only, and eligibility is
+# derived from the live task/session registration rather than an agent claim or
+# directory name. Re-evaluation below revokes a long-lived process promptly if
+# that registration ceases to be valid.
+if [[ "$coordinator_backlink" == "1" ]] && coordinator_metadata; then
+    while IFS='|' read -r kind path; do
+        [[ -n "$kind" && -n "$path" ]] || continue
+        add_coordinator_rw_bind "$kind" "$path"
+    done < <(sqlite3 -noheader -separator '|' "file:$kandev_db?mode=ro" "
+        SELECT 'task', '/data/tasks/' || te.task_dir_name
+        FROM task_environments te
+        JOIN tasks t ON t.id = te.task_id
+        WHERE t.workspace_id = '$coordinator_workspace_id'
+          AND t.archived_at IS NULL
+          AND te.task_dir_name <> ''
+        UNION
+        SELECT 'repo', r.local_path
+        FROM repositories r
+        WHERE r.workspace_id = '$coordinator_workspace_id'
+          AND r.deleted_at IS NULL
+          AND r.local_path <> ''
+        UNION
+        SELECT 'folder', twf.local_path
+        FROM task_workspace_folders twf
+        JOIN tasks t ON t.id = twf.task_id
+        WHERE t.workspace_id = '$coordinator_workspace_id'
+          AND t.archived_at IS NULL
+          AND twf.local_path <> '';
+    ")
+    audit_coordinator_scope "scope_granted" \
+        || deny "cannot audit coordinator workspace scope"
+fi
 
 if [[ "${KANDEV_AGENT_GUARD_DEBUG:-0}" == "1" ]]; then
     echo "$GUARD_NAME: cwd=$cwd writable_root=$writable_root" >&2
     for path in "${!bound[@]}"; do echo "$GUARD_NAME: rw=$path" >&2; done
 fi
 
-exec bwrap "${bwrap_args[@]}" \
-    --setenv KANDEV_AGENT_GUARD_ACTIVE 1 \
-    --setenv TMPDIR /tmp \
-    "${agent_docker_env[@]}" \
-    --chdir "$cwd" \
+run_guarded=(
+    bwrap "${bwrap_args[@]}"
+    --setenv KANDEV_AGENT_GUARD_ACTIVE 1
+    --setenv TMPDIR /tmp
+    "${agent_docker_env[@]}"
+    --chdir "$cwd"
     -- "$@"
+)
+
+if [[ -z "$coordinator_task_id" ]]; then
+    exec "${run_guarded[@]}"
+fi
+
+"${run_guarded[@]}" &
+guarded_pid=$!
+forward_signal() {
+    kill -TERM "$guarded_pid" 2>/dev/null || true
+}
+trap forward_signal HUP INT TERM
+authorization_ticks=0
+while kill -0 "$guarded_pid" 2>/dev/null; do
+    sleep 1
+    kill -0 "$guarded_pid" 2>/dev/null || break
+    authorization_ticks=$((authorization_ticks + 1))
+    (( authorization_ticks >= 15 )) || continue
+    authorization_ticks=0
+    if ! coordinator_still_authorized; then
+        audit_coordinator_scope "scope_revoked" || true
+        kill -TERM "$guarded_pid" 2>/dev/null || true
+        wait "$guarded_pid" 2>/dev/null || true
+        deny "coordinator workspace authorization was revoked"
+    fi
+done
+wait "$guarded_pid"

@@ -149,7 +149,8 @@ def main() -> None:
                     id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, archived_at TEXT
                 );
                 CREATE TABLE task_environments (
-                    task_id TEXT NOT NULL, workspace_path TEXT, task_dir_name TEXT
+                    task_id TEXT NOT NULL, workspace_path TEXT, task_dir_name TEXT,
+                    updated_at TEXT
                 );
                 CREATE TABLE repositories (
                     id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, local_path TEXT,
@@ -224,6 +225,12 @@ def main() -> None:
         expect_denied(
             lambda: broker.coordinator_context(Path("/data/home/Code/coordinator")),
             "unidentified shared coordinator checkout received source authority",
+        )
+        expect_denied(
+            lambda: broker.workspace_task_probe(
+                coordinator, "44444444-4444-4444-4444-444444444444"
+            ),
+            "unknown/cross-workspace task received coordinator probe",
         )
 
         same_workspace_info = {

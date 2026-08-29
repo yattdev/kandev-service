@@ -322,10 +322,15 @@ allows read-write bind mounts only when their source resolves inside that
 task's own root. Raw `docker run`, raw API
 access, and the host socket remain unavailable.
 
-Coordinator worktrees linked to `/data/home/Code/coordinator` additionally
-receive that one canonical checkout read-write so they can fast-forward and
-publish the shared `PROMPT.md` knowledge base. Other source repositories and
-the `Code` root remain read-only.
+Coordinator worktrees linked to `/data/home/Code/coordinator` are elevated only
+when the active task/environment, single registered coordinator repository,
+workspace, and Git backlink all agree. A validated Coordinator receives exact
+active task roots, registered repository checkouts, and registered folder
+sources in that `workspace_id` read-write, including the canonical coordinator
+checkout. The Code/task parents and every other workspace remain read-only.
+Eligibility is rechecked every 15 seconds; losing it terminates the guarded
+process. Grants/revocations are recorded in
+`/data/logs/coordinator-workspace-audit.jsonl` (scope audit, not per-file audit).
 
 Coordinator worktrees receive a separate, narrower `docker kandev source`
 capability. The broker resolves the coordinator task and `workspace_id` from
@@ -339,6 +344,12 @@ qualifies only when its single registered repository is
 ambiguous shared main checkout. Requests are audited in
 `/data/logs/coordinator-source-audit.jsonl`.
 
+The same broker exposes `docker kandev workspace probe <task-uuid>` to a
+validated Coordinator. It resolves a same-workspace target from Kandev metadata
+and runs a fresh guard-rooted mount/write/`git add --dry-run` check, avoiding the
+invalid inference that another agent's mounts can be read from the
+Coordinator's private namespace.
+
 **Standing owner authorization:** a broker-validated workspace Coordinator may
 autonomously use the supported `list`, curated `inspect`, bounded `logs`, and
 logical `db-dump` operations for legitimate work requested by a task in the
@@ -347,9 +358,10 @@ production-like logs or logical dumps delivered to the requesting task's
 isolated environment. The broker's mapping and target eligibility checks are
 authoritative; Kandev cross-task document/list access is not a prerequisite.
 Use the minimum data, record the handoff, and remove sensitive artifacts
-promptly. This standing authorization does not expand the command set or allow
-raw Docker, arbitrary exec, credentials, source mutation, destructive or
-cross-workspace actions, unsupported exports, or bypassing a broker denial.
+promptly. This standing authorization does not expand the Docker command set or
+allow raw Docker, arbitrary container exec, credentials, cross-workspace
+actions, unsupported exports, or bypassing a broker denial. Filesystem mutation
+is allowed only on exact registered resources in the Coordinator's workspace.
 
 The current guard confines writes, not reads between same-UID agents. Treat DB
 dump inboxes and container logs as potentially sensitive, keep them short-lived,

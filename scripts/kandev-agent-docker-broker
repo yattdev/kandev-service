@@ -56,6 +56,7 @@ TASK_ID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
     r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
+TASK_DIR_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 AUDIT_LOCK = threading.Lock()
 EXPORT_LOCK = threading.Lock()
 
@@ -866,6 +867,101 @@ def source_help() -> str:
     )
 
 
+def workspace_help() -> str:
+    return (
+        "Coordinator workspace commands:\n"
+        "  docker kandev workspace probe <task-uuid>\n"
+    )
+
+
+def workspace_task_probe(context: dict[str, str], target_task_id: str) -> dict[str, Any]:
+    """Run a fresh guard-rooted writability probe for one same-workspace task."""
+    if not TASK_ID_RE.fullmatch(target_task_id):
+        raise BrokerError("target task ID must be a full UUID")
+    with kandev_db() as database:
+        row = database.execute(
+            """
+            SELECT te.task_dir_name, te.workspace_path
+            FROM tasks t
+            JOIN task_environments te ON te.task_id = t.id
+            WHERE t.id = ? AND t.workspace_id = ? AND t.archived_at IS NULL
+              AND te.task_dir_name <> ''
+            ORDER BY te.updated_at DESC
+            LIMIT 1
+            """,
+            (target_task_id, context["workspace_id"]),
+        ).fetchone()
+    if row is None:
+        raise BrokerError("target task has no active task-scoped workspace")
+    task_dir_name = str(row["task_dir_name"])
+    if not TASK_DIR_RE.fullmatch(task_dir_name):
+        raise BrokerError("target task has an invalid task directory")
+    task_root = (Path("/data/tasks") / task_dir_name).resolve(strict=True)
+    if task_root.parent != Path("/data/tasks"):
+        raise BrokerError("target task root escapes the managed task directory")
+
+    workspace_path = Path(str(row["workspace_path"] or ""))
+    try:
+        probe_cwd = workspace_path.resolve(strict=True)
+    except OSError:
+        probe_cwd = task_root
+    if not is_within(probe_cwd, task_root):
+        probe_cwd = task_root
+    if not (probe_cwd / ".git").exists():
+        candidates = sorted(
+            path for path in task_root.iterdir() if path.is_dir() and (path / ".git").exists()
+        )
+        if candidates:
+            probe_cwd = candidates[0]
+
+    script = r"""
+set -eu
+task_root=$1
+printf 'task_root=%s\n' "$task_root"
+printf 'task_mount=%s\n' "$(findmnt -T "$task_root" -n -o OPTIONS)"
+probe=$(mktemp "$task_root/.kandev-workspace-probe.XXXXXX")
+rm -f "$probe"
+echo 'task_write=ok'
+if git rev-parse --show-toplevel >/dev/null 2>&1; then
+    repo=$(git rev-parse --show-toplevel)
+    common=$(git rev-parse --git-common-dir)
+    gitdir=$(git rev-parse --git-dir)
+    printf 'repository=%s\n' "$repo"
+    printf 'repository_mount=%s\n' "$(findmnt -T "$repo" -n -o OPTIONS)"
+    printf 'git_common=%s\n' "$common"
+    printf 'git_common_mount=%s\n' "$(findmnt -T "$common" -n -o OPTIONS)"
+    printf 'git_dir=%s\n' "$gitdir"
+    printf 'git_dir_mount=%s\n' "$(findmnt -T "$gitdir" -n -o OPTIONS)"
+    git add -A --dry-run >/dev/null
+    echo 'git_add_dry_run=ok'
+fi
+"""
+    audit_source(context, "workspace-probe", target_task_id=target_task_id, result="attempt")
+    code, stdout, stderr = run_command(
+        [GUARD_BIN, "--", "sh", "-ceu", script, "sh", str(task_root)],
+        probe_cwd,
+        timeout=30,
+    )
+    audit_source(
+        context,
+        "workspace-probe",
+        target_task_id=target_task_id,
+        result="ok" if code == 0 else "error",
+    )
+    return {"returncode": code, "stdout": stdout, "stderr": stderr}
+
+
+def handle_coordinator_workspace(task_root: Path, args: list[str]) -> dict[str, Any]:
+    context = coordinator_context(task_root)
+    operation_args = args[2:]
+    if not operation_args or operation_args == ["help"]:
+        audit_source(context, "workspace-help", result="ok")
+        return {"returncode": 0, "stdout": workspace_help(), "stderr": ""}
+    if operation_args[0] == "probe" and len(operation_args) == 2:
+        return workspace_task_probe(context, operation_args[1])
+    raise BrokerError(f"unsupported coordinator workspace operation\n{workspace_help()}")
+
+
 def handle_coordinator_source(
     task_root: Path, args: list[str]
 ) -> dict[str, Any]:
@@ -1047,6 +1143,8 @@ def handle_request(request: dict[str, Any], key: bytes) -> dict[str, Any]:
 
     if args[:2] == ["kandev", "source"]:
         return handle_coordinator_source(task_root, args)
+    if args[:2] == ["kandev", "workspace"]:
+        return handle_coordinator_workspace(task_root, args)
 
     host_root = translate_to_host(task_root)
     project = project_name(task_root)

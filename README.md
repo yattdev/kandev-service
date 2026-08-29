@@ -205,6 +205,38 @@ backlink-verified Git common directory read-write. Sibling tasks, unrelated
 repositories, the Code root, the raw Docker socket, and host privilege
 escalation remain unavailable.
 
+For an ordinary linked worktree, the shared Git common directory is writable
+for objects and refs, but its `worktrees/` registry is overlaid read-only and
+only that task's own administrative entry is rebound read-write. This preserves
+normal Git writes without exposing sibling worktree index/HEAD metadata.
+
+These bind mounts live in a **private mount namespace per agent process**. A
+normal agent inspecting its namespace sees exactly its own task override and
+cannot infer another agent's permissions from that view. A validated
+Coordinator deliberately receives additional exact paths registered to its
+own `workspace_id`, but still does not see another agent's private overrides.
+Never make `/data/tasks` or `/data/home/Code` globally read-write: the guard
+enumerates exact authorized paths instead.
+
+Verify a reported worktree from a fresh guard invocation rooted in that exact
+repository. Both the worktree and its Git common directory must report `rw`,
+the source checkout must report `ro`, and the dry-run must succeed:
+
+```bash
+docker exec -u kandev kandev sh -lc '
+  cd /data/tasks/<task>/<repo> || exit
+  /usr/local/bin/kandev-agent-guard -- sh -ceu '\''
+    common=$(git rev-parse --git-common-dir)
+    findmnt -T "$PWD" -n -o TARGET,OPTIONS
+    findmnt -T "$common" -n -o TARGET,OPTIONS
+    git add -A --dry-run >/dev/null
+  '\''
+'
+```
+
+`tests/test-agent-guard.sh` performs these mount-mode and Git-index checks on a
+real linked task worktree during the deployment test suite.
+
 This split is especially necessary for linked worktrees. Codex's nested
 `workspace-write` sandbox reclassifies the external common Git directory as
 read-only, so source edits appear to work but `git add`/`git commit` fail when
@@ -299,6 +331,7 @@ docker kandev source inspect <container>
 docker kandev source logs <container> --tail 200 --since 30m
 docker kandev source db-dump <container> \
   --target-task <full-task-uuid> --name source.sql
+docker kandev workspace probe <full-task-uuid>
 ```
 
 `list`, `inspect`, and bounded/redacted `logs` expose only containers whose
@@ -315,6 +348,22 @@ network, and atomically creates a mode-0600 artifact at:
 The target must be an active task in the same workspace and the file may not
 already exist. Every coordinator source request is appended to
 `/data/logs/coordinator-source-audit.jsonl` without credentials.
+
+The validated Coordinator also receives exact active task roots, registered
+repository checkouts, and registered folder sources for its own workspace
+read-write. The Code/task parent directories and every other workspace remain
+read-only. Eligibility is derived from live task/environment/repository records
+plus the coordinator Git backlink on every launch and is rechecked every 15
+seconds; a failed recheck terminates the elevated process. Scope grants and
+revocations are recorded in
+`/data/logs/coordinator-workspace-audit.jsonl`. This records elevated scope,
+not every individual filesystem write; full per-file auditing still requires a
+host audit/fanotify facility.
+
+`docker kandev workspace probe` runs a fresh guard rooted in the named
+same-workspace task and reports mount modes, a reversible task write, and the
+`git add -A --dry-run` result. Use it instead of inferring target writability
+from the Coordinator's own private mount table.
 
 Logical dumps may contain sensitive application data. The current Bubblewrap
 policy is a write-confinement boundary, not a distinct-UID confidentiality

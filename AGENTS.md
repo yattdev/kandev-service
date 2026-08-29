@@ -126,7 +126,7 @@ bypass its scope to reach the host database; it must use the
 parent/Coordinator escalation chain. Updating a saved prompt affects future
 prompt composition and does not rewrite a turn that is already running.
 
-## 7. Coordinators have standing authority only inside the source broker
+## 7. Coordinators have workspace-scoped authority
 
 The instance owner has granted broker-validated workspace Coordinators standing
 authorization to autonomously use `docker kandev source list`, curated
@@ -136,11 +136,18 @@ no case-by-case human approval is required. The broker's container mapping and
 target eligibility check are authoritative, so failure of cross-task
 document/list tools is not a prerequisite blocker.
 
-This authority belongs only to a validated Coordinator worktree and does not
-extend to ordinary tasks, raw Docker/socket access, arbitrary `exec`, secrets,
-destructive actions, cross-workspace data, unsupported operations, or bypassing
-a broker denial. A validated coordinator worktree may update the canonical
-`~/Code/coordinator` checkout solely to fast-forward/publish its shared
-versioned knowledge base; this exception does not authorize mutation of any
-other source repository. Those boundaries still require the normal escalation
-path.
+The instance owner has also authorized a validated Coordinator to mutate exact
+active task roots, registered project checkouts, and registered folder sources
+belonging to its own `workspace_id`, including the canonical coordinator
+checkout. This supports task supervision, cleanup, repair, and publishing
+shared knowledge. It never authorizes creating entries at the Code/task parent,
+touching another workspace, or using unregistered host paths. Use
+`docker kandev workspace probe <task-uuid>` to verify another task; never infer
+its permissions from your private mount table.
+
+This authority belongs only to a metadata- and backlink-validated Coordinator
+worktree and does not extend to ordinary tasks, raw Docker/socket access,
+arbitrary container `exec`, credential disclosure, cross-workspace data,
+unsupported broker operations, or bypassing a broker denial. Scope grants and
+revocations are audited; individual file writes are not yet kernel-audited, so
+keep board comments and commits legible when mutating another task's resources.
