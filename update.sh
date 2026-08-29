@@ -109,7 +109,16 @@ if [[ "$SKIP_LOCAL_BUILD" -eq 0 && -f "$COMPOSE_DIR/Dockerfile.local" ]]; then
         BASE_ID=$(docker image inspect "$TARGET_IMAGE" --format '{{index .Config.Labels "com.kandev.base-id"}}' 2>/dev/null || echo "")
         if [[ "$FLAVOR" != "release" ]]; then
             REBUILD=1; REBUILD_REASON="deployed image flavor='${FLAVOR:-none}' is not a clean release build — reconciling to release"
-        elif [[ "$UPSTREAM_ID" != "unknown" && -n "$BASE_ID" && "$BASE_ID" != "unknown" && "$BASE_ID" != "$UPSTREAM_ID" ]]; then
+        # Images built before base provenance was introduced (or built manually
+        # without BASE_IMAGE_ID) cannot prove that they track the current
+        # upstream image. Treat empty/unknown as stale. This also closes an
+        # important retry gap: if one update run pulls a release but aborts at
+        # the disk-space preflight, the next pull says "up to date"; previously
+        # an unknown BASE_ID then caused the still-old local image to be accepted
+        # forever.
+        elif [[ -z "$BASE_ID" || "$BASE_ID" == "unknown" ]]; then
+            REBUILD=1; REBUILD_REASON="local image has no usable upstream base provenance (base-id='${BASE_ID:-missing}')"
+        elif [[ "$UPSTREAM_ID" != "unknown" && "$BASE_ID" != "$UPSTREAM_ID" ]]; then
             REBUILD=1; REBUILD_REASON="local image built on stale base ($BASE_ID → $UPSTREAM_ID)"
         fi
     fi

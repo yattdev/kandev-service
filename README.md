@@ -122,6 +122,13 @@ toolchains (node, python, go, java, ruby, php, dotnet) into the persistent `/dat
 volume — idempotent and cheap on days nothing changed, so this needs no manual step.
 Set `SYNC_TOOLCHAINS=0` before calling `update.sh` to skip it.
 
+Each local image records the exact upstream image ID in its
+`com.kandev.base-id` label. The updater compares this label on every run; an
+empty or `unknown` label is deliberately treated as stale. Consequently, if a
+release pull succeeds but the build is interrupted (for example by the disk
+space preflight), the next run resumes the rebuild even though `docker pull`
+now reports that the upstream image is already present.
+
 ### Running a fix from `main` ahead of release (`kandev-build-main.sh`)
 
 When a fix has landed on [`kdlbs/kandev@main`](https://github.com/kdlbs/kandev) but

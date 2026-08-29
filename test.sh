@@ -695,6 +695,17 @@ for entry in kandev-start.sh kandev-start-hub.sh update.sh kandev-pull.sh; do
   fi
 done
 
+# A pull can succeed and the subsequent build can fail/abort. On the retry,
+# Docker reports the upstream image as already current, so a legacy local image
+# with no base provenance must still force a rebuild rather than falsely exit
+# "Already up to date" (incident 2026-08-29).
+if grep -Fq '[[ -z "$BASE_ID" || "$BASE_ID" == "unknown" ]]' update.sh \
+   && grep -Fq 'REBUILD=1; REBUILD_REASON="local image has no usable upstream base provenance' update.sh; then
+  ok "update.sh rebuilds local images with missing/unknown base provenance"
+else
+  fail "update.sh may accept an old local image after a pulled update aborts"
+fi
+
 # kandev-start.sh must use the checkout containing the script.
 if grep -Fq 'COMPOSE_DIR="${COMPOSE_DIR:-$_KANDEV_DIR}"' kandev-start.sh; then
   ok "kandev-start.sh defaults Compose to its own checkout"
