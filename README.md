@@ -387,7 +387,13 @@ Coordinator task with four required strings: `problem`, `evidence`,
 `expected_outcome`, and `security_constraints`. It returns a request UUID;
 `status` polls it and `receive` returns the Support worker's final response.
 Status values are `queued`, `processing`, and `complete`; a completed request
-is successful only when its `returncode` is zero. Requests that failed before a
+is successful only when its `returncode` is zero and `resolution_status` is
+`resolved`. The worker must own safe authorized work through implementation and
+verification; diagnosis-only output cannot be reported as success. A genuine
+unresolved external boundary is `resolution_status: blocked` with return code
+75, while a response that omits the explicit outcome contract fails with return
+code 70. Request lifecycle and outcome are also written to the user-service
+journal. Requests that failed before a
 worker fix remain terminal and must be replaced with a fresh request.
 Delivery runs on the host through a dedicated persistent Codex support thread,
 so it does not contend with an operator's interactive Codex conversation. The

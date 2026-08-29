@@ -15,6 +15,9 @@ REPOSITORY = Path(os.environ.get("KANDEV_SUPPORT_REPOSITORY", Path.home() / "Cod
 THREAD_ID = os.environ.get("KANDEV_SUPPORT_THREAD_ID", "")
 CODEX = os.environ.get("KANDEV_SUPPORT_CODEX", "codex")
 WRITER_CONFLICT = "already has an active writer"
+STATUS_PREFIX = "KANDEV_SUPPORT_STATUS:"
+RESOLVED = "RESOLVED"
+BLOCKED = "BLOCKED"
 
 
 def prompt(record: dict[str, str]) -> str:
@@ -27,14 +30,26 @@ def prompt(record: dict[str, str]) -> str:
         f"Expected outcome: {record['expected_outcome']}",
         f"Security constraints: {record['security_constraints']}",
         f"Broker request ID: {record['id']}",
-        "Respond with an actionable result for the coordinator. This request arrived through the reviewed Kandev Support broker.",
+        "This request arrived through the reviewed Kandev Support broker.",
+        "Own safe in-scope support work through implementation and verification. Inspect the live state, apply and persist the fix when the request authorizes it, run proportionate acceptance tests, and send the verified outcome back to the Coordinator. A diagnosis, recommendation, or command list alone is not completion when the expected outcome asks Support to fix or unblock something.",
+        "Begin the final response with exactly one of: KANDEV_SUPPORT_STATUS: RESOLVED or KANDEV_SUPPORT_STATUS: BLOCKED. Use RESOLVED only when the expected outcome is actually achieved and verified. Use BLOCKED only after exhausting safe in-scope routes; name the precise missing authority or external dependency and the smallest next action. Never report RESOLVED merely because the Codex turn itself exited successfully.",
     ))
+
+
+def resolution_status(stdout: str) -> str | None:
+    """Extract the explicit support outcome from the worker-owned final answer."""
+    for line in stdout.splitlines():
+        if line.startswith(STATUS_PREFIX):
+            value = line.removeprefix(STATUS_PREFIX).strip()
+            return value if value in {RESOLVED, BLOCKED} else None
+    return None
 
 
 def process(path: Path) -> None:
     processing = QUEUE / "processing" / path.name
     path.replace(processing)
     record = json.loads(processing.read_text(encoding="utf-8"))
+    print(f"Kandev Support processing {record['id']}", flush=True)
     try:
         completed = subprocess.run(
             [CODEX, "exec", "--approve-for-me", "resume", THREAD_ID, prompt(record)],
@@ -57,7 +72,21 @@ def process(path: Path) -> None:
         record["_next_attempt_at"] = time.time() + min(60, 2 ** min(attempts, 6))
         processing.write_text(json.dumps(record), encoding="utf-8")
         processing.replace(QUEUE / "pending" / processing.name)
+        print(f"Kandev Support requeued {record['id']}: support thread busy", flush=True)
         return
+    if response["returncode"] == 0:
+        outcome = resolution_status(response["stdout"])
+        response["resolution_status"] = outcome.lower() if outcome else "invalid"
+        if outcome == BLOCKED:
+            response["returncode"] = 75
+        elif outcome != RESOLVED:
+            response["returncode"] = 70
+            response["stderr"] += (
+                "Kandev Support worker contract violation: final response must begin with "
+                f"'{STATUS_PREFIX} {RESOLVED}' or '{STATUS_PREFIX} {BLOCKED}'.\n"
+            )
+    else:
+        response["resolution_status"] = "failed"
     responses = QUEUE / "responses"
     responses.mkdir(parents=True, mode=0o700, exist_ok=True)
     temporary = responses / f".{record['id']}.tmp"
@@ -65,6 +94,11 @@ def process(path: Path) -> None:
     temporary.chmod(0o600)
     temporary.replace(responses / f"{record['id']}.json")
     processing.unlink(missing_ok=True)
+    print(
+        f"Kandev Support completed {record['id']}: "
+        f"status={response['resolution_status']} returncode={response['returncode']}",
+        flush=True,
+    )
 
 
 def recover_interrupted() -> None:

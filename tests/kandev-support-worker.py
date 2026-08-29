@@ -47,7 +47,9 @@ class WorkerTest(unittest.TestCase):
 
     def test_success_uses_dedicated_thread_and_reviewed_approval(self) -> None:
         path = self.record("request-success")
-        completed = subprocess.CompletedProcess([], 0, "support reply\n", "")
+        completed = subprocess.CompletedProcess(
+            [], 0, "KANDEV_SUPPORT_STATUS: RESOLVED\nsupport reply\n", ""
+        )
         with mock.patch.object(worker.subprocess, "run", return_value=completed) as run:
             worker.process(path)
         command = run.call_args.args[0]
@@ -55,7 +57,28 @@ class WorkerTest(unittest.TestCase):
         self.assertEqual(command[4], worker.THREAD_ID)
         response = json.loads((worker.QUEUE / "responses/request-success.json").read_text())
         self.assertEqual(response["returncode"], 0)
-        self.assertEqual(response["stdout"], "support reply\n")
+        self.assertEqual(response["resolution_status"], "resolved")
+
+    def test_diagnosis_without_explicit_outcome_is_not_success(self) -> None:
+        path = self.record("request-incomplete")
+        completed = subprocess.CompletedProcess([], 0, "Try this command.\n", "")
+        with mock.patch.object(worker.subprocess, "run", return_value=completed):
+            worker.process(path)
+        response = json.loads((worker.QUEUE / "responses/request-incomplete.json").read_text())
+        self.assertEqual(response["returncode"], 70)
+        self.assertEqual(response["resolution_status"], "invalid")
+        self.assertIn("contract violation", response["stderr"])
+
+    def test_explicit_blocker_is_terminal_but_not_success(self) -> None:
+        path = self.record("request-blocked")
+        completed = subprocess.CompletedProcess(
+            [], 0, "KANDEV_SUPPORT_STATUS: BLOCKED\nNeeds external authority.\n", ""
+        )
+        with mock.patch.object(worker.subprocess, "run", return_value=completed):
+            worker.process(path)
+        response = json.loads((worker.QUEUE / "responses/request-blocked.json").read_text())
+        self.assertEqual(response["returncode"], 75)
+        self.assertEqual(response["resolution_status"], "blocked")
 
     def test_writer_conflict_is_requeued(self) -> None:
         path = self.record("request-busy")

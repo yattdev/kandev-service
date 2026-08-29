@@ -947,7 +947,14 @@ def support_result(context: dict[str, str], request_id: str, receive: bool) -> d
     audit_source(context, "support-receive" if receive else "support-status", result="ok", request_id=request_id)
     if receive:
         return {"returncode": int(response.get("returncode", 70)), "stdout": str(response.get("stdout", "")), "stderr": str(response.get("stderr", ""))}
-    return {"returncode": 0, "stdout": json.dumps({"request_id": request_id, "status": "complete", "returncode": response.get("returncode", 70)}, indent=2) + "\n", "stderr": ""}
+    result = {
+        "request_id": request_id,
+        "status": "complete",
+        "returncode": response.get("returncode", 70),
+    }
+    if response.get("resolution_status"):
+        result["resolution_status"] = response["resolution_status"]
+    return {"returncode": 0, "stdout": json.dumps(result, indent=2) + "\n", "stderr": ""}
 
 
 def handle_coordinator_support(task_root: Path, args: list[str]) -> dict[str, Any]:

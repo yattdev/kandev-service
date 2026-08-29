@@ -379,6 +379,15 @@ Status progresses through `queued`, `processing`, and `complete`; only
 `complete` with `returncode: 0` is success. Old terminal failures are not
 replayed—send a fresh request after a worker fix.
 
+The worker's final answer must start with `KANDEV_SUPPORT_STATUS: RESOLVED` or
+`KANDEV_SUPPORT_STATUS: BLOCKED`. `RESOLVED` requires implementation plus
+verification when the request asks Support to fix or unblock something; a
+diagnosis or command list alone is a contract failure, not successful Support.
+`BLOCKED` maps to return code 75 and must identify the precise exhausted boundary
+and smallest next action. Missing/invalid outcome markers map to return code 70.
+`docker kandev support status` surfaces the normalized `resolution_status`, and
+the user-service journal records request start, requeue, and terminal outcome.
+
 The dedicated thread ID is host-local state in mode-0600
 `~/.config/kandev/support.env` as `KANDEV_SUPPORT_THREAD_ID=<uuid>`; it is not
 committed to this sanitized repository. `systemd/kandev-support.service` reads
