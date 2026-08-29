@@ -14,6 +14,7 @@ QUEUE = Path(os.environ.get("KANDEV_SUPPORT_QUEUE", Path.home() / ".local/share/
 REPOSITORY = Path(os.environ.get("KANDEV_SUPPORT_REPOSITORY", Path.home() / "Code/kandev"))
 THREAD_ID = os.environ.get("KANDEV_SUPPORT_THREAD_ID", "01a043b4-fe52-7020-94bb-de94e72f8a07")
 CODEX = os.environ.get("KANDEV_SUPPORT_CODEX", "codex")
+WRITER_CONFLICT = "already has an active writer"
 
 
 def prompt(record: dict[str, str]) -> str:
@@ -47,6 +48,16 @@ def process(path: Path) -> None:
         response = {"returncode": completed.returncode, "stdout": completed.stdout[-1024 * 1024:], "stderr": completed.stderr[-256 * 1024:]}
     except Exception as exc:
         response = {"returncode": 70, "stdout": "", "stderr": f"Kandev Support worker failed: {exc}\n"}
+    if response["returncode"] != 0 and WRITER_CONFLICT in response["stderr"]:
+        # A support chat turn and a broker delivery cannot write the same Codex
+        # thread concurrently. This is expected backpressure, not completion.
+        # Keep the request queued and retry with capped exponential backoff.
+        attempts = int(record.get("_writer_conflict_attempts", 0)) + 1
+        record["_writer_conflict_attempts"] = attempts
+        record["_next_attempt_at"] = time.time() + min(60, 2 ** min(attempts, 6))
+        processing.write_text(json.dumps(record), encoding="utf-8")
+        processing.replace(QUEUE / "pending" / processing.name)
+        return
     responses = QUEUE / "responses"
     responses.mkdir(parents=True, mode=0o700, exist_ok=True)
     temporary = responses / f".{record['id']}.tmp"
@@ -61,8 +72,18 @@ def main() -> int:
         (QUEUE / directory).mkdir(parents=True, mode=0o700, exist_ok=True)
     while True:
         pending = sorted((QUEUE / "pending").glob("*.json"))
-        if pending:
-            process(pending[0])
+        ready = None
+        now = time.time()
+        for candidate in pending:
+            try:
+                if float(json.loads(candidate.read_text()).get("_next_attempt_at", 0)) <= now:
+                    ready = candidate
+                    break
+            except (OSError, ValueError, json.JSONDecodeError):
+                ready = candidate
+                break
+        if ready is not None:
+            process(ready)
         else:
             time.sleep(2)
 
