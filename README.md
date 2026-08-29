@@ -122,6 +122,12 @@ toolchains (node, python, go, java, ruby, php, dotnet) into the persistent `/dat
 volume — idempotent and cheap on days nothing changed, so this needs no manual step.
 Set `SYNC_TOOLCHAINS=0` before calling `update.sh` to skip it.
 
+When a tested `agentctl` fix must remain active before its upstream image is
+released, place the paired native and linux-amd64 binaries in
+`.local-hotfix/` as documented there. `Dockerfile.local` overlays both during
+every rebuild, so `update.sh` cannot silently discard the fix. Remove both only
+after verifying the upstream base contains the corresponding source change.
+
 Each local image records the exact upstream image ID in its
 `com.kandev.base-id` label. The updater compares this label on every run; an
 empty or `unknown` label is deliberately treated as stale. Consequently, if a
@@ -216,6 +222,9 @@ For an ordinary linked worktree, the shared Git common directory is writable
 for objects and refs, but its `worktrees/` registry is overlaid read-only and
 only that task's own administrative entry is rebound read-write. This preserves
 normal Git writes without exposing sibling worktree index/HEAD metadata.
+The same backlink-verified rule applies when Kandev stores the source clone
+below `/data/repos/workspaces/<workspace-id>/...`: the task worktree and Git
+metadata are writable, while the managed source checkout remains read-only.
 
 These bind mounts live in a **private mount namespace per agent process**. A
 normal agent inspecting its namespace sees exactly its own task override and
@@ -432,7 +441,13 @@ worker is approval-reviewed and receives explicit writable scope for both the
 deployment checkout and `~/Code/kandev-source`. This lets it inspect and repair
 platform source rather than incorrectly classifying a locally fixable defect as
 upstream-only; sibling project repositories remain outside its write scope. The
-broker still validates Coordinator identity and scopes every request/response to
+source checkout is a fork: `upstream/main` (`kdlbs/kandev`) is canonical, while
+`origin/main` is the personal fork. Support must name, fetch, and verify the
+remote/base revision before creating a clean diagnostic worktree. Support must
+also wait for every yielded build, hook, or linter execution to finish before
+starting a dependent operation; a running tool cell is not a completed command
+and must not be misreported as external contention. The broker still validates
+Coordinator identity and scopes every request/response to
 its originating task and workspace.
 Its persistent thread ID is kept outside the repository in the mode-0600 host
 file `~/.config/kandev/support.env`; the user service fails closed if that file
