@@ -1,0 +1,232 @@
+#!/usr/bin/env python3
+"""Root-only, predicate-complete cleanup for orphaned Kandev task services."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from pathlib import Path
+import signal
+import sqlite3
+import sys
+import time
+import uuid
+from typing import Any
+
+
+CONFIG_PATH = Path("/etc/kandev-support-process-cleanup.json")
+PROC_ROOT = Path("/proc")
+MAX_REQUEST_BYTES = 64 * 1024
+
+
+class CleanupError(RuntimeError):
+    pass
+
+
+def require_uuid(value: Any, name: str) -> str:
+    if not isinstance(value, str):
+        raise CleanupError(f"{name} must be a UUID")
+    try:
+        return str(uuid.UUID(value))
+    except ValueError as exc:
+        raise CleanupError(f"{name} must be a UUID") from exc
+
+
+def load_config() -> dict[str, Any]:
+    status = CONFIG_PATH.stat()
+    if status.st_uid != 0 or status.st_mode & 0o077:
+        raise CleanupError("cleanup configuration must be root-owned and mode 0600")
+    try:
+        config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise CleanupError("cleanup configuration is unreadable") from exc
+    for key in ("support_uid", "data_dir", "db_path", "audit_path"):
+        if key not in config:
+            raise CleanupError(f"cleanup configuration is missing {key}")
+    if not isinstance(config["support_uid"], int):
+        raise CleanupError("cleanup configuration has invalid support_uid")
+    return config
+
+
+def parse_stat(pid: int) -> tuple[int, int, int, str]:
+    try:
+        raw = (PROC_ROOT / str(pid) / "stat").read_text(encoding="utf-8")
+    except OSError as exc:
+        raise CleanupError(f"pid {pid} is absent") from exc
+    close = raw.rfind(")")
+    fields = raw[close + 2 :].split()
+    if close < 0 or len(fields) < 4:
+        raise CleanupError(f"pid {pid} has invalid stat metadata")
+    return int(fields[1]), int(fields[2]), int(fields[3]), fields[0]
+
+
+def process_cwd(pid: int) -> Path:
+    try:
+        return Path(os.readlink(PROC_ROOT / str(pid) / "cwd"))
+    except OSError as exc:
+        raise CleanupError(f"pid {pid} cwd is unreadable") from exc
+
+
+def is_within(path: Path, root: Path) -> bool:
+    try:
+        path.resolve(strict=False).relative_to(root.resolve(strict=False))
+        return True
+    except ValueError:
+        return False
+
+
+def group_members(pgid: int) -> list[int]:
+    result: list[int] = []
+    for candidate in PROC_ROOT.iterdir():
+        if not candidate.name.isdigit():
+            continue
+        try:
+            _, current_pgid, _, _ = parse_stat(int(candidate.name))
+        except CleanupError:
+            continue
+        if current_pgid == pgid:
+            result.append(int(candidate.name))
+    return sorted(result)
+
+
+def task_root(config: dict[str, Any], coordinator_task_id: str, workspace_id: str, task_id: str) -> Path:
+    database = sqlite3.connect(f"file:{config['db_path']}?mode=ro", uri=True, timeout=5)
+    try:
+        coordinator = database.execute("SELECT workspace_id FROM tasks WHERE id=? AND archived_at IS NULL", (coordinator_task_id,)).fetchone()
+        target = database.execute("SELECT workspace_id FROM tasks WHERE id=? AND archived_at IS NULL", (task_id,)).fetchone()
+        environment = database.execute("SELECT task_dir_name FROM task_environments WHERE task_id=?", (task_id,)).fetchone()
+    finally:
+        database.close()
+    if coordinator is None or target is None or environment is None:
+        raise CleanupError("coordinator or target task is not live")
+    if str(coordinator[0]) != workspace_id or str(target[0]) != workspace_id:
+        raise CleanupError("coordinator and target must be in the same workspace")
+    directory = str(environment[0] or "")
+    if not directory or "/" in directory or directory in {".", ".."}:
+        raise CleanupError("target task has an invalid task directory")
+    return Path(str(config["data_dir"])) / "tasks" / directory
+
+
+def validate_request(request: Any, config: dict[str, Any]) -> tuple[Path, list[dict[str, Any]]]:
+    required = {"coordinator_task_id", "workspace_id", "task_id", "signal", "targets", "protected"}
+    if not isinstance(request, dict) or set(request) != required:
+        raise CleanupError("request has an invalid schema")
+    coordinator_task_id = require_uuid(request["coordinator_task_id"], "coordinator_task_id")
+    workspace_id = require_uuid(request["workspace_id"], "workspace_id")
+    task_id = require_uuid(request["task_id"], "task_id")
+    if request["signal"] != "SIGKILL":
+        raise CleanupError("only SIGKILL cleanup is supported")
+    root = task_root(config, coordinator_task_id, workspace_id, task_id)
+    if not root.is_dir():
+        raise CleanupError("target task root is absent")
+    targets = request["targets"]
+    protected = request["protected"]
+    if not isinstance(targets, list) or not targets or not isinstance(protected, list) or not protected:
+        raise CleanupError("request requires non-empty targets and protected predicates")
+    seen_pids: set[int] = set()
+    seen_groups: set[int] = set()
+    normalized: list[dict[str, Any]] = []
+    for target in targets:
+        if not isinstance(target, dict) or set(target) != {"pid", "ppid", "pgid", "sid", "members"}:
+            raise CleanupError("target has an invalid schema")
+        try:
+            pid, ppid, pgid, sid = (int(target[key]) for key in ("pid", "ppid", "pgid", "sid"))
+        except (TypeError, ValueError) as exc:
+            raise CleanupError("target identity is invalid") from exc
+        members = target["members"]
+        if min(pid, ppid, pgid, sid) <= 1 or not isinstance(members, list):
+            raise CleanupError("target identity is invalid")
+        try:
+            member_ids = sorted(int(member) for member in members)
+        except (TypeError, ValueError) as exc:
+            raise CleanupError("target membership is invalid") from exc
+        if not member_ids or len(set(member_ids)) != len(member_ids) or pid not in member_ids:
+            raise CleanupError("target membership is invalid")
+        if pid in seen_pids or pgid in seen_groups:
+            raise CleanupError("duplicate target identity")
+        seen_pids.add(pid)
+        seen_groups.add(pgid)
+        actual_ppid, actual_pgid, actual_sid, state = parse_stat(pid)
+        if (actual_ppid, actual_pgid, actual_sid) != (ppid, pgid, sid) or state == "Z":
+            raise CleanupError(f"target pid {pid} identity changed")
+        if not is_within(process_cwd(pid), root):
+            raise CleanupError(f"target pid {pid} is outside its task root")
+        if not is_within(process_cwd(ppid), root):
+            raise CleanupError(f"target pid {pid} parent is outside its task root")
+        actual_members = group_members(pgid)
+        if actual_members != member_ids:
+            raise CleanupError(f"target group {pgid} membership changed")
+        for member in actual_members:
+            if not is_within(process_cwd(member), root):
+                raise CleanupError(f"target group {pgid} includes a process outside its task root")
+        normalized.append({"pid": pid, "pgid": pgid, "members": member_ids})
+    for item in protected:
+        if not isinstance(item, dict) or set(item) != {"pid", "pgid", "sid"}:
+            raise CleanupError("protected predicate has an invalid schema")
+        try:
+            pid, pgid, sid = (int(item[key]) for key in ("pid", "pgid", "sid"))
+        except (TypeError, ValueError) as exc:
+            raise CleanupError("protected predicate is invalid") from exc
+        _, actual_pgid, actual_sid, state = parse_stat(pid)
+        if state == "Z" or (actual_pgid, actual_sid) != (pgid, sid):
+            raise CleanupError(f"protected pid {pid} identity changed")
+        if pgid in seen_groups or pid in seen_pids:
+            raise CleanupError("protected process overlaps a target")
+    return root, normalized
+
+
+def append_audit(config: dict[str, Any], result: dict[str, Any]) -> None:
+    path = Path(str(config["audit_path"]))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps(result, sort_keys=True) + "\n")
+    os.chmod(path, 0o600)
+
+
+def perform(request: Any, config: dict[str, Any]) -> dict[str, Any]:
+    root, targets = validate_request(request, config)
+    result = {"ok": False, "task_root_sha256": hashlib.sha256(str(root).encode()).hexdigest(), "targets": targets, "protected": [item["pid"] for item in request["protected"]]}
+    for target in targets:
+        os.killpg(target["pgid"], signal.SIGKILL)
+    deadline = time.monotonic() + 5
+    while True:
+        remaining = [member for target in targets for member in target["members"] if (PROC_ROOT / str(member)).exists()]
+        if not remaining or time.monotonic() >= deadline:
+            break
+        time.sleep(0.05)
+    result["remaining"] = remaining
+    result["ok"] = not remaining
+    append_audit(config, result)
+    return result
+
+
+def main() -> int:
+    if os.geteuid() != 0:
+        raise CleanupError("must run as root")
+    config = load_config()
+    sudo_uid = os.environ.get("SUDO_UID")
+    if sudo_uid is None or not sudo_uid.isdigit() or int(sudo_uid) != config["support_uid"]:
+        raise CleanupError("caller is not the configured Support worker")
+    raw = sys.stdin.buffer.read(MAX_REQUEST_BYTES + 1)
+    if len(raw) > MAX_REQUEST_BYTES:
+        raise CleanupError("request is too large")
+    try:
+        request = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise CleanupError("request is not valid JSON") from exc
+    try:
+        result = perform(request, config)
+    except CleanupError as exc:
+        append_audit(config, {"ok": False, "error": str(exc)})
+        raise
+    print(json.dumps(result, sort_keys=True))
+    return 0 if result["ok"] else 75
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except CleanupError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
+        raise SystemExit(75)

@@ -362,6 +362,24 @@ docker kandev support status <request-uuid>
 docker kandev support receive <request-uuid>
 ```
 
+### Root-only orphan-service cleanup
+
+`scripts/kandev-support-process-cleanup` is a host-root helper for the rare
+case where a terminal task leaves task-owned QA processes behind and ordinary
+lifecycle stop plus SIGTERM have failed. It is not installed in the agent image
+or exposed through the Docker broker. Install it for the host Support user with:
+
+```bash
+sudo bash scripts/install-support-process-cleanup.sh <support-user>
+```
+
+Before accepting SIGKILL, the helper derives the task root from live Kandev
+metadata, requires same-workspace coordinator/target identities, validates
+every target PID and immediate parent beneath the task root, PPID/PGID/SID,
+exact group membership, and protected PID predicates. Any mismatch fails closed
+before signaling. Receipts and the root-only audit omit command lines,
+environments, credentials, and raw host paths.
+
 `list`, `inspect`, and bounded/redacted `logs` expose only containers whose
 Compose working directory or broker-owned task project maps to a repository or
 task in the coordinator's workspace. `db-dump` supports MariaDB/MySQL and

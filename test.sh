@@ -870,6 +870,12 @@ else
   fail "tests/test-agent-docker-broker.py failed"
 fi
 
+if PYTHONDONTWRITEBYTECODE=1 python3 "$COMPOSE_DIR/tests/kandev-support-process-cleanup.py" >/dev/null 2>&1; then
+  ok "root-only Support cleanup predicate tests pass"
+else
+  fail "tests/kandev-support-process-cleanup.py failed"
+fi
+
 BROKER_STATE=$(docker exec -u kandev kandev sh -c '
   test -S /run/kandev-agent-docker/broker.sock && pgrep -f "[k]andev-agent-docker-broker" >/dev/null && echo ready
 ' 2>/dev/null || echo "missing")
