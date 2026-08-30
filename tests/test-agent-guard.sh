@@ -234,6 +234,32 @@ if (cd "$managed_root" && "$GUARD" -- sh -c 'touch "$1"' sh "$managed_source_pro
 fi
 [[ ! -e "$managed_source_probe" ]]
 
+# Codex's unified-exec can delay a completed command result past the bounded
+# ACP probe window.  The guard must disable it only for the codex-acp npx
+# launcher while retaining unrelated CODEX_CONFIG settings.  A task-local fake
+# npx proves the exact child environment without invoking an agent or changing
+# its profile.
+codex_probe_dir="$(mktemp -d "$managed_root/.kandev-codex-config-test.XXXXXX")"
+trap 'rm -rf -- "$codex_probe_dir"' EXIT
+cat > "$codex_probe_dir/npx" <<'EOF'
+#!/bin/sh
+printf '%s\n' "${CODEX_CONFIG:-}"
+EOF
+chmod 700 "$codex_probe_dir/npx"
+codex_probe_config="$(cd "$managed_root" && PATH="$codex_probe_dir:$PATH" \
+    CODEX_CONFIG='{"model":"preserved","features":{"other_feature":true}}' \
+    "$GUARD" -- "$codex_probe_dir/npx" --yes @agentclientprotocol/codex-acp@1.7.0)"
+python3 -c '
+import json
+import sys
+config = json.loads(sys.stdin.read())
+assert config["model"] == "preserved"
+assert config["features"]["other_feature"] is True
+assert config["features"]["unified_exec"] is False
+' <<<"$codex_probe_config"
+rm -rf -- "$codex_probe_dir"
+trap - EXIT
+
 # The agent can start an isolated Compose project through the broker. Task-local
 # bind mounts may be read-write, while any source outside this task is rejected.
 (cd "$linked_root" && "$GUARD" -- sh -ceu '

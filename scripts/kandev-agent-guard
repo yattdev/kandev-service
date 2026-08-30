@@ -554,6 +554,40 @@ if [[ "${KANDEV_AGENT_GUARD_DEBUG:-0}" == "1" ]]; then
     for path in "${!bound[@]}"; do echo "$GUARD_NAME: rw=$path" >&2; done
 fi
 
+# Codex 0.147's unified-exec path can hold an already-finished command result
+# until its fixed 30-second yield boundary.  ACP task turns use shorter,
+# bounded command probes, so the model sees an empty in-progress result and
+# cannot continue.  Disable only that Codex execution feature, and only when
+# this guard is launching the fixed codex-acp adapter command.  The outer
+# bubblewrap policy remains the filesystem/security boundary.  Preserve any
+# operator-supplied CODEX_CONFIG keys rather than replacing its whole object.
+codex_acp_config=""
+if [[ "${1##*/}" == "npx" ]]; then
+    for arg in "$@"; do
+        if [[ "$arg" == "@agentclientprotocol/codex-acp" || "$arg" == @agentclientprotocol/codex-acp@* ]]; then
+            codex_acp_config="$(/usr/bin/python3 -c '
+import json
+import os
+import sys
+
+raw = sys.argv[1]
+config = json.loads(raw) if raw else {}
+if not isinstance(config, dict):
+    raise ValueError("CODEX_CONFIG must be a JSON object")
+features = config.get("features")
+if features is None:
+    features = {}
+elif not isinstance(features, dict):
+    raise ValueError("CODEX_CONFIG.features must be a JSON object")
+features["unified_exec"] = False
+config["features"] = features
+print(json.dumps(config, separators=(",", ":")))
+' "${CODEX_CONFIG:-}")" || deny "invalid CODEX_CONFIG while configuring codex-acp"
+            break
+        fi
+    done
+fi
+
 run_guarded=(
     bwrap "${bwrap_args[@]}"
     --setenv KANDEV_AGENT_GUARD_ACTIVE 1
@@ -562,8 +596,14 @@ run_guarded=(
     --setenv MISE_TRUSTED_CONFIG_PATHS "$mise_trusted_config_path"
     "${agent_docker_env[@]}"
     --chdir "$cwd"
-    -- "$@"
 )
+
+if [[ -n "$codex_acp_config" ]]; then
+    # bwrap applies setenv options before its terminal "--" separator, without
+    # modifying the launch command, profile, or any other provider's env.
+    run_guarded+=(--setenv CODEX_CONFIG "$codex_acp_config")
+fi
+run_guarded+=(-- "$@")
 
 if [[ -z "$coordinator_task_id" ]]; then
     exec "${run_guarded[@]}"
