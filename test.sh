@@ -712,6 +712,34 @@ else
   fail "update.sh may accept an old local image after a pulled update aborts"
 fi
 
+# Update retries must be resumable and bounded. A 2026-08-30 mirror connection
+# stalled indefinitely in apt-get; the old --no-cache retry then discarded every
+# completed layer and consumed enough disk to make the next run fail preflight.
+if ! grep -Eq 'docker compose .*build .*--no-cache|docker compose .*build --no-cache' update.sh \
+   && grep -Fq 'BUILD_ATTEMPT_TIMEOUT_SECS="${BUILD_ATTEMPT_TIMEOUT_SECS:-900}"' update.sh \
+   && grep -Fq 'timeout --signal=TERM --kill-after=30s "$BUILD_ATTEMPT_TIMEOUT_SECS"' update.sh; then
+  ok "update.sh reuses completed layers and bounds each build attempt"
+else
+  fail "update.sh build retries can still hang forever or discard completed layers"
+fi
+
+# Only the updater-owned rollback tag may be rotated automatically. This keeps
+# one known-good image without globally pruning task/QA images.
+if grep -Fq 'docker image rm "$ROLLBACK_TAG"' update.sh \
+   && grep -Fq 'STALE_ROLLBACK_ID' update.sh \
+   && ! grep -Eq '^[[:space:]]*docker (system|image) prune' update.sh; then
+  ok "update.sh rotates only its own stale rollback image"
+else
+  fail "update.sh rollback cleanup is missing or too broad"
+fi
+
+if grep -Fq 'MIN_FREE_GB="${MIN_FREE_GB:-8}"' update.sh \
+   && grep -Fq 'HEALTH_TIMEOUT_SECS="${HEALTH_TIMEOUT_SECS:-360}"' update.sh; then
+  ok "update.sh uses measured disk and restored-board health defaults"
+else
+  fail "update.sh still uses failure-prone disk or health defaults"
+fi
+
 # kandev-start.sh must use the checkout containing the script.
 if grep -Fq 'COMPOSE_DIR="${COMPOSE_DIR:-$_KANDEV_DIR}"' kandev-start.sh; then
   ok "kandev-start.sh defaults Compose to its own checkout"
@@ -746,7 +774,7 @@ else
   fail "tests/test-enforce-agent-guard.sh failed"
 fi
 
-if grep -Fq 'KANDEV_HEALTH_TIMEOUT_MS=180000' docker-compose.yml; then
+if grep -Fq 'KANDEV_HEALTH_TIMEOUT_MS=360000' docker-compose.yml; then
   ok "backend health timeout accommodates large restored boards"
 else
   fail "backend still uses the 45-second health timeout"

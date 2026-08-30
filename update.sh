@@ -56,10 +56,25 @@ OLD_DIGEST=$(docker inspect kandev --format '{{.Image}}' 2>/dev/null || echo "no
 # (`docker compose build`) overwrites that tag on the new image, so without this
 # extra tag the last known-good image would become untagged/dangling and could be
 # garbage-collected, leaving no fast way back after a bad upstream release.
+#
+# Keep exactly one updater-owned rollback image. Merely overwriting the tag leaves
+# the older rollback dangling in the containerd image store; repeated failed runs
+# accumulated several ~2.7 GB local layers and eventually made the disk preflight
+# reject every later update. Removing this one known tag is deliberately narrower
+# than `docker image prune`: unrelated task/QA images are never touched.
 RUNNING_IMAGE_TAG=$(docker inspect kandev --format '{{.Config.Image}}' 2>/dev/null || echo "")
 if [[ -n "$RUNNING_IMAGE_TAG" ]] && docker image inspect "$RUNNING_IMAGE_TAG" >/dev/null 2>&1; then
-    docker tag "$RUNNING_IMAGE_TAG" "${RUNNING_IMAGE_TAG}-previous"
-    log "Tagged current image as ${RUNNING_IMAGE_TAG}-previous (rollback safety net)."
+    ROLLBACK_TAG="${RUNNING_IMAGE_TAG}-previous"
+    STALE_ROLLBACK_ID=$(docker image inspect "$ROLLBACK_TAG" --format '{{.Id}}' 2>/dev/null || echo "")
+    if [[ -n "$STALE_ROLLBACK_ID" && "$STALE_ROLLBACK_ID" != "$OLD_DIGEST" ]]; then
+        if docker image rm "$ROLLBACK_TAG" >>"$LOG_FILE" 2>&1; then
+            log "Removed stale updater rollback image $ROLLBACK_TAG ($STALE_ROLLBACK_ID)."
+        else
+            log "WARNING: could not remove stale updater rollback tag $ROLLBACK_TAG; continuing safely."
+        fi
+    fi
+    docker tag "$RUNNING_IMAGE_TAG" "$ROLLBACK_TAG"
+    log "Tagged current image as $ROLLBACK_TAG (rollback safety net)."
 fi
 
 # Pull latest upstream image
@@ -141,7 +156,12 @@ if [[ "$REBUILD" -eq 1 ]]; then
     # Both filesystems matter and they are often NOT the same one: this daemon
     # uses the containerd image store, so layers land in /var/lib/containerd
     # (on /) while the docker data root may be a separate partition.
-    MIN_FREE_GB="${MIN_FREE_GB:-15}"
+    # The local layer adds about 2.7 GB to the shared upstream base and BuildKit
+    # needs temporary unpacking room. Eight GiB is a measured conservative floor
+    # after rotating the stale rollback above. The former 15 GiB floor rejected
+    # valid updates on this dedicated Docker partition even when the build had
+    # enough room. Operators can still raise/lower it explicitly.
+    MIN_FREE_GB="${MIN_FREE_GB:-8}"
     free_gb() {
         df -BG --output=avail "$1" 2>/dev/null | tail -1 | tr -dc '0-9'
     }
@@ -172,9 +192,11 @@ if [[ "$REBUILD" -eq 1 ]]; then
 
     log "Rebuilding local image (Dockerfile.local): $REBUILD_REASON"
 
-    # Retry transient build failures. A nightly --no-cache rebuild re-downloads
-    # every apt package and every curl'd artifact, so a single bad CDN node or a
-    # momentary proxy hiccup fails the entire update. Observed in practice:
+    # Retry transient build failures. Reuse BuildKit's completed layers between
+    # attempts: a changed upstream base already invalidates dependent layers, so
+    # `--no-cache` added no freshness but made every retry re-download everything.
+    # A single bad CDN node or momentary proxy hiccup could therefore waste both
+    # time and several GiB before starting from zero again. Observed in practice:
     # deb.debian.org served a 5.7 kB HTML error page instead of the .deb,
     # yielding "Hash Sum mismatch" / "Unable to fetch some archives"; the exact
     # same build succeeded minutes later with no changes at all. Without a retry
@@ -184,6 +206,7 @@ if [[ "$REBUILD" -eq 1 ]]; then
     # build arg (and thus the com.kandev.base-id label on the built image).
     BUILD_RETRIES="${BUILD_RETRIES:-3}"
     BUILD_RETRY_DELAY="${BUILD_RETRY_DELAY:-30}"
+    BUILD_ATTEMPT_TIMEOUT_SECS="${BUILD_ATTEMPT_TIMEOUT_SECS:-900}"
     build_ok=0
     for attempt in $(seq 1 "$BUILD_RETRIES"); do
         log "Build attempt ${attempt}/${BUILD_RETRIES} ..."
@@ -191,7 +214,8 @@ if [[ "$REBUILD" -eq 1 ]]; then
         # docker's, so the build result must be read from PIPESTATUS[0].
         set +e
         KANDEV_BASE_IMAGE_ID="$UPSTREAM_ID" \
-            docker compose -p kandev build --no-cache \
+            timeout --signal=TERM --kill-after=30s "$BUILD_ATTEMPT_TIMEOUT_SECS" \
+            docker compose -p kandev build \
             --build-arg BASE_IMAGE_ID="$UPSTREAM_ID" 2>&1 | tee -a "$LOG_FILE"
         rc=${PIPESTATUS[0]}
         set -e
@@ -199,7 +223,11 @@ if [[ "$REBUILD" -eq 1 ]]; then
             build_ok=1
             break
         fi
-        log "Build attempt ${attempt} failed (exit $rc)."
+        if [[ "$rc" -eq 124 || "$rc" -eq 137 ]]; then
+            log "Build attempt ${attempt} timed out after ${BUILD_ATTEMPT_TIMEOUT_SECS}s (exit $rc)."
+        else
+            log "Build attempt ${attempt} failed (exit $rc)."
+        fi
         if [[ "$attempt" -lt "$BUILD_RETRIES" ]]; then
             log "Retrying in ${BUILD_RETRY_DELAY}s — transient mirror/proxy failures are common here."
             sleep "$BUILD_RETRY_DELAY"
@@ -237,9 +265,11 @@ docker compose -p kandev up -d --force-recreate
 # Timeout must be generous: the FIRST boot after a version jump runs DB
 # migrations before the HTTP server binds, which was observed to take ~55s on
 # a minor-version upgrade. A too-tight 60s gate caused a spurious rollback of a
-# perfectly healthy new image. Default 180s; override with HEALTH_TIMEOUT_SECS.
+# perfectly healthy new image. Restored boards with hundreds of sessions have
+# subsequently needed more than 180 seconds for startup reconciliation, so the
+# default is 360s; override with HEALTH_TIMEOUT_SECS.
 HEALTH_URL="http://localhost:38429/"
-HEALTH_TIMEOUT_SECS="${HEALTH_TIMEOUT_SECS:-180}"
+HEALTH_TIMEOUT_SECS="${HEALTH_TIMEOUT_SECS:-360}"
 wait_for_health() {
     local i deadline
     deadline=$(( SECONDS + HEALTH_TIMEOUT_SECS ))

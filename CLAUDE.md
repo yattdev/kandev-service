@@ -62,7 +62,7 @@ This is not hypothetical — see the crash-loop row in *Common failure modes* be
 A checkout back to `main` **does not fix a container that is already running**:
 after any branch switch, recreate it explicitly.
 
-The Compose deployment sets `KANDEV_HEALTH_TIMEOUT_MS=180000`. Restored boards
+The Compose deployment sets `KANDEV_HEALTH_TIMEOUT_MS=360000`. Restored boards
 with hundreds of sessions can spend more than the upstream 45-second default in
 startup reconciliation before opening the HTTP listener; the longer timeout
 retains the health gate without putting the container into a false crash loop.
@@ -585,7 +585,7 @@ Use `kandev-ssh-agent.sh` when:
 | `mise.default.toml` | System-wide mise config (`/etc/mise/config.toml`): global language versions matched to host |
 | `setup-toolchains.sh` | One-time helper: installs the mise language toolchains into the persistent `/data` volume |
 | `test.sh` | Automated tests covering image, container, service, identity, SSH, git, CLI tools, toolchains (incl. Java JDK and Go), sqlite3, headless browser/Android QA, guarded agent Compose/coordinator source access, Docker host-path wrapper, branch guard, and port-80 NAT redirect scoping |
-| `update.sh` | Daily cron: pull upstream → rebuild local → restart if changed |
+| `update.sh` | Daily cron: pull upstream → bounded/cache-resumable local rebuild → health-gated restart with one rotated rollback image |
 | `CUSTOM-PROMPTS.md` | Operator runbook for discovering, inspecting, backing up, and explicitly updating live saved prompts through the API or a tightly scoped SQLite transaction |
 | `custom_prompts/` | Versioned Markdown mirrors of saved prompts; every owner-requested add/update must synchronize the live database and be committed and pushed from `main` |
 | `AGENTS.md` | Short, non-negotiable rules for **any** AI agent (Claude, Codex, Copilot): work on `main` for everything outside `workflows/`, never start the deployment from a non-`main` checkout, read `host.env`, keep `test.sh` green |

@@ -122,6 +122,14 @@ toolchains (node, python, go, java, ruby, php, dotnet) into the persistent `/dat
 volume — idempotent and cheap on days nothing changed, so this needs no manual step.
 Set `SYNC_TOOLCHAINS=0` before calling `update.sh` to skip it.
 
+Updates retain one known-good rollback image and rotate that updater-owned tag before
+the next build; they never prune unrelated task or QA images. BuildKit layers are reused
+across the three bounded build attempts, so a stalled package mirror does not discard
+completed work or grow the image store on every retry. Defaults are a 900-second limit
+per build attempt, an 8 GiB free-space floor, and a 360-second post-restart health gate;
+override them with `BUILD_ATTEMPT_TIMEOUT_SECS`, `MIN_FREE_GB`, or
+`HEALTH_TIMEOUT_SECS` when diagnosing exceptional hardware.
+
 When a tested `agentctl` fix must remain active before its upstream image is
 released, place the paired native and linux-amd64 binaries in
 `.local-hotfix/` as documented there. `Dockerfile.local` overlays both during

@@ -62,7 +62,7 @@ services:
       # Large restored boards can need more than the launcher's 45-second
       # default while reconciling hundreds of saved sessions. Keep the health
       # gate, but allow startup enough time to reach its HTTP listener.
-      - KANDEV_HEALTH_TIMEOUT_MS=180000
+      - KANDEV_HEALTH_TIMEOUT_MS=360000
 
       # Run Node.js (and kandev) in production mode.
       # Effects: disables development-only middleware and verbose error stack traces,
