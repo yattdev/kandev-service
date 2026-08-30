@@ -337,6 +337,15 @@ The selected session is rechecked every 15 seconds; losing eligibility terminate
 the guarded process. Grants/revocations include the selected session ID and are recorded in
 `/data/logs/coordinator-workspace-audit.jsonl` (scope audit, not per-file audit).
 
+Sessionless host utilities use the same outer guard even though they have no
+task checkout. The guard recognizes only an exact direct provider child below
+the live backend's mode-0700
+`/tmp/kandev-host-utility-<backend-pid>-<random>/` directory, verifies the PID is
+the same-UID `kandev __backend` process, requires the exact parent to be active
+in `storage_temp_artifacts`, and binds only that provider directory read-write.
+Utility calls do not receive the task Docker broker, Coordinator scope, or
+`/dev/kvm`; arbitrary or lookalike `/tmp` paths still fail closed.
+
 Coordinator worktrees receive a separate, narrower `docker kandev source`
 capability. The broker resolves the coordinator task and `workspace_id` from
 Kandev's read-only SQLite metadata, then permits curated list/inspect/log and

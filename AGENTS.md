@@ -173,3 +173,11 @@ Default per-user language caches outside Code, including `/data/home/go`, are
 writable inside the guard. Keep project source and generated artifacts in the
 assigned task/worktree; never relocate source into a shared cache to escape the
 workspace boundary.
+
+Sessionless host utilities (summaries, generated titles/descriptions, prompt
+improvements, and capability probes) also run inside the outer guard. Their
+only writable project-like path is the exact backend-owned provider directory
+below `/tmp/kandev-host-utility-<backend-pid>-<random>/`, and the parent must be
+an active `host_utility` entry in Kandev's temporary-artifact registry; they
+receive neither the task Docker broker nor `/dev/kvm`. Never broaden this to
+arbitrary `/tmp` or infer host-utility authority from an environment variable.

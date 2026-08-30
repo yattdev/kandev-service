@@ -46,6 +46,56 @@ fi
         exit 1
     fi
 ')
+
+# Sessionless host utilities run from a backend-owned temporary directory, not
+# from a project. The guard must admit only the exact provider child while
+# withholding task Docker and device capabilities.
+utility_parent="$(sqlite3 -noheader /data/data/kandev.db "
+    SELECT path
+    FROM storage_temp_artifacts
+    WHERE kind = 'host_utility' AND state = 'active'
+      AND closed_at IS NULL AND deleted_at IS NULL
+    ORDER BY created_at DESC
+    LIMIT 1;
+")"
+backend_pid="$(basename "$utility_parent" | cut -d- -f4)"
+utility_root="$utility_parent/claude-acp"
+[[ -n "$utility_parent" && -d "$utility_root" ]] || {
+    echo "ERROR: no live backend-owned host utility directory available for guard test" >&2
+    exit 1
+}
+(cd "$utility_root" && "$GUARD" -- sh -ceu '
+    test "${KANDEV_AGENT_GUARD_SCOPE:-}" = host_utility
+    probe="$PWD/.kandev-host-utility-probe-$$"
+    printf utility > "$probe"
+    test "$(cat "$probe")" = utility
+    rm -f "$probe"
+    test ! -e /run/docker.sock
+    test ! -S /var/run/docker.sock
+    test -z "${KANDEV_AGENT_DOCKER_SOCKET:-}"
+    test ! -e /dev/kvm
+')
+
+fake_utility_parent="/tmp/kandev-host-utility-$backend_pid-999999999"
+fake_utility_root="$fake_utility_parent/claude-acp"
+mkdir -p "$fake_utility_root"
+chmod 0700 "$fake_utility_parent"
+chmod 0755 "$fake_utility_root"
+if (cd "$fake_utility_root" && "$GUARD" -- true) 2>/dev/null; then
+    echo "ERROR: guard accepted a non-MkdirTemp host utility directory" >&2
+    exit 1
+fi
+rm -f "$fake_utility_root"/* 2>/dev/null || true
+rmdir "$fake_utility_root" "$fake_utility_parent"
+
+utility_nested="$utility_root/nested"
+mkdir "$utility_nested"
+if (cd "$utility_nested" && "$GUARD" -- true) 2>/dev/null; then
+    rmdir "$utility_nested"
+    echo "ERROR: guard accepted a nested host utility working directory" >&2
+    exit 1
+fi
+rmdir "$utility_nested"
 (cd "$task_root" && "$GUARD" -- sh -ceu '
     grep -Eq "^NoNewPrivs:[[:space:]]+1$" /proc/self/status
     if sudo -n true 2>/dev/null; then
@@ -483,4 +533,4 @@ if (cd / && "$GUARD" -- true) 2>/dev/null; then
     exit 1
 fi
 
-echo "PASS: linked-task Git isolation, writable task Compose/Android QA, attested coordinator workspace/source/probe scope, and cross-workspace/Code-root/raw-socket/sudo boundaries work"
+echo "PASS: linked-task Git isolation, registered host-utility scope, writable task Compose/Android QA, attested coordinator workspace/source/probe scope, and cross-workspace/Code-root/raw-socket/sudo boundaries work"

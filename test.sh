@@ -855,8 +855,8 @@ fi
 # alternate Git worktree that is not one of the container's identity mounts.
 GUARD_TEST_OUT="$(docker exec -i -u kandev -w /data/tasks kandev bash -s \
   < "$COMPOSE_DIR/tests/test-agent-guard.sh" 2>&1 || true)"
-if grep -q '^PASS: linked-task Git isolation, writable task Compose/Android QA, attested coordinator workspace/source/probe scope, and cross-workspace/Code-root/raw-socket/sudo boundaries work' <<<"$GUARD_TEST_OUT"; then
-  ok "ordinary tasks have isolated writable Git/Compose/Android scope and attested coordinators have same-workspace authority"
+if grep -q '^PASS: linked-task Git isolation, registered host-utility scope, writable task Compose/Android QA, attested coordinator workspace/source/probe scope, and cross-workspace/Code-root/raw-socket/sudo boundaries work' <<<"$GUARD_TEST_OUT"; then
+  ok "ordinary tasks and registered host utilities are isolated while attested coordinators retain same-workspace authority"
 else
   fail "tests/test-agent-guard.sh failed: $(tail -3 <<<"$GUARD_TEST_OUT" | tr '\n' ';')"
 fi

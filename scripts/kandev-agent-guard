@@ -60,6 +60,59 @@ git_root_below() {
 }
 
 writable_root=""
+scope_kind="project"
+
+# Host-utility agents (summaries, generated titles, prompt improvements, and
+# capability probes) are launched by the trusted backend from a process-owned
+# temporary directory rather than from a task checkout.  Authenticate that
+# directory against the live backend process and its MkdirTemp layout; never
+# accept a generic /tmp path or a caller-provided environment flag.
+host_utility_root() {
+    local path="$1" parent backend_pid current_uid parent_stat child_stat
+    local proc_uid backend_exe backend_cmdline registered_pid
+
+    [[ "$path" =~ ^(/tmp/kandev-host-utility-([1-9][0-9]*)-([0-9]+))/([a-z0-9][a-z0-9._-]{0,47}-acp)$ ]] \
+        || return 1
+    parent="${BASH_REMATCH[1]}"
+    backend_pid="${BASH_REMATCH[2]}"
+    current_uid="$(id -u)"
+
+    [[ -d "$parent" && ! -L "$parent" && -d "$path" && ! -L "$path" ]] || return 1
+    [[ "$(realpath -e -- "$parent")" == "$parent" \
+       && "$(realpath -e -- "$path")" == "$path" ]] || return 1
+
+    parent_stat="$(stat -c '%u:%a' -- "$parent")" || return 1
+    child_stat="$(stat -c '%u:%a' -- "$path")" || return 1
+    [[ "$parent_stat" == "$current_uid:700" ]] || return 1
+    [[ "$child_stat" == "$current_uid:755" || "$child_stat" == "$current_uid:700" ]] || return 1
+
+    [[ -d "/proc/$backend_pid" ]] || return 1
+    proc_uid="$(stat -c '%u' -- "/proc/$backend_pid")" || return 1
+    [[ "$proc_uid" == "$current_uid" ]] || return 1
+    backend_exe="$(readlink -f -- "/proc/$backend_pid/exe")" || return 1
+    [[ "${backend_exe##*/}" == "kandev" && "$backend_exe" != *" (deleted)" ]] || return 1
+    backend_cmdline="$(tr '\0' '\n' < "/proc/$backend_pid/cmdline")" || return 1
+    [[ "$backend_cmdline" == *$'\n__backend'* || "$backend_cmdline" == __backend$'\n'* ]] || return 1
+
+    # The backend registers the exact MkdirTemp parent before any provider is
+    # bootstrapped. This prevents a same-UID process from gaining utility scope
+    # merely by recreating the public filename pattern.
+    [[ -f "$kandev_db" ]] || return 1
+    registered_pid="$(sqlite3 -noheader "file:$kandev_db?mode=ro" "
+        SELECT owner_pid
+        FROM storage_temp_artifacts
+        WHERE kind = 'host_utility'
+          AND path = '$parent'
+          AND state = 'active'
+          AND owner_pid = $backend_pid
+          AND closed_at IS NULL
+          AND deleted_at IS NULL;
+    ")" || return 1
+    [[ "$registered_pid" == "$backend_pid" ]] || return 1
+
+    printf '%s\n' "$path"
+}
+
 case "$cwd" in
     /data/tasks/*)
         writable_root="$(managed_child /data/tasks "$cwd")" || true
@@ -84,6 +137,10 @@ case "$cwd" in
     /data/home/Code/*)
         writable_root="$(git_root_below /data/home/Code "$cwd")" || true
         ;;
+    /tmp/kandev-host-utility-*)
+        writable_root="$(host_utility_root "$cwd")" || true
+        [[ -z "$writable_root" ]] || scope_kind="host_utility"
+        ;;
     *)
         if [[ -n "$host_code" && "$cwd" == "$host_code"/* ]]; then
             writable_root="$(git_root_below "$host_code" "$cwd")" || true
@@ -91,7 +148,7 @@ case "$cwd" in
         ;;
 esac
 
-[[ -n "$writable_root" ]] || deny "working directory is outside an approved project/task root: $cwd"
+[[ -n "$writable_root" ]] || deny "working directory is outside an approved project/task/host-utility root: $cwd"
 [[ -d "$writable_root" ]] || deny "approved writable root does not exist: $writable_root"
 writable_root="$(realpath -e -- "$writable_root")" || deny "cannot resolve writable root"
 [[ "$cwd" == "$writable_root" || "$cwd" == "$writable_root"/* ]] || deny "working directory escapes writable root"
@@ -101,7 +158,9 @@ agent_docker_target="/run/kandev-agent-docker.sock"
 agent_docker_token=""
 declare -a agent_docker_env
 agent_docker_env=()
-if [[ -S "$agent_docker_socket" && -x /usr/local/bin/kandev-agent-docker-token ]]; then
+if [[ "$scope_kind" == "project" \
+      && -S "$agent_docker_socket" \
+      && -x /usr/local/bin/kandev-agent-docker-token ]]; then
     agent_docker_token="$(/usr/local/bin/kandev-agent-docker-token "$writable_root")" \
         || deny "cannot mint task-scoped Docker token"
     agent_docker_env=(
@@ -131,7 +190,7 @@ bound["$writable_root"]=1
 # Android agents receive only the KVM virtualization device. The SDK and base
 # AVD catalogue are inherited from the outer root as read-only mounts; graphics
 # and desktop sockets are intentionally absent, so UI QA runs headlessly.
-if [[ -c /dev/kvm ]]; then
+if [[ "$scope_kind" == "project" && -c /dev/kvm ]]; then
     bwrap_args+=(--dev-bind /dev/kvm /dev/kvm)
 fi
 
@@ -498,6 +557,7 @@ fi
 run_guarded=(
     bwrap "${bwrap_args[@]}"
     --setenv KANDEV_AGENT_GUARD_ACTIVE 1
+    --setenv KANDEV_AGENT_GUARD_SCOPE "$scope_kind"
     --setenv TMPDIR /tmp
     --setenv MISE_TRUSTED_CONFIG_PATHS "$mise_trusted_config_path"
     "${agent_docker_env[@]}"
