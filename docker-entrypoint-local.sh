@@ -35,14 +35,18 @@ if [ "$(id -u)" = '0' ]; then
     # HOME for the kandev user lives on the PV so agent CLI auth state
     # (gh, claude, codex, auggie, copilot, amp, ...) survives pod restarts
     # and image upgrades. Make sure it exists before dropping privileges.
+    # The host and container user intentionally share UID 1000, so bind-mounted
+    # data is already writable by kandev. Never recursively chown /data here:
+    # it contains the database plus Code/task bind mounts, and walking those on
+    # every restart can take minutes and cross into host project trees.
+    # Initialize only the runtime directories that this entrypoint may create.
     mkdir -p /data/home
-    install -d -m 0700 /data/home/.android
+    chown kandev:kandev /data /data/home 2>/dev/null || true
+    install -d -m 0700 -o kandev -g kandev /data/home/.android
     [ ! -f /data/home/.android/adbkey ] || chmod 0600 /data/home/.android/adbkey
-    # Patched: || true so that chown failures on read-only bind mounts
-    # (e.g. ~/.ssh:ro, ~/.gitconfig:ro in docker-compose.override.yml) do not
-    # abort startup under `set -e`. All writable paths under /data are still
-    # chowned to kandev:kandev correctly; only the :ro mounts are skipped.
-    chown -R kandev:kandev /data 2>/dev/null || true
+    for runtime_dir in /data/data /data/plugins /data/supervisor; do
+        [ ! -d "$runtime_dir" ] || chown kandev:kandev "$runtime_dir" 2>/dev/null || true
+    done
     # Fail before the Kandev server accepts agent work when the enclosing
     # container runtime prevents Codex's bubblewrap sandbox from starting.
     if [ "${1:-}" = "kandev" ] && [ "${2:-}" = "start" ]; then

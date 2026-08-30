@@ -345,12 +345,11 @@ RUN git config --system safe.directory '*'
 COPY docker-host-path-wrapper.sh /usr/local/bin/docker
 RUN chmod +x /usr/local/bin/docker
 
-# ── Entrypoint: tolerate read-only bind mounts ────────────────────────────────
-# The upstream entrypoint runs `chown -R kandev:kandev /data` under `set -e`.
-# It crashes when it hits our :ro mounts (~/.ssh, ~/.gitconfig) because chown
-# cannot change ownership on a read-only filesystem — causing an infinite restart
-# loop. The patched version adds `|| true` so chown proceeds on all writable
-# paths and silently skips the read-only ones instead of aborting startup.
+# ── Entrypoint: bounded runtime ownership initialization ─────────────────────
+# The upstream entrypoint recursively chowns /data. In this deployment /data
+# contains the database plus Code/task bind mounts, making every restart slow
+# and traversing host project trees. The patched entrypoint touches only the
+# runtime directory roots that it may create and tolerates read-only mounts.
 COPY docker-entrypoint-local.sh /usr/local/bin/docker-entrypoint.sh
 COPY scripts/codex-sandbox-preflight.sh /usr/local/bin/codex-sandbox-preflight
 COPY scripts/kandev-agent-guard /usr/local/bin/kandev-agent-guard

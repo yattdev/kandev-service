@@ -585,12 +585,13 @@ docker exec -u kandev kandev sudo apt-get update
 docker exec -u kandev kandev sudo chown -R kandev:kandev /data/some/path
 ```
 
-`/data` itself is already owned by `kandev:kandev` on every container start (the
-entrypoint's `chown -R kandev:kandev /data`, see "Entrypoint patch" in `CLAUDE.md`), so
-this is mainly for edge cases — files left behind with another owner, or installing a
-package temporarily to debug something. It does **not** change what the mounted Docker
-socket / `docker` group grants; that access is separate (see the Docker CLI section
-above).
+The entrypoint initializes ownership only for `/data`, `/data/home`, and the top-level
+Kandev runtime directories. It deliberately never recursively changes `/data`: that
+tree includes the database plus mounted Code/task worktrees, and a full ownership walk
+made restarts slow while needlessly touching host projects. Use the scoped command
+above only for a specific path that was actually left with the wrong owner. It does
+**not** change what the mounted Docker socket / `docker` group grants; that access is
+separate (see the Docker CLI section above).
 
 ### Adding more packages
 

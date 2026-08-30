@@ -42,19 +42,22 @@ else
   fail "kandev-local:latest image not found — run: docker compose build"
 fi
 
-# Entrypoint file on disk must contain the patched chown
-if grep -q '|| true' "$COMPOSE_DIR/docker-entrypoint-local.sh"; then
-  ok "docker-entrypoint-local.sh contains chown || true patch"
+# Entrypoint must initialize /data ownership without recursively traversing
+# database, project, or task bind mounts on every restart.
+if grep -q 'chown kandev:kandev /data /data/home' "$COMPOSE_DIR/docker-entrypoint-local.sh" \
+    && ! grep -Eq 'chown[[:space:]]+-R[[:space:]]+kandev:kandev[[:space:]]+/data([[:space:]]|$)' "$COMPOSE_DIR/docker-entrypoint-local.sh"; then
+  ok "docker-entrypoint-local.sh uses bounded /data ownership initialization"
 else
-  fail "docker-entrypoint-local.sh is missing the chown || true patch"
+  fail "docker-entrypoint-local.sh recursively chowns /data or lacks bounded initialization"
 fi
 
-# Entrypoint inside the built image must also contain the patch
-if docker run --rm kandev-local:latest cat /usr/local/bin/docker-entrypoint.sh 2>/dev/null \
-    | grep -q '|| true'; then
-  ok "entrypoint inside image has chown || true patch"
+# Entrypoint inside the built image must contain the same bounded strategy.
+IMAGE_ENTRYPOINT=$(docker run --rm kandev-local:latest cat /usr/local/bin/docker-entrypoint.sh 2>/dev/null || true)
+if grep -q 'chown kandev:kandev /data /data/home' <<<"$IMAGE_ENTRYPOINT" \
+    && ! grep -Eq 'chown[[:space:]]+-R[[:space:]]+kandev:kandev[[:space:]]+/data([[:space:]]|$)' <<<"$IMAGE_ENTRYPOINT"; then
+  ok "entrypoint inside image uses bounded /data ownership initialization"
 else
-  fail "entrypoint inside image is missing the patch (rebuild required)"
+  fail "entrypoint inside image has stale recursive /data ownership logic (rebuild required)"
 fi
 
 # Required binaries present in image

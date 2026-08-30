@@ -182,13 +182,15 @@ both `build:` and `image: kandev-local:latest` so the tag is used for `docker co
 ### Entrypoint patch (`docker-entrypoint-local.sh`)
 
 The upstream entrypoint does `chown -R kandev:kandev /data` under `set -e`.
-Mounting `~/.ssh` and `~/.gitconfig` as `:ro` causes `chown` to fail → container
-crash-loops. The patched version adds `2>/dev/null || true` so:
-- All writable paths under `/data` are still chowned to `kandev:kandev`
-- `:ro` mounts are silently skipped
+That both fails on read-only mounts and walks the multi-gigabyte database plus every
+Code/task bind mount on each restart. The patched entrypoint instead initializes only
+`/data`, `/data/home`, `.android`, and the top-level Kandev runtime directories. It
+never recursively changes `/data`, so startup is bounded and host project trees are
+not traversed.
 
-**Critical:** if the upstream entrypoint changes in a new image version, the patch must
-be re-verified. `test.sh` section 1 checks this automatically.
+**Critical:** if the upstream entrypoint changes in a new image version, the bounded
+ownership patch must be re-verified. `test.sh` section 1 rejects a recursive `/data`
+chown in both the checkout and built image.
 
 ### UID matching
 
