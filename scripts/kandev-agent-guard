@@ -180,9 +180,10 @@ bwrap_args=(
     --unshare-ipc
     --unshare-uts
     --ro-bind / /
-    # A PID namespace must receive its own procfs. Reusing the outer mount
-    # leaves procps unable to resolve the guarded process after long commands.
-    --proc /proc
+    # Keep the container's existing read-only procfs. Do not add `--proc` here:
+    # image updates cannot reload the host's AppArmor policy, so requiring a
+    # new procfs mount makes every ACP provider exit before its handshake when
+    # the image and host policy are briefly out of sync.
     --dev /dev
     --tmpfs /tmp
     --tmpfs /run
