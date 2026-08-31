@@ -882,6 +882,12 @@ else
   fail "tests/test-agent-docker-broker.py failed"
 fi
 
+if PYTHONDONTWRITEBYTECODE=1 python3 "$COMPOSE_DIR/tests/test-agent-docker-client.py" >/dev/null 2>&1; then
+  ok "guarded Docker client drains nonblocking terminal output"
+else
+  fail "tests/test-agent-docker-client.py failed"
+fi
+
 if PYTHONDONTWRITEBYTECODE=1 python3 "$COMPOSE_DIR/tests/kandev-support-process-cleanup.py" >/dev/null 2>&1; then
   ok "root-only Support cleanup predicate tests pass"
 else

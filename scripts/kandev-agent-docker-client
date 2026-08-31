@@ -5,8 +5,33 @@ from __future__ import annotations
 
 import json
 import os
+import select
 import socket
 import sys
+
+
+def write_all(stream, output: str) -> None:
+    """Drain output to a possibly nonblocking terminal file descriptor.
+
+    Agent terminal pipes can be O_NONBLOCK.  TextIOWrapper.write() then raises
+    BlockingIOError for a long Compose result instead of waiting for the
+    consumer, which incorrectly turns a successful Compose command into a
+    failed hook.  Use short raw writes and wait for writability between them.
+    """
+    data = output.encode("utf-8", errors="replace")
+    descriptor = stream.fileno()
+    offset = 0
+    while offset < len(data):
+        try:
+            written = os.write(descriptor, data[offset:])
+        except InterruptedError:
+            continue
+        except BlockingIOError:
+            select.select([], [descriptor], [])
+            continue
+        if written <= 0:
+            raise BrokenPipeError("terminal output stream closed")
+        offset += written
 
 
 def main() -> int:
@@ -44,8 +69,8 @@ def main() -> int:
     except (OSError, json.JSONDecodeError) as exc:
         print(f"docker: task-scoped broker is unavailable: {exc}", file=sys.stderr)
         return 78
-    sys.stdout.write(str(response.get("stdout", "")))
-    sys.stderr.write(str(response.get("stderr", "")))
+    write_all(sys.stdout, str(response.get("stdout", "")))
+    write_all(sys.stderr, str(response.get("stderr", "")))
     return int(response.get("returncode", 70))
 
 
