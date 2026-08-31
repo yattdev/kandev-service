@@ -180,9 +180,9 @@ bwrap_args=(
     --unshare-ipc
     --unshare-uts
     --ro-bind / /
-    # Keep the container's existing read-only procfs. A private `--proc` mount
-    # also requires the host-loaded AppArmor profile to be upgraded before this
-    # script lands; image/container updates cannot reload that host policy.
+    # A PID namespace must receive its own procfs. Reusing the outer mount
+    # leaves procps unable to resolve the guarded process after long commands.
+    --proc /proc
     --dev /dev
     --tmpfs /tmp
     --tmpfs /run
