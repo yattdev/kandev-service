@@ -98,7 +98,6 @@ fi
 rmdir "$utility_nested"
 (cd "$task_root" && "$GUARD" -- sh -ceu '
     grep -Eq "^NoNewPrivs:[[:space:]]+1$" /proc/self/status
-    ps -o pid= -p "$$" | grep -Eq "[0-9]"
     if sudo -n true 2>/dev/null; then
         echo "ERROR: guarded process escalated through sudo" >&2
         exit 1
@@ -296,9 +295,14 @@ trap - EXIT
         "  state: {}" > "$runtime_dir/docker-compose.yml"
     cd "$runtime_dir"
     rendered="$(COMPOSE_PROJECT_NAME=guard-compose-scope DB_PORT=13306 WEB_PORT=18080 docker compose config)"
+    project_name="$(printf "%s\n" "$rendered" | sed -n "s/^name: //p" | head -n 1)"
+    case "$project_name" in
+        kd_*) ;;
+        *) echo "ERROR: broker did not enforce a task-scoped Compose project name" >&2; exit 1 ;;
+    esac
     printf "%s\n" "$rendered" | grep -Eq "published: [\"\047]?13306[\"\047]?"
     printf "%s\n" "$rendered" | grep -Eq "published: [\"\047]?18080[\"\047]?"
-    printf "%s\n" "$rendered" | grep -Eq "guard.compose.scope: [\"\047]?guard-compose-scope[\"\047]?"
+    printf "%s\n" "$rendered" | grep -Eq "guard.compose.scope: [\"\047]?$project_name[\"\047]?"
     attempt=0
     until docker compose up -d --build >/dev/null; do
         attempt=$((attempt + 1))
@@ -310,7 +314,11 @@ trap - EXIT
     done
     # `run --rm` is the pre-push-hook path. Its successful exit must propagate
     # through the broker after Compose removes the one-off container.
-    docker compose run --rm probe sh -ceu "sleep 2; exit 0"
+    if ! run_output="$(docker compose run --rm probe sh -ceu "sleep 2; exit 0" 2>&1)"; then
+        echo "ERROR: task Compose run --rm did not propagate a successful exit" >&2
+        printf "%s\n" "$run_output" >&2
+        exit 1
+    fi
     docker compose exec -T probe test -f /state/ready
     docker compose exec -T probe sh -c "echo container-write >/workspace/container-write"
     test "$(cat container-write)" = container-write
