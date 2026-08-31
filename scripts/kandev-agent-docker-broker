@@ -19,6 +19,7 @@ from pathlib import Path
 import re
 import secrets
 import selectors
+import stat
 import socketserver
 import sqlite3
 import subprocess
@@ -54,6 +55,7 @@ MAX_REQUEST = 1024 * 1024
 MAX_OUTPUT = 16 * 1024 * 1024
 COMMAND_TIMEOUT = 30 * 60
 MAX_EXPORT = int(os.environ.get("KANDEV_COORDINATOR_MAX_EXPORT_BYTES", str(4 * 1024**3)))
+MAX_STATIC_BACKUP = int(os.environ.get("KANDEV_COORDINATOR_MAX_STATIC_BACKUP_BYTES", str(4 * 1024**3)))
 MAX_LOG_LINES = 1000
 MAX_DESCRIPTION_BYTES = 1024 * 1024
 CONTAINER_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
@@ -65,6 +67,7 @@ TASK_ID_RE = re.compile(
 TASK_DIR_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 COMPOSE_ENV_KEYS = {"COMPOSE_PROJECT_NAME", "DB_PORT", "WEB_PORT"}
 COMPOSE_PROJECT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+STATIC_BACKUP_NAME = "last_db.sql"
 AUDIT_LOCK = threading.Lock()
 EXPORT_LOCK = threading.Lock()
 
@@ -156,6 +159,30 @@ def translate_to_host(path: Path) -> Path:
         except ValueError:
             continue
         return (Path(destination) / relative).resolve(strict=True)
+    raise BrokerError(f"task path has no configured host mapping: {path}")
+
+
+def translate_to_host_lexical(path: Path) -> Path:
+    """Map a container path without resolving symlinks.
+
+    Static-backup delivery must reject symlink traversal, so resolving before
+    validation would hide a malicious source or registered-root symlink.
+    """
+    mappings = [
+        (Path("/data/home/Code"), os.environ.get("KANDEV_HOST_CODE_DIR", "")),
+        (Path("/data"), os.environ.get("KANDEV_HOST_DATA_DIR", "")),
+    ]
+    host_code = os.environ.get("KANDEV_HOST_CODE_DIR", "")
+    if host_code:
+        mappings.insert(0, (Path(host_code), host_code))
+    for source, destination in mappings:
+        if not destination:
+            continue
+        try:
+            relative = path.relative_to(source)
+        except ValueError:
+            continue
+        return Path(destination) / relative
     raise BrokerError(f"task path has no configured host mapping: {path}")
 
 
@@ -749,6 +776,88 @@ def target_task_inbox(target_task_id: str, workspace_id: str, output_name: str) 
     return destination, container_destination
 
 
+def registered_static_backup(source_path: str, workspace_id: str) -> tuple[Path, str]:
+    """Return one approved logical backup from a registered source root.
+
+    This is deliberately not a generic file-read API.  The caller must name
+    exactly ``last_db.sql`` directly below a live repository registered in the
+    coordinator's own workspace.  Both the root and the file are rejected if
+    they are symlinks.
+    """
+    requested = Path(source_path)
+    if not requested.is_absolute() or requested.name != STATIC_BACKUP_NAME:
+        raise BrokerError(f"static backup must be an absolute {STATIC_BACKUP_NAME} path")
+    with kandev_db() as database:
+        rows = database.execute(
+            """
+            SELECT local_path
+            FROM repositories
+            WHERE workspace_id = ? AND deleted_at IS NULL
+            """,
+            (workspace_id,),
+        ).fetchall()
+    for row in rows:
+        registered = container_path_for_host(str(row["local_path"] or ""))
+        if registered is None or requested != registered / STATIC_BACKUP_NAME:
+            continue
+        host_root = translate_to_host_lexical(registered)
+        host_source = translate_to_host_lexical(requested)
+        try:
+            root_stat = os.lstat(host_root)
+            source_stat = os.lstat(host_source)
+        except OSError as exc:
+            raise BrokerError(f"static backup is unavailable: {exc}") from exc
+        if stat.S_ISLNK(root_stat.st_mode) or not stat.S_ISDIR(root_stat.st_mode):
+            raise BrokerError("registered static backup root is not a real directory")
+        if stat.S_ISLNK(source_stat.st_mode) or not stat.S_ISREG(source_stat.st_mode):
+            raise BrokerError("static backup must be a regular non-symlink file")
+        if source_stat.st_size > MAX_STATIC_BACKUP:
+            raise BrokerError("static backup exceeds the configured size limit")
+        return host_source, str(requested)
+    raise BrokerError("static backup is not allow-listed for this coordinator workspace")
+
+
+def copy_static_backup(source: Path, destination: Path) -> tuple[int, str]:
+    """Copy a validated backup without following links or exposing its content."""
+    descriptor = os.open(source, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    temporary_path: Path | None = None
+    try:
+        initial = os.fstat(descriptor)
+        if not stat.S_ISREG(initial.st_mode) or initial.st_size > MAX_STATIC_BACKUP:
+            raise BrokerError("static backup is not a permitted regular file")
+        temporary = tempfile.NamedTemporaryFile(
+            mode="wb", prefix=f".{destination.name}.", dir=destination.parent, delete=False
+        )
+        temporary_path = Path(temporary.name)
+        digest = hashlib.sha256()
+        total = 0
+        with temporary, os.fdopen(descriptor, "rb", closefd=False) as stream:
+            while True:
+                chunk = stream.read(1024 * 1024)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > MAX_STATIC_BACKUP:
+                    raise BrokerError("static backup exceeds the configured size limit")
+                digest.update(chunk)
+                temporary.write(chunk)
+        final = os.fstat(descriptor)
+        if (final.st_dev, final.st_ino, final.st_size, final.st_mtime_ns) != (
+            initial.st_dev,
+            initial.st_ino,
+            initial.st_size,
+            initial.st_mtime_ns,
+        ):
+            raise BrokerError("static backup changed while being copied")
+        os.link(temporary_path, destination)
+        destination.chmod(0o600)
+        return total, digest.hexdigest()
+    finally:
+        os.close(descriptor)
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+
+
 def container_environment(info: dict[str, Any]) -> dict[str, str]:
     environment: dict[str, str] = {}
     for item in (info.get("Config") or {}).get("Env") or []:
@@ -900,6 +1009,7 @@ def source_help() -> str:
         "  docker kandev source inspect <container>\n"
         "  docker kandev source logs <container> [--tail N] [--since 30m]\n"
         "  docker kandev source db-dump <container> --target-task <UUID> [--name dump.sql]\n"
+        "  docker kandev source static-backup /data/home/Code/<repo>/last_db.sql --target-task <UUID> --name backup.sql\n"
     )
 
 
@@ -1313,6 +1423,60 @@ def handle_coordinator_source(
             "stdout": json.dumps(
                 {
                     "source": name,
+                    "target_task_id": target_task_id,
+                    "path": container_destination,
+                    "bytes": size,
+                    "sha256": checksum,
+                },
+                indent=2,
+            )
+            + "\n",
+            "stderr": "",
+        }
+
+    if operation == "static-backup" and len(operation_args) >= 2:
+        source_path = operation_args[1]
+        target_task_id = ""
+        output_name = ""
+        index = 2
+        while index < len(operation_args):
+            option = operation_args[index]
+            if option not in {"--target-task", "--name"} or index + 1 >= len(operation_args):
+                raise BrokerError(f"unsupported source static-backup option: {option}")
+            value = operation_args[index + 1]
+            if option == "--target-task":
+                target_task_id = value
+            else:
+                output_name = value
+            index += 2
+        if not target_task_id or not output_name:
+            raise BrokerError("source static-backup requires --target-task <UUID> and --name <backup.sql>")
+        if not output_name.endswith(".sql"):
+            raise BrokerError("static backup output name must end in .sql")
+        source, container_source = registered_static_backup(source_path, context["workspace_id"])
+        destination, container_destination = target_task_inbox(
+            target_task_id, context["workspace_id"], output_name
+        )
+        try:
+            size, checksum = copy_static_backup(source, destination)
+        except Exception:
+            destination.unlink(missing_ok=True)
+            raise
+        audit_source(
+            context,
+            operation,
+            source=container_source,
+            target_task_id=target_task_id,
+            output=container_destination,
+            bytes=size,
+            sha256=checksum,
+            result="ok",
+        )
+        return {
+            "returncode": 0,
+            "stdout": json.dumps(
+                {
+                    "source": container_source,
                     "target_task_id": target_task_id,
                     "path": container_destination,
                     "bytes": size,

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
+import hashlib
 import json
 import os
 from contextlib import contextmanager
@@ -334,6 +335,65 @@ def main() -> None:
             ),
             "cross-workspace target task was accepted",
         )
+
+        # Static logical backups are a deliberately narrow alternative when a
+        # workspace database container is stopped: only last_db.sql directly
+        # under a registered same-workspace source root is readable.
+        source_repository = base / "app"
+        source_repository.mkdir(exist_ok=True)
+        backup = source_repository / "last_db.sql"
+        backup_bytes = b"-- logical backup fixture\nSELECT 104;\n"
+        backup.write_bytes(backup_bytes)
+        source, container_source = broker.registered_static_backup(
+            "/data/home/Code/app/last_db.sql", "ws-one"
+        )
+        assert source == backup
+        assert container_source == "/data/home/Code/app/last_db.sql"
+        static_destination, static_container_destination = broker.target_task_inbox(
+            "33333333-3333-3333-3333-333333333333", "ws-one", "static-fixture.sql"
+        )
+        size, checksum = broker.copy_static_backup(source, static_destination)
+        assert static_container_destination.endswith("/static-fixture.sql")
+        assert size == len(backup_bytes)
+        assert checksum == hashlib.sha256(backup_bytes).hexdigest()
+        assert static_destination.read_bytes() == backup_bytes
+        expect_denied(
+            lambda: broker.registered_static_backup("/data/home/Code/app/other.sql", "ws-one"),
+            "arbitrary SQL file was accepted as a static backup",
+        )
+        backup.unlink()
+        backup.symlink_to(outside / "outside.sql")
+        expect_denied(
+            lambda: broker.registered_static_backup("/data/home/Code/app/last_db.sql", "ws-one"),
+            "symlinked static backup was accepted",
+        )
+        backup.unlink()
+        backup.write_bytes(backup_bytes)
+
+        original_context = broker.coordinator_context
+        broker.coordinator_context = lambda _: coordinator
+        try:
+            response = broker.handle_coordinator_source(
+                Path("/data/tasks/coord-task"),
+                [
+                    "kandev",
+                    "source",
+                    "static-backup",
+                    "/data/home/Code/app/last_db.sql",
+                    "--target-task",
+                    "33333333-3333-3333-3333-333333333333",
+                    "--name",
+                    "delivered-static.sql",
+                ],
+            )
+        finally:
+            broker.coordinator_context = original_context
+        delivery = json.loads(response["stdout"])
+        assert delivery["source"] == "/data/home/Code/app/last_db.sql"
+        assert delivery["target_task_id"] == "33333333-3333-3333-3333-333333333333"
+        assert delivery["bytes"] == len(backup_bytes)
+        assert delivery["sha256"] == hashlib.sha256(backup_bytes).hexdigest()
+        assert delivery["path"].endswith("/delivered-static.sql")
 
         dump_args, dump_environment = broker.database_export_command(
             {
