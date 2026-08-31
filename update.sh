@@ -245,6 +245,21 @@ fi
 RUNNING_ID=$(docker inspect kandev --format '{{.Image}}' 2>/dev/null || echo "none")
 TARGET_ID=$(docker image inspect "$TARGET_IMAGE" --format '{{.Id}}' 2>/dev/null || echo "unknown")
 
+# Validate the exact candidate image under the host's currently loaded
+# security policy before replacing a working container. This catches the
+# image/AppArmor drift that otherwise presents as an endless exit-78 restart
+# loop and takes the board offline. The probe is disposable and cannot mutate
+# Kandev data because no deployment volumes are mounted.
+if [[ "$TARGET_ID" == "unknown" ]] || ! docker run --rm \
+    --security-opt seccomp="$COMPOSE_DIR/seccomp/kandev-bwrap.json" \
+    --security-opt apparmor=kandev-codex \
+    "$TARGET_IMAGE" /usr/local/bin/codex-sandbox-preflight >>"$LOG_FILE" 2>&1; then
+    log "CRITICAL: candidate image failed the guarded ACP runtime preflight; refusing to deploy it."
+    log "The existing container/image is preserved. Inspect the end of $LOG_FILE for the exact Bubblewrap/AppArmor error."
+    exit 1
+fi
+log "Candidate image passed guarded ACP runtime preflight."
+
 if [[ "$REBUILD" -eq 0 && "$RUNNING_ID" != "none" && "$RUNNING_ID" == "$TARGET_ID" ]]; then
     log "Already up to date — container already running $TARGET_IMAGE ($TARGET_ID). No restart needed."
     exit 0

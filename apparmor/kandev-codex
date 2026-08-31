@@ -22,10 +22,6 @@ profile kandev-codex flags=(attach_disconnected,mediate_deleted) {
   # Filesystems created inside the staging root.
   mount fstype=tmpfs options in (rw,nosuid,nodev) ** -> /newroot{,/**},
   mount fstype=devpts options in (rw,nosuid,noexec) ** -> /newroot/dev/pts/,
-  # A PID namespace needs a private procfs. Confine that mount to Bubblewrap's
-  # staging root so a guarded process cannot remount or inspect host procfs.
-  mount fstype=proc -> /newroot/proc/,
-
   # Bind existing container paths into the staging root, then make selected
   # paths read-only. Sources cannot escape the already-confined container root.
   mount options in (rw,rbind,silent) /oldroot{,/**} -> /newroot{,/**},
