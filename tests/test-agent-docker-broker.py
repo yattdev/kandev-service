@@ -137,6 +137,42 @@ def main() -> None:
             "Compose image deletion was accepted",
         )
 
+        assert broker.compose_environment(
+            {"COMPOSE_PROJECT_NAME": "task_8402", "DB_PORT": "13306", "WEB_PORT": "18080"}
+        ) == {"COMPOSE_PROJECT_NAME": "task_8402", "DB_PORT": "13306", "WEB_PORT": "18080"}
+        expect_denied(
+            lambda: broker.compose_environment({"UNRELATED_SECRET": "nope"}),
+            "unrelated environment key was accepted",
+        )
+        expect_denied(
+            lambda: broker.compose_environment({"DB_PORT": "70000"}),
+            "out-of-range Compose port was accepted",
+        )
+
+        observed_environment: dict[str, str] | None = None
+        original_run_command = broker.run_command
+
+        def fake_run_command(args, cwd, timeout=broker.COMMAND_TIMEOUT, environment_overrides=None):
+            nonlocal observed_environment
+            observed_environment = environment_overrides
+            return 0, json.dumps({"services": {"app": {"image": "alpine:latest"}}}), ""
+
+        broker.run_command = fake_run_command
+        try:
+            broker.compose_config(
+                repository,
+                project,
+                [],
+                {"COMPOSE_PROJECT_NAME": "task_8402", "DB_PORT": "13306", "WEB_PORT": "18080"},
+            )
+        finally:
+            broker.run_command = original_run_command
+        assert observed_environment == {
+            "COMPOSE_PROJECT_NAME": "task_8402",
+            "DB_PORT": "13306",
+            "WEB_PORT": "18080",
+        }
+
         key = b"test-key"
         token = broker.expected_token(key, task_root)
         assert token != broker.expected_token(key, outside)

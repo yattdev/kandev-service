@@ -279,6 +279,11 @@ trap - EXIT
         "      context: ." \
         "      dockerfile: Containerfile.test" \
         "    command: [sh, -c, \"echo ready >/state/ready; sleep 300\"]" \
+        "    ports:" \
+        "      - \"\${DB_PORT:-3306}:3306\"" \
+        "      - \"\${WEB_PORT:-8080}:8080\"" \
+        "    labels:" \
+        "      guard.compose.scope: \"\${COMPOSE_PROJECT_NAME}\"" \
         "    volumes:" \
         "      - type: bind" \
         "        source: ." \
@@ -289,6 +294,10 @@ trap - EXIT
         "volumes:" \
         "  state: {}" > "$runtime_dir/docker-compose.yml"
     cd "$runtime_dir"
+    rendered="$(COMPOSE_PROJECT_NAME=guard-compose-scope DB_PORT=13306 WEB_PORT=18080 docker compose config)"
+    printf "%s\n" "$rendered" | grep -Eq "published: [\"\047]?13306[\"\047]?"
+    printf "%s\n" "$rendered" | grep -Eq "published: [\"\047]?18080[\"\047]?"
+    printf "%s\n" "$rendered" | grep -Eq "guard.compose.scope: [\"\047]?guard-compose-scope[\"\047]?"
     attempt=0
     until docker compose up -d --build >/dev/null; do
         attempt=$((attempt + 1))

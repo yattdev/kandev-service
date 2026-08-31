@@ -63,6 +63,8 @@ TASK_ID_RE = re.compile(
     r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
 TASK_DIR_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+COMPOSE_ENV_KEYS = {"COMPOSE_PROJECT_NAME", "DB_PORT", "WEB_PORT"}
+COMPOSE_PROJECT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 AUDIT_LOCK = threading.Lock()
 EXPORT_LOCK = threading.Lock()
 
@@ -369,7 +371,30 @@ def validate_model(
     return sanitized
 
 
-def clean_environment() -> dict[str, str]:
+def compose_environment(raw: Any) -> dict[str, str]:
+    """Validate the only agent-provided environment forwarded to Compose."""
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict) or not all(
+        isinstance(key, str) and isinstance(value, str) for key, value in raw.items()
+    ):
+        raise BrokerError("invalid Compose environment")
+    if set(raw) - COMPOSE_ENV_KEYS:
+        raise BrokerError("Compose environment contains a non-allow-listed key")
+    allowed: dict[str, str] = {}
+    for key, value in raw.items():
+        if not value or len(value) > 64:
+            raise BrokerError(f"invalid Compose environment value: {key}")
+        if key in {"DB_PORT", "WEB_PORT"}:
+            if not value.isdecimal() or not 1 <= int(value) <= 65535:
+                raise BrokerError(f"invalid Compose port: {key}")
+        elif not COMPOSE_PROJECT_NAME_RE.fullmatch(value):
+            raise BrokerError("invalid Compose project name")
+        allowed[key] = value
+    return allowed
+
+
+def clean_environment(overrides: dict[str, str] | None = None) -> dict[str, str]:
     environment = dict(os.environ)
     for key in list(environment):
         if key.startswith("KANDEV_AGENT_DOCKER_") or key in {
@@ -378,15 +403,20 @@ def clean_environment() -> dict[str, str]:
             "DOCKER_HOST",
         }:
             environment.pop(key, None)
+    if overrides:
+        environment.update(overrides)
     return environment
 
 
-def run_command(args: list[str], cwd: Path, timeout: int = COMMAND_TIMEOUT) -> tuple[int, str, str]:
+def run_command(
+    args: list[str], cwd: Path, timeout: int = COMMAND_TIMEOUT,
+    environment_overrides: dict[str, str] | None = None,
+) -> tuple[int, str, str]:
     with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
         process = subprocess.Popen(
             args,
             cwd=str(cwd),
-            env=clean_environment(),
+            env=clean_environment(environment_overrides),
             stdin=subprocess.DEVNULL,
             stdout=stdout_file,
             stderr=stderr_file,
@@ -1297,7 +1327,9 @@ def handle_coordinator_source(
     raise BrokerError(f"unsupported coordinator source operation\n{source_help()}")
 
 
-def compose_config(cwd: Path, project: str, global_args: list[str]) -> dict[str, Any]:
+def compose_config(
+    cwd: Path, project: str, global_args: list[str], environment_overrides: dict[str, str]
+) -> dict[str, Any]:
     # Parse all agent-controlled Compose files inside the same Bubblewrap scope
     # as the agent. The broker never opens env/config/include files on the host.
     args = [
@@ -1311,7 +1343,7 @@ def compose_config(cwd: Path, project: str, global_args: list[str]) -> dict[str,
         "--format",
         "json",
     ]
-    code, stdout, stderr = run_command(args, cwd)
+    code, stdout, stderr = run_command(args, cwd, environment_overrides=environment_overrides)
     if code != 0:
         raise BrokerError(f"Docker Compose configuration failed:\n{stderr or stdout}")
     try:
@@ -1325,6 +1357,7 @@ def handle_request(request: dict[str, Any], key: bytes) -> dict[str, Any]:
     cwd_raw = request.get("cwd")
     args = request.get("args")
     token = request.get("token")
+    environment_overrides = compose_environment(request.get("compose_environment"))
     if not isinstance(task_root_raw, str) or not isinstance(cwd_raw, str):
         raise BrokerError("missing task scope")
     if not isinstance(args, list) or not all(isinstance(item, str) for item in args):
@@ -1357,7 +1390,7 @@ def handle_request(request: dict[str, Any], key: bytes) -> dict[str, Any]:
     MODEL_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
     saved_model = MODEL_DIR / f"{project}.json"
     try:
-        initial_model = compose_config(cwd, project, global_args)
+        initial_model = compose_config(cwd, project, global_args, environment_overrides)
         sanitized_model = validate_model(initial_model, cwd, task_root, host_root, project)
         temporary_saved = MODEL_DIR / f".{project}.{threading.get_ident()}.json"
         temporary_saved.write_text(json.dumps(sanitized_model))

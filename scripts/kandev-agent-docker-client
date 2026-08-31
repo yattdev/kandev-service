@@ -21,6 +21,13 @@ def main() -> int:
         "task_root": task_root,
         "cwd": os.path.realpath(os.getcwd()),
         "args": sys.argv[1:],
+        # Compose interpolation needs a few command-scoped values, but the
+        # broker remains the policy boundary: it accepts only this allow-list.
+        "compose_environment": {
+            key: os.environ[key]
+            for key in ("COMPOSE_PROJECT_NAME", "DB_PORT", "WEB_PORT")
+            if key in os.environ
+        },
     }
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
