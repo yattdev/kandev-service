@@ -418,13 +418,13 @@ else
   fail "kandev-codex AppArmor policy does not compile (or apparmor_parser is missing)"
 fi
 
-if ! grep -Eq '^[[:space:]]*--proc[[:space:]]+/proc([[:space:]]|$)' \
+if grep -Eq '^[[:space:]]*--proc[[:space:]]+/proc([[:space:]]|$)' \
     "$COMPOSE_DIR/scripts/kandev-agent-guard" && \
-   ! grep -Eq '^[[:space:]]*mount[[:space:]]+fstype=proc' \
+   grep -Eq '^[[:space:]]*mount[[:space:]]+fstype=proc' \
     "$COMPOSE_DIR/apparmor/kandev-codex"; then
-  ok "agent guard has no image/host-coupled private procfs requirement"
+  ok "agent guard and AppArmor profile require private procfs for PID isolation"
 else
-  fail "agent guard reintroduced private procfs; this breaks ACP when the host AppArmor profile is older than the image"
+  fail "agent guard/profile private procfs policy is incomplete"
 fi
 
 COMPOSE_SECURITY=$(cd "$COMPOSE_DIR" && docker compose config --format json 2>/dev/null || echo '{}')

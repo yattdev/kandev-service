@@ -180,10 +180,11 @@ bwrap_args=(
     --unshare-ipc
     --unshare-uts
     --ro-bind / /
-    # Keep the container's existing read-only procfs. Do not add `--proc` here:
-    # image updates cannot reload the host's AppArmor policy, so requiring a
-    # new procfs mount makes every ACP provider exit before its handshake when
-    # the image and host policy are briefly out of sync.
+    # A PID namespace must receive its own procfs. Reusing the outer mount
+    # leaves procps unable to resolve its self-PID after long guarded commands,
+    # which can turn a successful `docker compose run --rm` into a teardown
+    # failure.
+    --proc /proc
     --dev /dev
     --tmpfs /tmp
     --tmpfs /run
