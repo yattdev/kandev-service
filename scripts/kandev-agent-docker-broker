@@ -50,6 +50,9 @@ COORDINATOR_AUDIT_LOG = Path(
         "KANDEV_COORDINATOR_AUDIT_LOG", "/data/logs/coordinator-source-audit.jsonl"
     )
 )
+COMPOSE_AUDIT_LOG = Path(
+    os.environ.get("KANDEV_AGENT_DOCKER_AUDIT_LOG", "/data/logs/agent-compose-audit.jsonl")
+)
 SUPPORT_QUEUE = Path(os.environ.get("KANDEV_SUPPORT_QUEUE", "/data/support-broker"))
 MAX_REQUEST = 1024 * 1024
 MAX_OUTPUT = 16 * 1024 * 1024
@@ -104,6 +107,10 @@ SAFE_EXISTING_COMMANDS = {
     "version",
     "wait",
 }
+# These commands can delete or disrupt resources which were created by a
+# previous Compose invocation.  They must be tied to the exact saved model
+# owner before the broker even asks Compose to parse current input.
+DESTRUCTIVE_COMPOSE_COMMANDS = {"down", "kill", "pause", "restart", "rm", "stop", "unpause"}
 FORBIDDEN_RUN_OPTIONS = {
     "-v",
     "--volume",
@@ -189,6 +196,126 @@ def translate_to_host_lexical(path: Path) -> Path:
 def project_name(task_root: Path) -> str:
     digest = hashlib.sha256(str(task_root).encode()).hexdigest()[:16]
     return f"kd_{digest}"
+
+
+def scoped_project_name(task_root: Path, environment: dict[str, str]) -> str:
+    """Select a project without allowing a task to address a shared project.
+
+    A task may opt into a distinct disposable project through the narrow
+    COMPOSE_PROJECT_NAME transport.  Only broker-looking ``kd_`` names are
+    accepted; ownership is then established by a saved model scoped to the
+    exact task root and working clone below.
+    """
+    selected = environment.get("COMPOSE_PROJECT_NAME", project_name(task_root))
+    if selected != project_name(task_root) and not selected.startswith("kd_"):
+        raise BrokerError("explicit Compose project names must use the guarded kd_ prefix")
+    return selected
+
+
+def model_path(task_root: Path, project: str) -> Path:
+    owner = hashlib.sha256(str(task_root).encode()).hexdigest()
+    key = hashlib.sha256(project.encode()).hexdigest()
+    return MODEL_DIR / owner / f"{key}.json"
+
+
+def project_claim_path(project: str) -> Path:
+    return MODEL_DIR / "projects" / f"{hashlib.sha256(project.encode()).hexdigest()}.json"
+
+
+def project_owner(task_root: Path, cwd: Path, project: str) -> dict[str, str]:
+    return {"task_root": str(task_root), "cwd": str(cwd), "project": project}
+
+
+def claim_project(task_root: Path, cwd: Path, project: str, *, create: bool = True) -> None:
+    """Atomically bind a guarded project to one task and one clone."""
+    destination = project_claim_path(project)
+    destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    expected = project_owner(task_root, cwd, project)
+    try:
+        current = json.loads(destination.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        if not create:
+            raise BrokerError("no saved Compose model is authorized for this task project")
+        temporary = destination.parent / f".{destination.name}.{threading.get_ident()}"
+        try:
+            temporary.write_text(json.dumps(expected), encoding="utf-8")
+            os.chmod(temporary, 0o600)
+            try:
+                os.link(temporary, destination)
+            except FileExistsError:
+                pass
+        finally:
+            temporary.unlink(missing_ok=True)
+        try:
+            current = json.loads(destination.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise BrokerError("cannot establish guarded Compose project ownership") from exc
+    except (OSError, json.JSONDecodeError) as exc:
+        raise BrokerError("guarded Compose project ownership is unreadable") from exc
+    if current != expected:
+        raise BrokerError("Compose project is already owned by a different task clone")
+
+
+def save_scoped_model(task_root: Path, cwd: Path, project: str, model: dict[str, Any]) -> None:
+    """Persist a Compose model with immutable task and clone ownership data."""
+    claim_project(task_root, cwd, project)
+    destination = model_path(task_root, project)
+    destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    temporary = destination.parent / f".{destination.name}.{threading.get_ident()}"
+    payload = {
+        "version": 1,
+        "task_root": str(task_root),
+        "cwd": str(cwd),
+        "project": project,
+        "model": model,
+    }
+    try:
+        temporary.write_text(json.dumps(payload), encoding="utf-8")
+        os.chmod(temporary, 0o600)
+        temporary.replace(destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def load_scoped_model(task_root: Path, cwd: Path, project: str) -> dict[str, Any]:
+    """Load only a model established by this task from this exact clone."""
+    # Check the global claim before the task-local model: otherwise a second
+    # task could create a same-named project and collide at the Docker daemon.
+    claim_project(task_root, cwd, project, create=False)
+    source = model_path(task_root, project)
+    try:
+        saved = json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise BrokerError("no saved Compose model is authorized for this task project") from exc
+    if not isinstance(saved, dict) or (
+        saved.get("version") != 1
+        or saved.get("task_root") != str(task_root)
+        or saved.get("cwd") != str(cwd)
+        or saved.get("project") != project
+        or not isinstance(saved.get("model"), dict)
+    ):
+        raise BrokerError("saved Compose model ownership does not match this task clone")
+    return saved["model"]
+
+
+def audit_compose(task_root: Path, cwd: Path, project: str, command: str, result: str) -> None:
+    """Record destructive preflight/result metadata without command arguments."""
+    event = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "task_root": str(task_root),
+        "cwd": str(cwd),
+        "project": project,
+        "command": command,
+        "result": result,
+    }
+    try:
+        COMPOSE_AUDIT_LOG.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        with AUDIT_LOCK, COMPOSE_AUDIT_LOG.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(event, sort_keys=True, separators=(",", ":")) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+    except OSError as exc:
+        raise BrokerError(f"cannot record Compose destructive-command audit event: {exc}") from exc
 
 
 def expected_token(key: bytes, task_root: Path) -> str:
@@ -1544,25 +1671,26 @@ def handle_request(request: dict[str, Any], key: bytes) -> dict[str, Any]:
         return handle_coordinator_support(task_root, args)
 
     host_root = translate_to_host(task_root)
-    project = project_name(task_root)
+    project = scoped_project_name(task_root, environment_overrides)
+    # Compose's own interpolation must observe the same value that the broker
+    # passes as --project-name.  This keeps labels/ports deterministic without
+    # trusting any environment other than the existing narrow allow-list.
+    environment_overrides = {**environment_overrides, "COMPOSE_PROJECT_NAME": project}
     global_args, command, command_args = split_compose_args(args, cwd, task_root)
 
     if command == "version":
         code, stdout, stderr = run_command([DOCKER_BIN, "compose", "version", *command_args], cwd)
         return {"returncode": code, "stdout": stdout, "stderr": stderr, "project": project}
 
-    MODEL_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
-    saved_model = MODEL_DIR / f"{project}.json"
-    try:
+    if command in SAFE_EXISTING_COMMANDS:
+        # Existing/destructive commands must never create or refresh an
+        # ownership record.  A sibling clone can only operate its own prior
+        # model, not the registered main clone's project.
+        sanitized_model = load_scoped_model(task_root, cwd, project)
+    else:
         initial_model = compose_config(cwd, project, global_args, environment_overrides)
         sanitized_model = validate_model(initial_model, cwd, task_root, host_root, project)
-        temporary_saved = MODEL_DIR / f".{project}.{threading.get_ident()}.json"
-        temporary_saved.write_text(json.dumps(sanitized_model))
-        temporary_saved.replace(saved_model)
-    except BrokerError:
-        if command not in SAFE_EXISTING_COMMANDS or not saved_model.exists():
-            raise
-        sanitized_model = json.loads(saved_model.read_text())
+        save_scoped_model(task_root, cwd, project, sanitized_model)
 
     model_file: Path | None = None
     try:
@@ -1592,7 +1720,11 @@ def handle_request(request: dict[str, Any], key: bytes) -> dict[str, Any]:
             else:
                 index += 1
         command_line.extend((command, *command_args))
+        if command in DESTRUCTIVE_COMPOSE_COMMANDS:
+            audit_compose(task_root, cwd, project, command, "attempt")
         code, stdout, stderr = run_command(command_line, cwd)
+        if command in DESTRUCTIVE_COMPOSE_COMMANDS:
+            audit_compose(task_root, cwd, project, command, "ok" if code == 0 else "error")
         return {"returncode": code, "stdout": stdout, "stderr": stderr, "project": project}
     finally:
         if model_file is not None:

@@ -150,6 +150,47 @@ def main() -> None:
             "out-of-range Compose port was accepted",
         )
 
+        # A disposable clone may select its own guarded kd_ project, but that
+        # project is bound to both the task root and clone before existing or
+        # destructive operations can use it.  The registered main clone's
+        # saved model cannot be reused from a sibling clone.
+        original_model_dir = broker.MODEL_DIR
+        original_compose_audit = broker.COMPOSE_AUDIT_LOG
+        broker.MODEL_DIR = base / "models"
+        broker.COMPOSE_AUDIT_LOG = base / "compose-audit.jsonl"
+        disposable_project = "kd_task8402_qa5db6"
+        assert broker.scoped_project_name(
+            task_root, {"COMPOSE_PROJECT_NAME": disposable_project}
+        ) == disposable_project
+        expect_denied(
+            lambda: broker.scoped_project_name(task_root, {"COMPOSE_PROJECT_NAME": "performcoop"}),
+            "non-guarded explicit project name was accepted",
+        )
+        owned_model = {"name": disposable_project, "services": {"probe": {"image": "alpine"}}}
+        broker.save_scoped_model(task_root, repository, disposable_project, owned_model)
+        assert broker.load_scoped_model(task_root, repository, disposable_project) == owned_model
+        expect_denied(
+            lambda: broker.save_scoped_model(outside, repository, disposable_project, owned_model),
+            "another task was able to claim the disposable project",
+        )
+        sibling_clone = task_root / "qa-clean"
+        sibling_clone.mkdir()
+        expect_denied(
+            lambda: broker.load_scoped_model(task_root, sibling_clone, disposable_project),
+            "saved model was reusable from a sibling clone",
+        )
+        expect_denied(
+            lambda: broker.load_scoped_model(outside, repository, disposable_project),
+            "saved model was reusable by another task root",
+        )
+        broker.audit_compose(task_root, repository, disposable_project, "down", "attempt")
+        audit = json.loads(broker.COMPOSE_AUDIT_LOG.read_text().strip())
+        assert audit["project"] == disposable_project
+        assert audit["command"] == "down"
+        assert "args" not in audit
+        broker.MODEL_DIR = original_model_dir
+        broker.COMPOSE_AUDIT_LOG = original_compose_audit
+
         observed_environment: dict[str, str] | None = None
         original_run_command = broker.run_command
 
