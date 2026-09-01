@@ -91,8 +91,7 @@ merges with `docker-compose.yml` on every `docker compose up`.
 
 ```bash
 cd ~/Code/kandev
-docker compose build          # builds kandev-local:latest
-docker compose up -d --force-recreate
+scripts/kandev-safe-deploy --build  # build, recreate, require HTTP 200, auto-rollback
 ```
 
 > **Network note (office-desktop / transparent proxy):** the build must use `--network=host`
@@ -126,7 +125,7 @@ Updates retain one known-good rollback image and rotate that updater-owned tag b
 the next build; they never prune unrelated task or QA images. BuildKit layers are reused
 across the three bounded build attempts, so a stalled package mirror does not discard
 completed work or grow the image store on every retry. Defaults are a 900-second limit
-per build attempt, an 8 GiB free-space floor, and a 360-second post-restart health gate;
+per build attempt, an 8 GiB free-space floor, and a 960-second post-restart health gate;
 override them with `BUILD_ATTEMPT_TIMEOUT_SECS`, `MIN_FREE_GB`, or
 `HEALTH_TIMEOUT_SECS` when diagnosing exceptional hardware.
 
@@ -199,8 +198,7 @@ the worker:
 ```bash
 cd ~/Code/kandev
 sudo bash scripts/install-codex-apparmor.sh
-docker compose build
-docker compose up -d --force-recreate
+scripts/kandev-safe-deploy --build
 ```
 
 The image entrypoint runs `codex-sandbox-preflight` before Kandev accepts work.
@@ -599,7 +597,7 @@ Edit `Dockerfile.local` and add `apt-get install` lines in the *Core tools* `RUN
 then rebuild:
 
 ```bash
-cd ~/Code/kandev && docker compose build && docker compose up -d --force-recreate
+cd ~/Code/kandev && scripts/kandev-safe-deploy --build
 ```
 
 ## Host identity mirroring
@@ -888,7 +886,7 @@ ssh bob@10.0.0.20 '
 ssh bob@10.0.0.20 "sudo bash ~/Code/kandev/install-hub.sh"
 
 # 4. Build + start kandev
-ssh bob@10.0.0.20 "cd ~/Code/kandev && docker compose build && docker compose up -d --force-recreate"
+ssh bob@10.0.0.20 "cd ~/Code/kandev && scripts/kandev-safe-deploy --build"
 ```
 
 ### office-desktop (when Corp VPN is up)

@@ -282,9 +282,13 @@ docker compose -p kandev up -d --force-recreate
 # a minor-version upgrade. A too-tight 60s gate caused a spurious rollback of a
 # perfectly healthy new image. Restored boards with hundreds of sessions have
 # subsequently needed more than 180 seconds for startup reconciliation, so the
-# default is 360s; override with HEALTH_TIMEOUT_SECS.
+# A live 2026-09-01 startup lifecycle recovery consumed the full 15-minute
+# AgentLaunchTimeout before the board returned HTTP 200. Keep this external
+# transaction gate just above that bound until the upstream listener-order
+# defect is fixed; otherwise update and rollback can both be rejected too early.
+# Override with HEALTH_TIMEOUT_SECS.
 HEALTH_URL="http://localhost:38429/"
-HEALTH_TIMEOUT_SECS="${HEALTH_TIMEOUT_SECS:-360}"
+HEALTH_TIMEOUT_SECS="${HEALTH_TIMEOUT_SECS:-960}"
 wait_for_health() {
     local i deadline
     deadline=$(( SECONDS + HEALTH_TIMEOUT_SECS ))

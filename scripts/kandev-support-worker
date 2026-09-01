@@ -12,6 +12,8 @@ import sqlite3
 import subprocess
 import threading
 import time
+import urllib.error
+import urllib.request
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -35,6 +37,15 @@ STATUS_PREFIX = "KANDEV_SUPPORT_STATUS:"
 RESOLVED = "RESOLVED"
 BLOCKED = "BLOCKED"
 MAX_BLOCKED_ESCALATIONS = 2
+SAFE_DEPLOY = Path(
+    os.environ.get("KANDEV_SUPPORT_SAFE_DEPLOY", REPOSITORY / "scripts/kandev-safe-deploy")
+)
+HEALTH_URL = os.environ.get("KANDEV_SUPPORT_HEALTH_URL", "http://127.0.0.1:38429/")
+# Keep this above Kandev's known 15-minute startup lifecycle bound until the
+# upstream event-listener ordering defect is fixed.  The worker may wait, but
+# it must never accept a deployment while the board still returns 503.
+HEALTH_TIMEOUT_SECONDS = int(os.environ.get("KANDEV_SUPPORT_HEALTH_TIMEOUT_SECS", "960"))
+HEALTH_POLL_SECONDS = float(os.environ.get("KANDEV_SUPPORT_HEALTH_POLL_SECS", "2"))
 
 
 @contextmanager
@@ -204,6 +215,7 @@ def prompt(record: dict[str, str]) -> str:
         "Own safe in-scope support work through implementation and verification. Inspect the live state, apply and persist the fix when the request authorizes it, run proportionate acceptance tests, and send the verified outcome back to the Coordinator. A diagnosis, recommendation, command list, or upstream-only classification alone is not completion when local source, deployment, host-service, or broker remediation remains possible.",
         "Route by capability: use the deployment checkout for host/image/policy fixes and the source checkout for Kandev platform fixes. Request reviewed host escalation when needed. Retry transient contention with bounded backoff. Do not ask the human to relay messages.",
         "When a tool reports that a script is still running and returns a cell or session identifier, wait or poll that exact execution through completion before any dependent command. A yielded tool is not a completed tool; starting another linter, build, or commit can create self-contention and a false terminal blocker.",
+        f"Every live Kandev recreate or image deployment MUST use {SAFE_DEPLOY}; pass --build when the image must be rebuilt. Never call bare 'docker compose up', '--force-recreate', or a build-plus-up chain for the Kandev service. The safe deploy command snapshots the active image, requires HTTP 200, and automatically rolls back on readiness failure. A rolled-back candidate is a failed deployment even when availability was restored; report BLOCKED, never RESOLVED.",
         "Before replacing an existing local hotfix binary overlay, identify every source fix embodied by the currently deployed pair from deployment history and its documented provenance. The replacement must preserve all still-required fixes as a tested superset; never regress an unrelated live fix merely because the newest request names only one change.",
         "Interpret security constraints by boundary. A request saying not to expose the raw Docker socket, host paths, devices, credentials, or authority to an AGENT does not prohibit this reviewed host Support worker from using read-only host diagnostics to verify that boundary. It prohibits granting that capability to the coordinator/task or weakening the resulting policy. Only treat a diagnostic as prohibited when the request explicitly forbids Support itself from using it.",
         "If an external authority or irreversible high-stakes decision is truly required, return a precise BLOCKED escalation with evidence and safe options. An initial BLOCKED result is automatically re-routed through a higher scrutiny pass before it can become terminal.",
@@ -228,10 +240,141 @@ def resolution_status(stdout: str) -> str | None:
     return None
 
 
+def deployment_state() -> dict[str, str]:
+    """Capture the exact live container/image pair without exposing Docker broadly."""
+    try:
+        completed = subprocess.run(
+            [
+                "docker",
+                "inspect",
+                "kandev",
+                "--format",
+                "{{.Id}}\t{{.Image}}\t{{.State.StartedAt}}",
+            ],
+            text=True,
+            capture_output=True,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    if completed.returncode != 0:
+        return {}
+    fields = completed.stdout.strip().split("\t")
+    if len(fields) != 3 or not fields[1]:
+        return {}
+    return {"container_id": fields[0], "image_id": fields[1], "started_at": fields[2]}
+
+
+def deployment_changed(before: dict[str, str], after: dict[str, str]) -> bool:
+    """A recreate is material even when it reuses the same image."""
+    if not before:
+        return bool(after)
+    if not after:
+        return True
+    return any(before.get(key) != after.get(key) for key in ("container_id", "image_id", "started_at"))
+
+
+def kandev_http_200() -> bool:
+    try:
+        request = urllib.request.Request(HEALTH_URL, method="GET")
+        with urllib.request.urlopen(request, timeout=5) as response:
+            return response.status == 200
+    except (OSError, urllib.error.URLError, ValueError):
+        return False
+
+
+def wait_for_kandev_http_200(timeout: float = HEALTH_TIMEOUT_SECONDS) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if kandev_http_200():
+            return True
+        time.sleep(HEALTH_POLL_SECONDS)
+    return False
+
+
+def persist_processing_record(path: Path, record: dict[str, object]) -> None:
+    temporary = path.with_name(f".{path.name}.tmp")
+    temporary.write_text(json.dumps(record), encoding="utf-8")
+    temporary.chmod(0o600)
+    temporary.replace(path)
+
+
+def deployment_guard(record: dict[str, object], processing: Path) -> dict[str, str]:
+    """Persist the pre-turn rollback identity so worker restarts cannot lose it."""
+    existing = record.get("_deployment_guard")
+    if isinstance(existing, dict) and isinstance(existing.get("image_id"), str):
+        return {str(key): str(value) for key, value in existing.items()}
+    captured = deployment_state()
+    record["_deployment_guard"] = captured
+    persist_processing_record(processing, record)
+    return captured
+
+
+def enforce_deployment_postcondition(
+    before: dict[str, str], response: dict[str, object]
+) -> dict[str, object]:
+    """Require HTTP 200 after any Support-side recreate, or restore the old image."""
+    after = deployment_state()
+    result: dict[str, object] = {
+        "changed": deployment_changed(before, after),
+        "before_image": before.get("image_id", ""),
+        "after_image": after.get("image_id", ""),
+    }
+    if not result["changed"]:
+        result["status"] = "unchanged"
+        return result
+    if wait_for_kandev_http_200():
+        result["status"] = "ready"
+        return result
+
+    result["status"] = "readiness_failed"
+    previous_image = before.get("image_id", "")
+    if not previous_image:
+        result["rollback"] = "unavailable"
+        response["returncode"] = 76
+        response["resolution_status"] = "failed"
+        response["stderr"] = str(response.get("stderr", "")) + (
+            "Kandev Support deployment guard: readiness failed and no pre-turn image "
+            "was available for rollback.\n"
+        )
+        return result
+
+    try:
+        restored = subprocess.run(
+            [str(SAFE_DEPLOY), "--restore-image", previous_image],
+            cwd=REPOSITORY,
+            text=True,
+            capture_output=True,
+            timeout=HEALTH_TIMEOUT_SECONDS + 120,
+            check=False,
+            env={**os.environ, "KANDEV_DEPLOY_HEALTH_TIMEOUT_SECS": str(HEALTH_TIMEOUT_SECONDS)},
+        )
+    except Exception as exc:
+        restored = subprocess.CompletedProcess([], 70, "", str(exc))
+    rollback_state = deployment_state()
+    rollback_ready = (
+        restored.returncode == 0
+        and rollback_state.get("image_id") == previous_image
+        and kandev_http_200()
+    )
+    result["rollback"] = "verified" if rollback_ready else "failed"
+    result["rollback_returncode"] = restored.returncode
+    response["returncode"] = 76
+    response["resolution_status"] = "failed"
+    response["stderr"] = str(response.get("stderr", "")) + (
+        "Kandev Support deployment guard: candidate never returned HTTP 200; "
+        + ("the captured image was restored and verified.\n" if rollback_ready else "automatic rollback also failed.\n")
+        + restored.stderr[-8000:]
+    )
+    return result
+
+
 def process(path: Path) -> None:
     processing = QUEUE / "processing" / path.name
     path.replace(processing)
     record = json.loads(processing.read_text(encoding="utf-8"))
+    before_deployment = deployment_guard(record, processing)
     print(f"Kandev Support processing {record['id']}", flush=True)
     try:
         completed = subprocess.run(
@@ -255,6 +398,7 @@ def process(path: Path) -> None:
         response = {"returncode": completed.returncode, "stdout": completed.stdout[-1024 * 1024:], "stderr": completed.stderr[-256 * 1024:]}
     except Exception as exc:
         response = {"returncode": 70, "stdout": "", "stderr": f"Kandev Support worker failed: {exc}\n"}
+    response["deployment_guard"] = enforce_deployment_postcondition(before_deployment, response)
     if response["returncode"] != 0 and WRITER_CONFLICT in response["stderr"]:
         # A support chat turn and a broker delivery cannot write the same Codex
         # thread concurrently. This is expected backpressure, not completion.

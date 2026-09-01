@@ -51,11 +51,19 @@ exit 78 on a non-`main` checkout. Do not work around it by calling
 testing a compose change on a branch, is `KANDEV_ALLOW_BRANCH=1`.
 
 Switching back to `main` does **not** repair an already-running container.
-After any branch switch, recreate it:
+After any branch switch, recreate it through the transactional health gate:
 
 ```bash
-cd ~/Code/kandev && git switch main && docker compose -p kandev up -d --force-recreate
+cd ~/Code/kandev && git switch main && scripts/kandev-safe-deploy
 ```
+
+For a build plus recreate, use `scripts/kandev-safe-deploy --build`. Support
+agents must never deploy Kandev with bare `docker compose up`,
+`--force-recreate`, or a build-plus-up chain. The safe deploy command captures
+the active image, accepts the candidate only after HTTP 200, and automatically
+restores and verifies the captured image on readiness failure. A recovered
+rollback is still a failed candidate deployment and must not be reported as
+success.
 
 Verify the security profiles actually landed:
 
@@ -99,8 +107,8 @@ green run of:
 bash ~/Code/kandev/test.sh
 ```
 
-Rebuild (`docker compose build`) if `Dockerfile.local` changed, and recreate
-(`docker compose up -d --force-recreate`) if a compose file changed, before
+Build/recreate (`scripts/kandev-safe-deploy --build`) if `Dockerfile.local`
+changed, and recreate (`scripts/kandev-safe-deploy`) if a compose file changed, before
 running the tests. Fix the root cause of a failure — never weaken or skip a test
 to make it pass. See *Mandatory rule: tests must pass before reporting
 completion* in `CLAUDE.md`.

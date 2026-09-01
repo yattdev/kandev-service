@@ -33,6 +33,20 @@ class WorkerTest(unittest.TestCase):
         self.notify_mock = self.notify.start()
         self.notify_mock.return_value = "message-id"
         self.addCleanup(self.notify.stop)
+        self.guard = mock.patch.object(
+            worker,
+            "deployment_guard",
+            return_value={"container_id": "before", "image_id": "image-before", "started_at": "t0"},
+        )
+        self.guard.start()
+        self.addCleanup(self.guard.stop)
+        self.postcondition = mock.patch.object(
+            worker,
+            "enforce_deployment_postcondition",
+            return_value={"changed": False, "status": "unchanged"},
+        )
+        self.postcondition.start()
+        self.addCleanup(self.postcondition.stop)
         for directory in ("pending", "processing", "records", "responses", "notifications"):
             (worker.QUEUE / directory).mkdir()
 
@@ -73,6 +87,8 @@ class WorkerTest(unittest.TestCase):
         self.assertIn("Inspect both checkouts", command[7])
         self.assertIn("upstream/main is the canonical project base", command[7])
         self.assertIn("A yielded tool is not a completed tool", command[7])
+        self.assertIn("kandev-safe-deploy", command[7])
+        self.assertIn("Never call bare 'docker compose up'", command[7])
         self.assertIn("replacement must preserve all still-required fixes", command[7])
         response = json.loads((worker.QUEUE / "responses/request-success.json").read_text())
         self.assertEqual(response["returncode"], 0)
@@ -172,6 +188,60 @@ class WorkerTest(unittest.TestCase):
         )
         self.assertIn("delivered proactively", content)
         self.assertIn("run the requested acceptance check", content)
+
+    def test_changed_deployment_is_not_accepted_before_http_200(self) -> None:
+        self.postcondition.stop()
+        before = {"container_id": "old-container", "image_id": "old-image", "started_at": "t0"}
+        candidate = {"container_id": "new-container", "image_id": "new-image", "started_at": "t1"}
+        restored = {"container_id": "rollback-container", "image_id": "old-image", "started_at": "t2"}
+        response: dict[str, object] = {
+            "returncode": 0,
+            "resolution_status": "resolved",
+            "stdout": "KANDEV_SUPPORT_STATUS: RESOLVED\n",
+            "stderr": "",
+        }
+        restore = subprocess.CompletedProcess([], 0, "rollback verified", "")
+        with (
+            mock.patch.object(worker, "deployment_state", side_effect=[candidate, restored]),
+            mock.patch.object(worker, "wait_for_kandev_http_200", return_value=False),
+            mock.patch.object(worker, "kandev_http_200", return_value=True),
+            mock.patch.object(worker.subprocess, "run", return_value=restore) as run,
+        ):
+            result = worker.enforce_deployment_postcondition(before, response)
+        self.assertEqual(result["status"], "readiness_failed")
+        self.assertEqual(result["rollback"], "verified")
+        self.assertEqual(response["returncode"], 76)
+        self.assertEqual(response["resolution_status"], "failed")
+        self.assertIn("captured image was restored", response["stderr"])
+        self.assertEqual(
+            run.call_args.args[0],
+            [str(worker.SAFE_DEPLOY), "--restore-image", "old-image"],
+        )
+
+    def test_changed_deployment_is_accepted_only_after_http_200(self) -> None:
+        self.postcondition.stop()
+        before = {"container_id": "old-container", "image_id": "old-image", "started_at": "t0"}
+        candidate = {"container_id": "new-container", "image_id": "new-image", "started_at": "t1"}
+        response: dict[str, object] = {"returncode": 0, "stdout": "", "stderr": ""}
+        with (
+            mock.patch.object(worker, "deployment_state", return_value=candidate),
+            mock.patch.object(worker, "wait_for_kandev_http_200", return_value=True),
+            mock.patch.object(worker.subprocess, "run") as run,
+        ):
+            result = worker.enforce_deployment_postcondition(before, response)
+        self.assertEqual(result["status"], "ready")
+        self.assertEqual(response["returncode"], 0)
+        run.assert_not_called()
+
+    def test_deployment_snapshot_is_persisted_before_support_turn(self) -> None:
+        self.guard.stop()
+        processing = worker.QUEUE / "processing/request.json"
+        record: dict[str, object] = {"id": "request"}
+        captured = {"container_id": "container", "image_id": "image", "started_at": "time"}
+        with mock.patch.object(worker, "deployment_state", return_value=captured):
+            self.assertEqual(worker.deployment_guard(record, processing), captured)
+        persisted = json.loads(processing.read_text())
+        self.assertEqual(persisted["_deployment_guard"], captured)
 
 
 if __name__ == "__main__":

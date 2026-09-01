@@ -1,0 +1,190 @@
+#!/usr/bin/env bash
+# Transactional Kandev deployment gate.
+#
+# A successful `docker compose up -d` only proves that Docker accepted the
+# request.  It does not prove that the Kandev backend completed migrations and
+# startup recovery.  This wrapper snapshots the currently running image,
+# optionally builds the candidate, recreates the service, and accepts the
+# deployment only after the board returns HTTP 200.  A failed readiness gate
+# restores the captured image, recreates the service again, verifies the
+# rollback, and always exits non-zero so callers cannot report the candidate as
+# successfully deployed.
+set -euo pipefail
+
+KANDEV_DEPLOY_DIR="${KANDEV_DEPLOY_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+KANDEV_DEPLOY_PROJECT="${KANDEV_DEPLOY_PROJECT:-kandev}"
+KANDEV_DEPLOY_SERVICE="${KANDEV_DEPLOY_SERVICE:-kandev}"
+KANDEV_DEPLOY_IMAGE_TAG="${KANDEV_DEPLOY_IMAGE_TAG:-kandev-local:latest}"
+KANDEV_DEPLOY_ROLLBACK_TAG="${KANDEV_DEPLOY_ROLLBACK_TAG:-kandev-local:safe-deploy-previous}"
+KANDEV_DEPLOY_HEALTH_URL="${KANDEV_DEPLOY_HEALTH_URL:-http://127.0.0.1:38429/}"
+# The live platform can currently spend a full 15-minute AgentLaunchTimeout in
+# startup recovery.  Keep the gate longer than that known bound until the
+# upstream listener-order defect is fixed, otherwise a healthy candidate can
+# be rolled back seconds before it becomes ready.
+KANDEV_DEPLOY_HEALTH_TIMEOUT_SECS="${KANDEV_DEPLOY_HEALTH_TIMEOUT_SECS:-960}"
+KANDEV_DEPLOY_HEALTH_INTERVAL_SECS="${KANDEV_DEPLOY_HEALTH_INTERVAL_SECS:-2}"
+KANDEV_DEPLOY_LOG="${KANDEV_DEPLOY_LOG:-${HOME}/logs/kandev-safe-deploy.log}"
+KANDEV_DEPLOY_LOCK="${KANDEV_DEPLOY_LOCK:-${XDG_RUNTIME_DIR:-/tmp}/kandev-safe-deploy.lock}"
+
+KANDEV_DEPLOY_BUILD=0
+KANDEV_DEPLOY_RESTORE_IMAGE=""
+
+usage() {
+    cat <<'EOF'
+Usage:
+  scripts/kandev-safe-deploy [--build]
+  scripts/kandev-safe-deploy --restore-image <image-id>
+
+Options:
+  --build                    Build the Compose candidate before recreation.
+  --restore-image IMAGE_ID   Restore an explicitly captured image and verify HTTP 200.
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --build)
+            KANDEV_DEPLOY_BUILD=1
+            shift
+            ;;
+        --restore-image)
+            KANDEV_DEPLOY_RESTORE_IMAGE="${2:?--restore-image requires an image ID}"
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "ERROR: unknown argument: $1" >&2
+            usage >&2
+            exit 2
+            ;;
+    esac
+done
+
+mkdir -p "$(dirname "$KANDEV_DEPLOY_LOG")" "$(dirname "$KANDEV_DEPLOY_LOCK")"
+exec 9>"$KANDEV_DEPLOY_LOCK"
+if ! flock -n 9; then
+    echo "ERROR: another Kandev deployment is already in progress" >&2
+    exit 75
+fi
+
+deploy_log() {
+    echo "[$(date -Is)] [safe-deploy] $*" | tee -a "$KANDEV_DEPLOY_LOG"
+}
+
+wait_for_kandev_http_200() {
+    local deploy_deadline deploy_code
+    deploy_deadline=$(( SECONDS + KANDEV_DEPLOY_HEALTH_TIMEOUT_SECS ))
+    while (( SECONDS < deploy_deadline )); do
+        deploy_code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 \
+            "$KANDEV_DEPLOY_HEALTH_URL" 2>/dev/null || true)"
+        if [[ "$deploy_code" == "200" ]]; then
+            return 0
+        fi
+        sleep "$KANDEV_DEPLOY_HEALTH_INTERVAL_SECS"
+    done
+    return 1
+}
+
+compose_recreate() {
+    docker compose -p "$KANDEV_DEPLOY_PROJECT" up -d --force-recreate "$KANDEV_DEPLOY_SERVICE"
+}
+
+restore_image() {
+    local deploy_restore_id="$1"
+    if ! docker image inspect "$deploy_restore_id" >/dev/null 2>&1; then
+        deploy_log "CRITICAL: rollback image is unavailable: $deploy_restore_id"
+        return 1
+    fi
+    deploy_log "Restoring captured image $deploy_restore_id as $KANDEV_DEPLOY_IMAGE_TAG ..."
+    if ! docker tag "$deploy_restore_id" "$KANDEV_DEPLOY_IMAGE_TAG"; then
+        deploy_log "CRITICAL: failed to retag rollback image $deploy_restore_id."
+        return 1
+    fi
+    if ! compose_recreate; then
+        deploy_log "CRITICAL: Docker Compose failed while recreating the rollback image."
+        return 1
+    fi
+    if ! wait_for_kandev_http_200; then
+        deploy_log "CRITICAL: rollback image did not return HTTP 200 within ${KANDEV_DEPLOY_HEALTH_TIMEOUT_SECS}s."
+        docker logs "$KANDEV_DEPLOY_SERVICE" --tail 80 >>"$KANDEV_DEPLOY_LOG" 2>&1 || true
+        return 1
+    fi
+    local deploy_active_id
+    deploy_active_id="$(docker inspect "$KANDEV_DEPLOY_SERVICE" --format '{{.Image}}' 2>/dev/null || true)"
+    if [[ "$deploy_active_id" != "$deploy_restore_id" ]]; then
+        deploy_log "CRITICAL: rollback returned HTTP 200 on unexpected image $deploy_active_id (wanted $deploy_restore_id)."
+        return 1
+    fi
+    deploy_log "Rollback verified: Kandev is HTTP 200 on $deploy_restore_id."
+}
+
+cd "$KANDEV_DEPLOY_DIR"
+bash "$KANDEV_DEPLOY_DIR/scripts/require-main-branch.sh" "$KANDEV_DEPLOY_DIR"
+
+if [[ -n "$KANDEV_DEPLOY_RESTORE_IMAGE" ]]; then
+    restore_image "$KANDEV_DEPLOY_RESTORE_IMAGE"
+    exit $?
+fi
+
+KANDEV_DEPLOY_PREVIOUS_ID="$(docker inspect "$KANDEV_DEPLOY_SERVICE" --format '{{.Image}}' 2>/dev/null || true)"
+if [[ -z "$KANDEV_DEPLOY_PREVIOUS_ID" ]]; then
+    deploy_log "CRITICAL: no running Kandev image is available as a rollback target."
+    exit 1
+fi
+if ! docker image inspect "$KANDEV_DEPLOY_PREVIOUS_ID" >/dev/null 2>&1; then
+    deploy_log "CRITICAL: running image $KANDEV_DEPLOY_PREVIOUS_ID is not available to snapshot."
+    exit 1
+fi
+
+# The explicit tag prevents an intervening build or garbage collection from
+# losing the exact image captured before this transaction.
+docker tag "$KANDEV_DEPLOY_PREVIOUS_ID" "$KANDEV_DEPLOY_ROLLBACK_TAG"
+deploy_log "Captured rollback image $KANDEV_DEPLOY_PREVIOUS_ID as $KANDEV_DEPLOY_ROLLBACK_TAG."
+
+if [[ "$KANDEV_DEPLOY_BUILD" -eq 1 ]]; then
+    deploy_log "Building candidate image ..."
+    docker compose -p "$KANDEV_DEPLOY_PROJECT" build "$KANDEV_DEPLOY_SERVICE"
+fi
+
+KANDEV_DEPLOY_CANDIDATE_ID="$(docker image inspect "$KANDEV_DEPLOY_IMAGE_TAG" --format '{{.Id}}' 2>/dev/null || true)"
+if [[ -z "$KANDEV_DEPLOY_CANDIDATE_ID" ]]; then
+    deploy_log "CRITICAL: candidate image $KANDEV_DEPLOY_IMAGE_TAG is unavailable; running container was preserved."
+    exit 1
+fi
+
+deploy_log "Recreating Kandev with candidate $KANDEV_DEPLOY_CANDIDATE_ID ..."
+if ! compose_recreate; then
+    deploy_log "CRITICAL: Docker Compose failed while recreating the candidate; starting automatic rollback."
+    if restore_image "$KANDEV_DEPLOY_PREVIOUS_ID"; then
+        deploy_log "Candidate recreation failed and was rolled back successfully."
+    else
+        deploy_log "CRITICAL: candidate recreation failed and rollback did not recover Kandev."
+    fi
+    exit 1
+fi
+if wait_for_kandev_http_200; then
+    KANDEV_DEPLOY_ACTIVE_ID="$(docker inspect "$KANDEV_DEPLOY_SERVICE" --format '{{.Image}}' 2>/dev/null || true)"
+    if [[ "$KANDEV_DEPLOY_ACTIVE_ID" != "$KANDEV_DEPLOY_CANDIDATE_ID" ]]; then
+        deploy_log "CRITICAL: HTTP 200 came from unexpected image $KANDEV_DEPLOY_ACTIVE_ID (candidate $KANDEV_DEPLOY_CANDIDATE_ID)."
+    else
+        deploy_log "Deployment accepted: Kandev is HTTP 200 on candidate $KANDEV_DEPLOY_CANDIDATE_ID."
+        exit 0
+    fi
+else
+    deploy_log "CRITICAL: candidate did not return HTTP 200 within ${KANDEV_DEPLOY_HEALTH_TIMEOUT_SECS}s."
+fi
+
+docker logs "$KANDEV_DEPLOY_SERVICE" --tail 80 >>"$KANDEV_DEPLOY_LOG" 2>&1 || true
+deploy_log "Candidate rejected; starting automatic rollback."
+if restore_image "$KANDEV_DEPLOY_PREVIOUS_ID"; then
+    deploy_log "Candidate deployment failed and was rolled back successfully."
+else
+    deploy_log "CRITICAL: candidate deployment failed and rollback did not recover Kandev."
+fi
+# A recovered rollback is still a failed candidate deployment.  This non-zero
+# status is part of the contract: callers must never report the candidate as
+# successfully deployed merely because service availability was restored.
+exit 1

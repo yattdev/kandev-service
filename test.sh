@@ -746,7 +746,7 @@ else
 fi
 
 if grep -Fq 'MIN_FREE_GB="${MIN_FREE_GB:-8}"' update.sh \
-   && grep -Fq 'HEALTH_TIMEOUT_SECS="${HEALTH_TIMEOUT_SECS:-360}"' update.sh; then
+   && grep -Fq 'HEALTH_TIMEOUT_SECS="${HEALTH_TIMEOUT_SECS:-960}"' update.sh; then
   ok "update.sh uses measured disk and restored-board health defaults"
 else
   fail "update.sh still uses failure-prone disk or health defaults"
@@ -995,6 +995,12 @@ if PYTHONDONTWRITEBYTECODE=1 python3 "$COMPOSE_DIR/tests/kandev-support-worker.p
   ok "support worker uses a dedicated reviewed thread and restart-safe FIFO queue"
 else
   fail "tests/kandev-support-worker.py failed"
+fi
+
+if PYTHONDONTWRITEBYTECODE=1 python3 "$COMPOSE_DIR/tests/kandev-safe-deploy.py" >/dev/null 2>&1; then
+  ok "support deployments require HTTP 200 and automatically restore the captured image"
+else
+  fail "tests/kandev-safe-deploy.py failed"
 fi
 
 # ── Summary ───────────────────────────────────────────────────────────────────

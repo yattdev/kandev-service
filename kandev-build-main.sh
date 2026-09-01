@@ -50,9 +50,10 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [build-main] $*" | tee -a "$LOG_FIL
 cd "$COMPOSE_DIR"
 
 HEALTH_URL="http://localhost:38429/"
-# Generous default: first boot after a version/branch change runs DB migrations
-# before binding HTTP (~55s observed), so a 60s gate risks a false rollback.
-HEALTH_TIMEOUT_SECS="${HEALTH_TIMEOUT_SECS:-180}"
+# Startup lifecycle recovery has consumed the full 15-minute AgentLaunchTimeout
+# on a restored board. Keep the external transaction gate above that bound so a
+# healthy candidate is not rejected immediately before the watcher starts.
+HEALTH_TIMEOUT_SECS="${HEALTH_TIMEOUT_SECS:-960}"
 wait_for_health() {
     local deadline
     deadline=$(( SECONDS + HEALTH_TIMEOUT_SECS ))

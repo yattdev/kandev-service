@@ -85,7 +85,7 @@ systemctl --user restart kandev
 
 ```bash
 cd ~/Code/kandev
-docker compose build           # uses docker-compose.override.yml automatically
+scripts/kandev-safe-deploy --build
 ```
 
 > **Network (office-desktop):** A transparent corporate proxy intercepts connections.
@@ -95,8 +95,17 @@ docker compose build           # uses docker-compose.override.yml automatically
 ### Start / restart the container
 
 ```bash
-docker compose up -d --force-recreate
+scripts/kandev-safe-deploy
 ```
+
+`scripts/kandev-safe-deploy` is the mandatory live deployment path for Support
+and other autonomous agents. It snapshots the exact running image before a
+build/recreate, waits for an actual HTTP 200, and restores/recreates/verifies
+the captured image if the candidate never becomes ready. It exits non-zero
+after a recovered rollback so automation cannot mistake restored availability
+for a successful candidate deployment. The host Support worker independently
+captures the pre-turn container/image identity and enforces the same
+postcondition, which also catches an accidental bare Compose recreate.
 
 ### Run tests
 
@@ -138,8 +147,8 @@ curl -s -o /dev/null -w "HTTP %{http_code}" http://localhost:38429/
 
 ```
 1. Make the change
-2. Rebuild if Dockerfile.local was modified:  docker compose build
-3. Restart container if compose files changed: docker compose up -d --force-recreate
+2. Build/recreate if Dockerfile.local was modified: scripts/kandev-safe-deploy --build
+3. Recreate if compose files changed: scripts/kandev-safe-deploy
 4. Run:  bash ~/Code/kandev/test.sh
 5. All tests must be green
 6. Commit
@@ -583,7 +592,8 @@ Use `kandev-ssh-agent.sh` when:
 | `scripts/kandev-agent-docker-client` | Docker-compatible agent-side client for the constrained Compose broker |
 | `scripts/kandev-agent-guard` | Bubblewrap filesystem boundary; mints a task token and exposes only the constrained broker socket |
 | `scripts/kandev-agent-emulator` / `scripts/kandev-agent-adb` | Expose host Android tools with ephemeral headless AVD defaults and persistent adb state |
-| `scripts/kandev-support-worker` / `systemd/kandev-support.service` | Host-side worker that drains validated Coordinator support requests through a dedicated persistent Codex thread, isolated from the operator's interactive thread lock |
+| `scripts/kandev-support-worker` / `systemd/kandev-support.service` | Host-side worker that drains validated Coordinator support requests through a dedicated persistent Codex thread, isolated from the operator's interactive thread lock; snapshots the live deployment before every request and rejects/rolls back any changed deployment that does not reach HTTP 200 |
+| `scripts/kandev-safe-deploy` | Transactional build/recreate gate for autonomous deployments: captures the active image, requires HTTP 200, automatically restores the prior image on failure, verifies rollback health, and exits non-zero for a rejected candidate |
 | `mise.default.toml` | System-wide mise config (`/etc/mise/config.toml`): global language versions matched to host |
 | `setup-toolchains.sh` | One-time helper: installs the mise language toolchains into the persistent `/data` volume |
 | `test.sh` | Automated tests covering image, container, service, identity, SSH, git, CLI tools, toolchains (incl. Java JDK and Go), sqlite3, headless browser/Android QA, guarded agent Compose/coordinator source access, Docker host-path wrapper, branch guard, and port-80 NAT redirect scoping |
