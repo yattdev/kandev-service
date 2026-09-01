@@ -161,7 +161,7 @@ When the required setup uses a DB, ensure enough data exists to test the behavio
 
 Read the Work-phase `TEST_DATA_RECEIPT` first. Reuse its task-owned DB/runtime when fixture ID/hash, destination isolation, engine compatibility, exact HEAD and scenario assertions remain valid. Entering Human-QA alone does not justify another dump, reseed, or Human upload.
 
-If the receipt/artifact/runtime is absent, stale, incompatible, disposed, or scenario-insufficient, message the parent task or workspace Coordinator through the task service. Include full task UUID, repository/project identity, current receipt when any, engine/version, required scenario and desired task-local inbox path. While waiting, continue unblocked review but do not fabricate mock data or claim runtime readiness.
+If the receipt/artifact/runtime is absent, stale, incompatible, disposed, or scenario-insufficient, message the parent task or workspace Coordinator through the task service. Include full task UUID, repository/project identity, current receipt when any, engine/version, required scenario and desired task-local inbox path. If live task data proves the workspace has no Coordinator, flag `COORDINATOR_UNAVAILABLE` once through the visible Human channel with the same bounded request. While waiting, continue unblocked review but do not fabricate mock data or claim runtime readiness.
 
 Require a same-workspace catalog delivery receipt: fixture ID/version, source timestamp/class, bytes, SHA-256, engine/format compatibility, reviewed load/start recipe, and expected assertions. Verify the hash, recreate an empty task-owned destination, import without error suppression, preserve the real exit status and sanitized first error, and never overlay-retry a partial restore.
 
