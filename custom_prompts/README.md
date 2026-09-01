@@ -24,3 +24,8 @@ all of these outcomes:
 Never commit databases, `master.key`, transient exports, credentials, or
 backups here. Read the repository-root `CUSTOM-PROMPTS.md` before any live
 change.
+
+The mirrored Work and Human-QA prompt families require workspace tasks to obtain
+reusable realistic test data from their parent/Coordinator, validate and import
+it into an isolated task-owned destination, and carry a `TEST_DATA_RECEIPT`
+forward instead of asking the instance owner for the same dump at every step.
