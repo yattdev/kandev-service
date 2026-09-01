@@ -264,7 +264,11 @@ trap - EXIT
 # bind mounts may be read-write, while any source outside this task is rejected.
 (cd "$linked_root" && "$GUARD" -- sh -ceu '
     runtime_dir="$(mktemp -d "$PWD/.kandev-docker-guard-test.XXXXXX")"
-    scope_project="kd_guard-compose-$$_scope"
+    # The broker intentionally retains project claims.  Derive each fixture
+    # name from the unique temporary directory rather than a shell PID, which can
+    # be reused by consecutive injected test shells.
+    fixture_id="$(basename "$runtime_dir" | tr "[:upper:].-" "[:lower:]__")"
+    scope_project="kd_guard_${fixture_id}"
     protected_project="${scope_project}-protected"
     cleanup() {
         COMPOSE_PROJECT_NAME="$protected_project" DB_PORT=19306 WEB_PORT=19080 \
