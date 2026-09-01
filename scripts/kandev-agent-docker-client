@@ -34,6 +34,15 @@ def write_all(stream, output: str) -> None:
         offset += written
 
 
+def audit_receipt(response: dict[str, object]) -> str:
+    """Return the non-secret destructive-command correlation receipt."""
+    audit_id = response.get("audit_id")
+    resolved_project = response.get("resolved_project")
+    if isinstance(audit_id, str) and isinstance(resolved_project, str):
+        return f"kandev-agent-docker: audit_id={audit_id} resolved_project={resolved_project}\n"
+    return ""
+
+
 def main() -> int:
     socket_path = os.environ.get("KANDEV_AGENT_DOCKER_SOCKET", "/run/kandev-agent-docker.sock")
     token = os.environ.get("KANDEV_AGENT_DOCKER_TOKEN", "")
@@ -71,6 +80,7 @@ def main() -> int:
         return 78
     write_all(sys.stdout, str(response.get("stdout", "")))
     write_all(sys.stderr, str(response.get("stderr", "")))
+    write_all(sys.stderr, audit_receipt(response))
     return int(response.get("returncode", 70))
 
 

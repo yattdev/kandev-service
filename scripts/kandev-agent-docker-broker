@@ -129,6 +129,15 @@ class BrokerError(RuntimeError):
     pass
 
 
+class ComposeAuditError(BrokerError):
+    """A denied destructive request whose durable correlation ID is safe to show."""
+
+    def __init__(self, message: str, audit_id: str, project: str):
+        super().__init__(message)
+        self.audit_id = audit_id
+        self.project = project
+
+
 def is_within(path: Path, root: Path) -> bool:
     try:
         path.relative_to(root)
@@ -298,14 +307,28 @@ def load_scoped_model(task_root: Path, cwd: Path, project: str) -> dict[str, Any
     return saved["model"]
 
 
-def audit_compose(task_root: Path, cwd: Path, project: str, command: str, result: str) -> None:
-    """Record destructive preflight/result metadata without command arguments."""
+def audit_compose(
+    task_root: Path,
+    cwd: Path,
+    requested_project: str,
+    resolved_project: str,
+    command: str,
+    ownership_decision: str,
+    result: str,
+    *,
+    audit_id: str,
+) -> None:
+    """Durably record a destructive decision without command arguments or env."""
     event = {
+        "audit_id": audit_id,
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "task_root": str(task_root),
-        "cwd": str(cwd),
-        "project": project,
+        "command_class": "destructive",
+        "requested_project": requested_project,
+        "resolved_project": resolved_project,
+        "canonical_project_directory": str(cwd),
+        "authenticated_task_scope": str(task_root),
         "command": command,
+        "ownership_decision": ownership_decision,
         "result": result,
     }
     try:
@@ -316,6 +339,29 @@ def audit_compose(task_root: Path, cwd: Path, project: str, command: str, result
             os.fsync(handle.fileno())
     except OSError as exc:
         raise BrokerError(f"cannot record Compose destructive-command audit event: {exc}") from exc
+
+
+def destructive_model_preflight(
+    task_root: Path, cwd: Path, requested_project: str, resolved_project: str, command: str
+) -> tuple[dict[str, Any], str]:
+    """Flush an allow/deny ownership decision before invoking Docker."""
+    audit_id = str(uuid.uuid4())
+    try:
+        model = load_scoped_model(task_root, cwd, resolved_project)
+    except BrokerError as exc:
+        # The denial itself is part of the security boundary.  If it cannot be
+        # persisted, audit_compose raises and the caller fails closed without
+        # receiving a misleading correlation ID.
+        audit_compose(
+            task_root, cwd, requested_project, resolved_project, command,
+            "deny", "denied", audit_id=audit_id,
+        )
+        raise ComposeAuditError(str(exc), audit_id, resolved_project) from exc
+    audit_compose(
+        task_root, cwd, requested_project, resolved_project, command,
+        "allow", "preflight", audit_id=audit_id,
+    )
+    return model, audit_id
 
 
 def expected_token(key: bytes, task_root: Path) -> str:
@@ -1671,18 +1717,32 @@ def handle_request(request: dict[str, Any], key: bytes) -> dict[str, Any]:
         return handle_coordinator_support(task_root, args)
 
     host_root = translate_to_host(task_root)
-    project = scoped_project_name(task_root, environment_overrides)
+    global_args, command, command_args = split_compose_args(args, cwd, task_root)
+    requested_project = environment_overrides.get("COMPOSE_PROJECT_NAME", project_name(task_root))
+    try:
+        project = scoped_project_name(task_root, environment_overrides)
+    except BrokerError as exc:
+        if command not in DESTRUCTIVE_COMPOSE_COMMANDS:
+            raise
+        audit_id = str(uuid.uuid4())
+        audit_compose(
+            task_root, cwd, requested_project, "", command, "deny", "denied", audit_id=audit_id
+        )
+        raise ComposeAuditError(str(exc), audit_id, "") from exc
     # Compose's own interpolation must observe the same value that the broker
     # passes as --project-name.  This keeps labels/ports deterministic without
     # trusting any environment other than the existing narrow allow-list.
     environment_overrides = {**environment_overrides, "COMPOSE_PROJECT_NAME": project}
-    global_args, command, command_args = split_compose_args(args, cwd, task_root)
-
     if command == "version":
         code, stdout, stderr = run_command([DOCKER_BIN, "compose", "version", *command_args], cwd)
         return {"returncode": code, "stdout": stdout, "stderr": stderr, "project": project}
 
-    if command in SAFE_EXISTING_COMMANDS:
+    audit_id: str | None = None
+    if command in DESTRUCTIVE_COMPOSE_COMMANDS:
+        sanitized_model, audit_id = destructive_model_preflight(
+            task_root, cwd, requested_project, project, command
+        )
+    elif command in SAFE_EXISTING_COMMANDS:
         # Existing/destructive commands must never create or refresh an
         # ownership record.  A sibling clone can only operate its own prior
         # model, not the registered main clone's project.
@@ -1720,12 +1780,17 @@ def handle_request(request: dict[str, Any], key: bytes) -> dict[str, Any]:
             else:
                 index += 1
         command_line.extend((command, *command_args))
-        if command in DESTRUCTIVE_COMPOSE_COMMANDS:
-            audit_compose(task_root, cwd, project, command, "attempt")
         code, stdout, stderr = run_command(command_line, cwd)
         if command in DESTRUCTIVE_COMPOSE_COMMANDS:
-            audit_compose(task_root, cwd, project, command, "ok" if code == 0 else "error")
-        return {"returncode": code, "stdout": stdout, "stderr": stderr, "project": project}
+            audit_compose(
+                task_root, cwd, requested_project, project, command,
+                "allow", "ok" if code == 0 else "error", audit_id=audit_id or "",
+            )
+        response = {"returncode": code, "stdout": stdout, "stderr": stderr, "project": project}
+        if audit_id:
+            response["audit_id"] = audit_id
+            response["resolved_project"] = project
+        return response
     finally:
         if model_file is not None:
             model_file.unlink(missing_ok=True)
@@ -1740,6 +1805,14 @@ class BrokerHandler(socketserver.StreamRequestHandler):
             try:
                 request = json.loads(line)
                 response = handle_request(request, self.server.broker_key)  # type: ignore[attr-defined]
+            except ComposeAuditError as exc:
+                response = {
+                    "returncode": 78,
+                    "stdout": "",
+                    "stderr": f"kandev-agent-docker: {exc}\n",
+                    "audit_id": exc.audit_id,
+                    "resolved_project": exc.project,
+                }
             except (BrokerError, json.JSONDecodeError, OSError) as exc:
                 response = {"returncode": 78, "stdout": "", "stderr": f"kandev-agent-docker: {exc}\n"}
             except Exception as exc:  # fail closed without killing the broker

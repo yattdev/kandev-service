@@ -175,19 +175,36 @@ def main() -> None:
         )
         sibling_clone = task_root / "qa-clean"
         sibling_clone.mkdir()
-        expect_denied(
-            lambda: broker.load_scoped_model(task_root, sibling_clone, disposable_project),
-            "saved model was reusable from a sibling clone",
-        )
+        try:
+            broker.destructive_model_preflight(
+                task_root, sibling_clone, disposable_project, disposable_project, "down"
+            )
+        except broker.ComposeAuditError as exc:
+            denied_audit_id = exc.audit_id
+            assert exc.project == disposable_project
+        else:
+            raise AssertionError("sibling clone destructive request was accepted")
         expect_denied(
             lambda: broker.load_scoped_model(outside, repository, disposable_project),
             "saved model was reusable by another task root",
         )
-        broker.audit_compose(task_root, repository, disposable_project, "down", "attempt")
-        audit = json.loads(broker.COMPOSE_AUDIT_LOG.read_text().strip())
-        assert audit["project"] == disposable_project
-        assert audit["command"] == "down"
-        assert "args" not in audit
+        allowed_model, allowed_audit_id = broker.destructive_model_preflight(
+            task_root, repository, disposable_project, disposable_project, "down"
+        )
+        assert allowed_model == owned_model
+        lines = [json.loads(line) for line in broker.COMPOSE_AUDIT_LOG.read_text().splitlines()]
+        denied = next(event for event in lines if event["audit_id"] == denied_audit_id)
+        allowed = next(event for event in lines if event["audit_id"] == allowed_audit_id)
+        assert denied["ownership_decision"] == "deny"
+        assert denied["result"] == "denied"
+        assert denied["requested_project"] == disposable_project
+        assert denied["resolved_project"] == disposable_project
+        assert denied["canonical_project_directory"] == str(sibling_clone)
+        assert denied["authenticated_task_scope"] == str(task_root)
+        assert allowed["ownership_decision"] == "allow"
+        assert allowed["result"] == "preflight"
+        assert allowed["command_class"] == "destructive"
+        assert "args" not in allowed and "environment" not in allowed
         broker.MODEL_DIR = original_model_dir
         broker.COMPOSE_AUDIT_LOG = original_compose_audit
 

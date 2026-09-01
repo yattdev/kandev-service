@@ -28,6 +28,14 @@ class FileDescriptor:
 
 
 def main() -> None:
+    assert client.audit_receipt(
+        {"audit_id": "11111111-1111-1111-1111-111111111111", "resolved_project": "kd_fixture"}
+    ) == (
+        "kandev-agent-docker: audit_id=11111111-1111-1111-1111-111111111111 "
+        "resolved_project=kd_fixture\n"
+    )
+    assert client.audit_receipt({"audit_id": "missing-project"}) == ""
+
     # Simulate hook-sized output to a nonblocking terminal pipe.  The first
     # write is forced to EAGAIN and subsequent writes encounter ordinary pipe
     # backpressure while the reader drains; all bytes must arrive intact.
