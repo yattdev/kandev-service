@@ -34,7 +34,7 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Copilot
-            model: claude-opus-4.8
+            model: gpt-5.6-sol
             mode: https://agentclientprotocol.com/protocol/session-modes#plan
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
@@ -67,7 +67,7 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Copilot
-            model: claude-sonnet-5
+            model: gpt-5.6-terra
             mode: https://agentclientprotocol.com/protocol/session-modes#agent
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
@@ -83,7 +83,7 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Copilot
-            model: claude-sonnet-5
+            model: savoirfairelinux/DeepInfra/deepseek-ai%2FDeepSeek-V4-Flash
             mode: https://agentclientprotocol.com/protocol/session-modes#agent
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
@@ -102,8 +102,8 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Copilot
-            model: claude-opus-4.8
-            mode: https://agentclientprotocol.com/protocol/session-modes#plan
+            model: savoirfairelinux/DeepInfra/moonshotai%2FKimi-K3
+            mode: https://agentclientprotocol.com/protocol/session-modes#autopilot
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
         - name: QA
@@ -140,7 +140,7 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Copilot
-            model: claude-sonnet-5
+            model: savoirfairelinux/DeepInfra/deepseek-ai%2FDeepSeek-V4-Flash
             mode: https://agentclientprotocol.com/protocol/session-modes#agent
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
@@ -158,8 +158,8 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Copilot
-            model: claude-sonnet-5
-            mode: https://agentclientprotocol.com/protocol/session-modes#autopilot
+            model: savoirfairelinux/DeepInfra/deepseek-ai%2FDeepSeek-V4-Flash
+            mode: https://agentclientprotocol.com/protocol/session-modes#agent
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
         - name: Human-QA
@@ -200,7 +200,7 @@ workflows:
           auto_archive_after_hours: 72
           agent_profile:
             agent_name: Copilot
-            model: gpt-5.6-terra
+            model: savoirfairelinux/DeepInfra/deepseek-ai%2FDeepSeek-V4-Flash
             mode: https://agentclientprotocol.com/protocol/session-modes#agent
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
@@ -228,9 +228,9 @@ workflows:
           show_in_command_panel: true
           allow_manual_move: true
           agent_profile:
-            agent_name: Claude
-            model: opus[1m]
-            mode: bypassPermissions
+            agent_name: Copilot
+            model: gpt-5.3-codex
+            mode: https://agentclientprotocol.com/protocol/session-modes#autopilot
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
         - name: QA
@@ -246,9 +246,9 @@ workflows:
           show_in_command_panel: true
           allow_manual_move: true
           agent_profile:
-            agent_name: Claude
-            model: opus[1m]
-            mode: bypassPermissions
+            agent_name: Copilot
+            model: gpt-5.6-sol
+            mode: https://agentclientprotocol.com/protocol/session-modes#autopilot
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
         - name: Human-QA
@@ -268,9 +268,9 @@ workflows:
           show_in_command_panel: false
           allow_manual_move: true
           agent_profile:
-            agent_name: Claude
-            model: sonnet
-            mode: bypassPermissions
+            agent_name: Copilot
+            model: gpt-5.3-codex
+            mode: https://agentclientprotocol.com/protocol/session-modes#agent
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
         - name: Done
@@ -285,9 +285,9 @@ workflows:
           allow_manual_move: true
           auto_archive_after_hours: 72
           agent_profile:
-            agent_name: Claude
-            model: sonnet
-            mode: bypassPermissions
+            agent_name: Codex
+            model: gpt-5.6-terra
+            mode: agent-full-access
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
 
