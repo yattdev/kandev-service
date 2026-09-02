@@ -448,6 +448,36 @@ def split_compose_args(args: list[str], cwd: Path, task_root: Path) -> tuple[lis
     return global_args, command, command_args
 
 
+def compose_project_directory(cwd: Path, task_root: Path, global_args: list[str]) -> Path:
+    """Return the canonical directory that owns a Compose project model.
+
+    A task wrapper may keep its runtime files beside the checked-out repository
+    and invoke ``compose -f ../repository/docker-compose.yml`` from there.
+    That must address the same saved model as a direct invocation from the
+    repository, without allowing a sibling clone to inherit it.
+    """
+    explicit_directory: str | None = None
+    first_file: str | None = None
+    index = 0
+    while index < len(global_args):
+        argument = global_args[index]
+        option, separator, value = argument.partition("=")
+        if option in {"--project-directory"}:
+            explicit_directory = value if separator else global_args[index + 1]
+            index += 1 if separator else 2
+            continue
+        if option in {"-f", "--file"} and first_file is None:
+            first_file = value if separator else global_args[index + 1]
+            index += 1 if separator else 2
+            continue
+        index += 1
+    if explicit_directory is not None:
+        return resolve_inside(explicit_directory, cwd, task_root)
+    if first_file is not None:
+        return resolve_inside(first_file, cwd, task_root).parent
+    return cwd
+
+
 def scoped_path_to_host(value: str, cwd: Path, task_root: Path, host_root: Path) -> Path:
     scoped = resolve_inside(value, cwd, task_root)
     host_path = translate_to_host(scoped)
@@ -1948,8 +1978,9 @@ def handle_request(
     if args[:2] == ["kandev", "support"]:
         return handle_coordinator_support(task_root, args)
 
-    host_root = translate_to_host(task_root)
     global_args, command, command_args = split_compose_args(args, cwd, task_root)
+    project_directory = compose_project_directory(cwd, task_root, global_args)
+    host_root = translate_to_host(task_root)
     requested_project = environment_overrides.get("COMPOSE_PROJECT_NAME", project_name(task_root))
     try:
         project = scoped_project_name(task_root, environment_overrides)
@@ -1972,23 +2003,23 @@ def handle_request(
     audit_id: str | None = None
     if command in DESTRUCTIVE_COMPOSE_COMMANDS:
         sanitized_model, audit_id = destructive_model_preflight(
-            task_root, cwd, requested_project, project, command
+            task_root, project_directory, requested_project, project, command
         )
     elif command in SAFE_EXISTING_COMMANDS:
         # Existing/destructive commands must never create or refresh an
         # ownership record.  A sibling clone can only operate its own prior
         # model, not the registered main clone's project.
-        sanitized_model = load_scoped_model(task_root, cwd, project)
+        sanitized_model = load_scoped_model(task_root, project_directory, project)
     elif command == "up" and "--force-recreate" in command_args and model_path(task_root, project).exists():
         # Recreating selected services must use the exact model already
         # authorized for this task/clone.  Re-rendering here was observably
         # lossy for declared published ports on an existing project even when
         # `compose config` displayed them correctly.
-        sanitized_model = load_scoped_model(task_root, cwd, project)
+        sanitized_model = load_scoped_model(task_root, project_directory, project)
     else:
         initial_model = compose_config(cwd, project, global_args, environment_overrides)
         sanitized_model = validate_model(initial_model, cwd, task_root, host_root, project)
-        save_scoped_model(task_root, cwd, project, sanitized_model)
+        save_scoped_model(task_root, project_directory, project, sanitized_model)
 
     model_file: Path | None = None
     try:

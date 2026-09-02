@@ -291,6 +291,25 @@ def main() -> None:
         try:
             broker.save_scoped_model(task_root, repository, project, ports_model)
             assert broker.model_path(task_root, project).exists()
+            runtime = task_root / ".kandev-runtime"
+            runtime.mkdir()
+            compose_file = repository / "docker-compose.yml"
+            compose_file.touch()
+            project_directory = broker.compose_project_directory(
+                runtime, task_root, ["--file", "../repo/docker-compose.yml"]
+            )
+            assert project_directory == repository
+            # A post-restart broker must load the original clone's persisted
+            # model when a sibling runtime wrapper names that Compose file.
+            assert broker.load_scoped_model(task_root, project_directory, project) == ports_model
+            sibling = task_root / "sibling"
+            sibling.mkdir()
+            sibling_file = sibling / "docker-compose.yml"
+            sibling_file.touch()
+            expect_denied(
+                lambda: broker.load_scoped_model(task_root, sibling, project),
+                "a sibling clone reused the persisted project model",
+            )
         finally:
             broker.MODEL_DIR = original_model_dir
 
