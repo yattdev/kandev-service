@@ -2049,7 +2049,15 @@ def handle_request(
             else:
                 index += 1
         command_line.extend((command, *command_args))
-        code, stdout, stderr = run_command(command_line, cwd, stdin_stream=stdin_stream)
+        # The rendered model carries explicit ports, but Compose also resolves
+        # interpolation while materializing/replaying it.  Preserve only the
+        # broker's narrow allow-list for the execution phase; otherwise a
+        # saved model rendered with DB_PORT/WEB_PORT can be recreated with
+        # Docker's ephemeral published-port default.
+        code, stdout, stderr = run_command(
+            command_line, cwd, environment_overrides=environment_overrides,
+            stdin_stream=stdin_stream,
+        )
         if command in DESTRUCTIVE_COMPOSE_COMMANDS:
             audit_compose(
                 task_root, cwd, requested_project, project, command,
