@@ -270,8 +270,17 @@ trap - EXIT
     fixture_id="$(basename "$runtime_dir" | tr "[:upper:].-" "[:lower:]__")"
     scope_project="kd_guard_${fixture_id}"
     protected_project="${scope_project}-protected"
+    # Fixed host ports can belong to an active task.  Obtain two temporary
+    # loopback ports for this Support-owned fixture, then assert Compose keeps
+    # those exact explicit publications across an owned restart.
+    port_pair="$(python3 -c "import socket; sockets=[socket.socket() for _ in range(4)]; [s.bind((\"127.0.0.1\", 0)) for s in sockets]; print(*[s.getsockname()[1] for s in sockets]); [s.close() for s in sockets]")"
+    set -- $port_pair
+    expected_db_port="$1"
+    expected_web_port="$2"
+    protected_db_port="$3"
+    protected_web_port="$4"
     cleanup() {
-        COMPOSE_PROJECT_NAME="$protected_project" DB_PORT=19306 WEB_PORT=19080 \
+        COMPOSE_PROJECT_NAME="$protected_project" DB_PORT="$protected_db_port" WEB_PORT="$protected_web_port" \
             docker compose down -v --remove-orphans >/dev/null 2>&1 || true
         (cd "$runtime_dir" && docker compose down -v --remove-orphans >/dev/null 2>&1) || true
         rm -f "$runtime_dir/Containerfile.test" "$runtime_dir/docker-compose.yml" \
@@ -303,16 +312,16 @@ trap - EXIT
         "  state: {}" > "$runtime_dir/docker-compose.yml"
     cd "$runtime_dir"
     export COMPOSE_PROJECT_NAME="$scope_project"
-    export DB_PORT=13306
-    export WEB_PORT=18080
+    export DB_PORT="$expected_db_port"
+    export WEB_PORT="$expected_web_port"
     rendered="$(docker compose config)"
     project_name="$(printf "%s\n" "$rendered" | sed -n "s/^name: //p" | head -n 1)"
     test "$project_name" = "$COMPOSE_PROJECT_NAME" || {
         echo "ERROR: broker did not retain the guarded disposable Compose project" >&2
         exit 1
     }
-    printf "%s\n" "$rendered" | grep -Eq "published: [\"\047]?13306[\"\047]?"
-    printf "%s\n" "$rendered" | grep -Eq "published: [\"\047]?18080[\"\047]?"
+    printf "%s\n" "$rendered" | grep -Eq "published: [\"\047]?$expected_db_port[\"\047]?"
+    printf "%s\n" "$rendered" | grep -Eq "published: [\"\047]?$expected_web_port[\"\047]?"
     printf "%s\n" "$rendered" | grep -Eq "guard.compose.scope: [\"\047]?$project_name[\"\047]?"
     attempt=0
     until docker compose up -d --build >/dev/null; do
@@ -330,18 +339,46 @@ trap - EXIT
         printf "%s\n" "$run_output" >&2
         exit 1
     fi
-    docker compose exec -T probe test -f /state/ready
-    docker compose exec -T probe sh -c "echo container-write >/workspace/container-write"
+    docker compose exec -T probe test -f /state/ready </dev/null
+    # Redirected exec input must be streamed byte-for-byte through the guarded
+    # broker; binary data and a multi-megabyte producer exercise backpressure.
+    expected_stdin_hash="$(python3 -c "import hashlib; print(hashlib.sha256(bytes.fromhex(\"00677561726465642d737464696eff\") * 262144).hexdigest())")"
+    python3 -c "import sys; sys.stdout.buffer.write(bytes.fromhex(\"00677561726465642d737464696eff\") * 262144)" \
+        | docker compose exec -T probe sh -ceu "sha256sum | cut -d \" \" -f1 > /state/stdin.hash"
+    test "$(docker compose exec -T probe cat /state/stdin.hash </dev/null)" = "$expected_stdin_hash"
+    # A consumer that exits early must propagate its actual nonzero status;
+    # the broker may drain the producer but must never turn it into success.
+    if python3 -c "import sys; sys.stdout.buffer.write(b\"x\" * 1048576)" \
+        | docker compose exec -T probe sh -ceu "exit 7"; then
+        echo "ERROR: broker hid early Compose exec consumer failure" >&2
+        exit 1
+    fi
+    published_db_port="$(docker compose port probe 3306)"
+    published_web_port="$(docker compose port probe 8080)"
+    case "$published_db_port" in *:"${DB_PORT}") ;; *) echo "ERROR: broker lost declared db port: $published_db_port" >&2; exit 1;; esac
+    case "$published_web_port" in *:"${WEB_PORT}") ;; *) echo "ERROR: broker lost declared web port: $published_web_port" >&2; exit 1;; esac
+    # Concurrent guarded streams remain isolated, and restarting an owned
+    # project retains the exact declared port bindings.
+    for stream_id in one two; do
+        (printf "%s" "$stream_id" | docker compose exec -T probe sh -ceu "cat > /state/stream-$stream_id") &
+    done
+    wait
+    test "$(docker compose exec -T probe cat /state/stream-one </dev/null)" = one
+    test "$(docker compose exec -T probe cat /state/stream-two </dev/null)" = two
+    docker compose restart probe >/dev/null
+    case "$(docker compose port probe 3306)" in *:"${DB_PORT}") ;; *) echo "ERROR: restart lost db port" >&2; exit 1;; esac
+    case "$(docker compose port probe 8080)" in *:"${WEB_PORT}") ;; *) echo "ERROR: restart lost web port" >&2; exit 1;; esac
+    docker compose exec -T probe sh -c "echo container-write >/workspace/container-write" </dev/null
     test "$(cat container-write)" = container-write
     # A second synthetic project is independently model-bound.  Destroying the
     # first one must not select, stop, or remove the protected project state.
-    COMPOSE_PROJECT_NAME="$protected_project" DB_PORT=19306 WEB_PORT=19080 \
+    COMPOSE_PROJECT_NAME="$protected_project" DB_PORT="$protected_db_port" WEB_PORT="$protected_web_port" \
         docker compose up -d >/dev/null
-    COMPOSE_PROJECT_NAME="$protected_project" DB_PORT=19306 WEB_PORT=19080 \
-        docker compose exec -T probe sh -ceu "echo protected >/state/sentinel"
+    COMPOSE_PROJECT_NAME="$protected_project" DB_PORT="$protected_db_port" WEB_PORT="$protected_web_port" \
+        docker compose exec -T probe sh -ceu "echo protected >/state/sentinel" </dev/null
     docker compose down -v --remove-orphans >/dev/null
-    COMPOSE_PROJECT_NAME="$protected_project" DB_PORT=19306 WEB_PORT=19080 \
-        docker compose exec -T probe sh -ceu "test \"\$(cat /state/sentinel)\" = protected"
+    COMPOSE_PROJECT_NAME="$protected_project" DB_PORT="$protected_db_port" WEB_PORT="$protected_web_port" \
+        docker compose exec -T probe sh -ceu "test \"\$(cat /state/sentinel)\" = protected" </dev/null
     printf "%s\n" \
         "services:" \
         "  escape:" \

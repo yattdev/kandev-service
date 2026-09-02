@@ -8,6 +8,7 @@ import importlib.machinery
 import importlib.util
 import os
 from pathlib import Path
+import struct
 import threading
 
 
@@ -76,6 +77,54 @@ def main() -> None:
     os.close(read_fd)
     assert not drain.is_alive(), "reader did not finish draining guarded output"
     assert bytes(received) == expected, "guarded client dropped or reordered output under backpressure"
+
+    # Client stdin is framed and streamed, not JSON-encoded or buffered.  A
+    # binary payload proves NUL bytes survive and the explicit EOF frame is
+    # emitted after the final chunk.
+    original_stdin = client.sys.stdin
+
+    class BinaryInput:
+        def __init__(self, data: bytes) -> None:
+            self.buffer = self
+            self.data = data
+            self.offset = 0
+
+        def isatty(self) -> bool:
+            return False
+
+        def read(self, size: int) -> bytes:
+            chunk = self.data[self.offset : self.offset + size]
+            self.offset += len(chunk)
+            return chunk
+
+    payload = (b"\x00stdin-fixture\xff" * 1024)
+    class RecordingConnection:
+        def __init__(self) -> None:
+            self.data = bytearray()
+
+        def sendall(self, data: bytes) -> None:
+            self.data.extend(data)
+
+    connection = RecordingConnection()
+    client.sys.stdin = BinaryInput(payload)
+    try:
+        client.send_stdin(connection, True)
+        framed = memoryview(connection.data)
+        recovered = bytearray()
+        offset = 0
+        while True:
+            length = struct.unpack("!I", framed[offset : offset + 4])[0]
+            offset += 4
+            if length == 0:
+                break
+            recovered.extend(framed[offset : offset + length])
+            offset += length
+    finally:
+        client.sys.stdin = original_stdin
+    assert bytes(recovered) == payload
+    assert client.should_stream_stdin(["compose", "exec", "-T", "db", "mariadb"])
+    assert not client.should_stream_stdin(["compose", "version"])
+    assert not client.should_stream_stdin(["compose", "exec", "db", "mariadb"])
     print("PASS: guarded Docker client drains nonblocking terminal output")
 
 

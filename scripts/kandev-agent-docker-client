@@ -7,6 +7,7 @@ import json
 import os
 import select
 import socket
+import struct
 import sys
 
 
@@ -43,6 +44,52 @@ def audit_receipt(response: dict[str, object]) -> str:
     return ""
 
 
+def send_stdin(connection: socket.socket, enabled: bool) -> None:
+    """Frame redirected stdin without buffering it in the guarded client.
+
+    A zero-length frame is an explicit EOF marker.  This distinguishes a
+    completed empty stream from a connection that disappeared while an import
+    was in progress, and lets the broker feed large input with normal pipe
+    backpressure instead of accepting an implicit, truncated EOF.
+    """
+    stream = getattr(sys.stdin, "buffer", sys.stdin)
+    if not enabled or sys.stdin.isatty():
+        connection.sendall(struct.pack("!I", 0))
+        return
+    while True:
+        chunk = stream.read(1024 * 1024)
+        if not chunk:
+            break
+        if isinstance(chunk, str):
+            chunk = chunk.encode()
+        connection.sendall(struct.pack("!I", len(chunk)))
+        connection.sendall(chunk)
+    connection.sendall(struct.pack("!I", 0))
+
+
+def should_stream_stdin(args: list[str]) -> bool:
+    """Only noninteractive `compose exec -T` owns redirected stdin.
+
+    Reading stdin for commands such as `compose version` can consume the
+    remainder of a shell script supplied on stdin.  The guarded import path is
+    explicitly `exec -T`; all other Compose commands receive a framed empty
+    stream and cannot accidentally drain their caller.
+    """
+    if not args or args[0] != "compose":
+        return False
+    value_options = {
+        "-f", "--file", "--profile", "--env-file", "--project-directory",
+        "--parallel", "--progress", "--ansi",
+    }
+    index = 1
+    while index < len(args):
+        arg = args[index]
+        if not arg.startswith("-"):
+            break
+        index += 2 if arg in value_options else 1
+    return index < len(args) and args[index] == "exec" and "-T" in args[index + 1 :]
+
+
 def main() -> int:
     socket_path = os.environ.get("KANDEV_AGENT_DOCKER_SOCKET", "/run/kandev-agent-docker.sock")
     token = os.environ.get("KANDEV_AGENT_DOCKER_TOKEN", "")
@@ -67,6 +114,7 @@ def main() -> int:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
             connection.connect(socket_path)
             connection.sendall(json.dumps(request).encode() + b"\n")
+            send_stdin(connection, should_stream_stdin(sys.argv[1:]))
             connection.shutdown(socket.SHUT_WR)
             chunks: list[bytes] = []
             while True:

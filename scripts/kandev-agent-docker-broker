@@ -20,6 +20,7 @@ import re
 import secrets
 import selectors
 import stat
+import struct
 import socketserver
 import sqlite3
 import subprocess
@@ -621,19 +622,89 @@ def clean_environment(overrides: dict[str, str] | None = None) -> dict[str, str]
     return environment
 
 
+class FramedInput:
+    """Read the client stdin framing without retaining task input in memory."""
+
+    def __init__(self, stream: Any):
+        self.stream = stream
+        self.remaining = 0
+        self.finished = False
+
+    def _exact(self, size: int) -> bytes:
+        chunks: list[bytes] = []
+        remaining = size
+        while remaining:
+            chunk = self.stream.read(remaining)
+            if not chunk:
+                raise BrokerError("guarded Compose stdin stream ended before its EOF marker")
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        return b"".join(chunks)
+
+    def read(self, size: int) -> bytes:
+        if self.finished:
+            return b""
+        while self.remaining == 0:
+            frame_length = struct.unpack("!I", self._exact(4))[0]
+            if frame_length == 0:
+                self.finished = True
+                return b""
+            if frame_length > MAX_REQUEST:
+                raise BrokerError("guarded Compose stdin frame is too large")
+            self.remaining = frame_length
+        amount = min(size, self.remaining)
+        chunk = self._exact(amount)
+        self.remaining -= len(chunk)
+        return chunk
+
+
 def run_command(
     args: list[str], cwd: Path, timeout: int = COMMAND_TIMEOUT,
     environment_overrides: dict[str, str] | None = None,
+    stdin_stream: FramedInput | None = None,
 ) -> tuple[int, str, str]:
     with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
         process = subprocess.Popen(
             args,
             cwd=str(cwd),
             env=clean_environment(environment_overrides),
-            stdin=subprocess.DEVNULL,
+            stdin=subprocess.PIPE if stdin_stream is not None else subprocess.DEVNULL,
             stdout=stdout_file,
             stderr=stderr_file,
         )
+        input_error: list[BrokerError | OSError] = []
+
+        def feed_stdin() -> None:
+            if stdin_stream is None or process.stdin is None:
+                return
+            try:
+                while True:
+                    chunk = stdin_stream.read(64 * 1024)
+                    if not chunk:
+                        break
+                    try:
+                        process.stdin.write(chunk)
+                        process.stdin.flush()
+                    except BrokenPipeError:
+                        # The command chose to stop reading.  Continue
+                        # draining the framed client stream so its producer
+                        # does not see a misleading socket failure; the real
+                        # child exit status is returned below.
+                        while stdin_stream.read(64 * 1024):
+                            pass
+                        break
+            except (BrokerError, OSError) as exc:
+                input_error.append(exc)
+            finally:
+                try:
+                    process.stdin.close()
+                except (BrokenPipeError, OSError, AttributeError):
+                    pass
+
+        feeder: threading.Thread | None = None
+        if stdin_stream is not None:
+            feeder = threading.Thread(target=feed_stdin, daemon=True)
+            feeder.start()
         try:
             return_code = process.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
@@ -641,6 +712,13 @@ def run_command(
             process.wait()
             return_code = 124
             stderr_file.write(f"command timed out after {timeout} seconds\n".encode())
+        if feeder is not None:
+            feeder.join(timeout=5)
+            if feeder.is_alive():
+                input_error.append(BrokerError("guarded Compose stdin stream did not finish"))
+        if input_error:
+            return_code = 78
+            stderr_file.write(f"guarded Compose stdin transport failed: {input_error[0]}\n".encode())
         stdout_file.seek(0)
         stderr_file.seek(0)
         stdout = stdout_file.read(MAX_OUTPUT + 1)
@@ -1841,7 +1919,9 @@ def compose_config(
         raise BrokerError("Docker Compose returned an invalid configuration model") from exc
 
 
-def handle_request(request: dict[str, Any], key: bytes) -> dict[str, Any]:
+def handle_request(
+    request: dict[str, Any], key: bytes, stdin_stream: FramedInput | None = None
+) -> dict[str, Any]:
     task_root_raw = request.get("task_root")
     cwd_raw = request.get("cwd")
     args = request.get("args")
@@ -1932,7 +2012,7 @@ def handle_request(request: dict[str, Any], key: bytes) -> dict[str, Any]:
             else:
                 index += 1
         command_line.extend((command, *command_args))
-        code, stdout, stderr = run_command(command_line, cwd)
+        code, stdout, stderr = run_command(command_line, cwd, stdin_stream=stdin_stream)
         if command in DESTRUCTIVE_COMPOSE_COMMANDS:
             audit_compose(
                 task_root, cwd, requested_project, project, command,
@@ -1956,7 +2036,9 @@ class BrokerHandler(socketserver.StreamRequestHandler):
         else:
             try:
                 request = json.loads(line)
-                response = handle_request(request, self.server.broker_key)  # type: ignore[attr-defined]
+                response = handle_request(
+                    request, self.server.broker_key, FramedInput(self.rfile)
+                )  # type: ignore[attr-defined]
             except ComposeAuditError as exc:
                 response = {
                     "returncode": 78,

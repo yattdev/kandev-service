@@ -12,6 +12,8 @@ from contextlib import contextmanager
 from pathlib import Path
 import sqlite3
 import tempfile
+import io
+import struct
 
 
 BROKER_PATH = Path(__file__).resolve().parents[1] / "scripts" / "kandev-agent-docker-broker"
@@ -242,6 +244,46 @@ def main() -> None:
             "DB_PORT": "13306",
             "WEB_PORT": "18080",
         }
+
+        # The host broker must preserve binary redirected stdin and must fail
+        # closed for an incomplete framed stream rather than treating it as an
+        # empty successful import.
+        empty = struct.pack("!I", 0)
+        code, stdout, stderr = broker.run_command(
+            ["/bin/sh", "-c", "wc -c"], repository,
+            stdin_stream=broker.FramedInput(io.BytesIO(empty)),
+        )
+        assert code == 0 and stdout.strip() == "0" and not stderr
+
+        binary = b"\x00broker-stdin\xff" * (4 * 1024 * 1024 // len(b"\x00broker-stdin\xff"))
+        framed_parts = []
+        for offset in range(0, len(binary), 1024 * 1024):
+            chunk = binary[offset : offset + 1024 * 1024]
+            framed_parts.extend((struct.pack("!I", len(chunk)), chunk))
+        framed_parts.append(struct.pack("!I", 0))
+        framed = b"".join(framed_parts)
+        code, stdout, stderr = broker.run_command(
+            ["/bin/sh", "-c", "sha256sum | awk '{print $1}'"], repository,
+            stdin_stream=broker.FramedInput(io.BytesIO(framed)),
+        )
+        assert code == 0 and stdout.strip() == hashlib.sha256(binary).hexdigest() and not stderr
+        code, _stdout, _stderr = broker.run_command(
+            ["/bin/sh", "-c", "head -c 1 >/dev/null; exit 7"], repository,
+            stdin_stream=broker.FramedInput(io.BytesIO(framed)),
+        )
+        assert code == 7, "an early input consumer exit must not become success"
+        code, _stdout, stderr = broker.run_command(
+            ["/bin/sh", "-c", "cat"], repository,
+            stdin_stream=broker.FramedInput(io.BytesIO(struct.pack("!I", 8) + b"short")),
+        )
+        assert code == 78 and "stdin transport failed" in stderr
+
+        ports_model = json.loads(json.dumps(model))
+        ports_model["services"]["app"]["ports"] = [
+            {"target": 3306, "published": "53306", "host_ip": "127.0.0.1"},
+            {"target": 8080, "published": "60003", "host_ip": "0.0.0.0"},
+        ]
+        assert broker.validate_model(ports_model, repository, task_root, task_root, project)["services"]["app"]["ports"] == ports_model["services"]["app"]["ports"]
 
         key = b"test-key"
         token = broker.expected_token(key, task_root)
