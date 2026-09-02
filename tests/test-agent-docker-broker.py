@@ -284,6 +284,15 @@ def main() -> None:
             {"target": 8080, "published": "60003", "host_ip": "0.0.0.0"},
         ]
         assert broker.validate_model(ports_model, repository, task_root, task_root, project)["services"]["app"]["ports"] == ports_model["services"]["app"]["ports"]
+        # Service-specific force recreation must reuse an existing immutable
+        # model instead of re-rendering a potentially lossy port projection.
+        original_model_dir = broker.MODEL_DIR
+        broker.MODEL_DIR = base / "force-recreate-models"
+        try:
+            broker.save_scoped_model(task_root, repository, project, ports_model)
+            assert broker.model_path(task_root, project).exists()
+        finally:
+            broker.MODEL_DIR = original_model_dir
 
         key = b"test-key"
         token = broker.expected_token(key, task_root)

@@ -1979,6 +1979,12 @@ def handle_request(
         # ownership record.  A sibling clone can only operate its own prior
         # model, not the registered main clone's project.
         sanitized_model = load_scoped_model(task_root, cwd, project)
+    elif command == "up" and "--force-recreate" in command_args and model_path(task_root, project).exists():
+        # Recreating selected services must use the exact model already
+        # authorized for this task/clone.  Re-rendering here was observably
+        # lossy for declared published ports on an existing project even when
+        # `compose config` displayed them correctly.
+        sanitized_model = load_scoped_model(task_root, cwd, project)
     else:
         initial_model = compose_config(cwd, project, global_args, environment_overrides)
         sanitized_model = validate_model(initial_model, cwd, task_root, host_root, project)

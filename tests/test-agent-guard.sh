@@ -368,6 +368,11 @@ trap - EXIT
     docker compose restart probe >/dev/null
     case "$(docker compose port probe 3306)" in *:"${DB_PORT}") ;; *) echo "ERROR: restart lost db port" >&2; exit 1;; esac
     case "$(docker compose port probe 8080)" in *:"${WEB_PORT}") ;; *) echo "ERROR: restart lost web port" >&2; exit 1;; esac
+    # Match the affected task path: service-specific force recreation must use
+    # the already-saved model and retain its explicit publications.
+    docker compose up -d --force-recreate probe >/dev/null
+    case "$(docker compose port probe 3306)" in *:"${DB_PORT}") ;; *) echo "ERROR: force recreate lost db port" >&2; exit 1;; esac
+    case "$(docker compose port probe 8080)" in *:"${WEB_PORT}") ;; *) echo "ERROR: force recreate lost web port" >&2; exit 1;; esac
     docker compose exec -T probe sh -c "echo container-write >/workspace/container-write" </dev/null
     test "$(cat container-write)" = container-write
     # A second synthetic project is independently model-bound.  Destroying the
