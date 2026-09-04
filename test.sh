@@ -117,6 +117,26 @@ else
   fail "Expected HTTP 200, got ${HTTP_CODE} on localhost:38429"
 fi
 
+# HTTP 200 is insufficient for an embedded SPA: a backend-only local rebuild
+# can serve the fallback index (boot payload + empty #root) while omitting every
+# JavaScript asset, which renders as a completely white page.
+INDEX_HTML=$(curl -fsS http://localhost:38429/ 2>/dev/null || true)
+MAIN_ASSET=$(python3 -c 'import re, sys; match = re.search(r"<script[^>]+src=[\"'"'"']([^\"'"'"']+\.js)[\"'"'"']", sys.stdin.read()); print(match.group(1) if match else "")' <<<"$INDEX_HTML")
+if [[ "$MAIN_ASSET" == /assets/*.js ]]; then
+  ok "frontend HTML references a JavaScript application bundle"
+else
+  fail "frontend HTML has no JavaScript application bundle (white-page fallback)"
+fi
+
+if [[ -n "$MAIN_ASSET" ]]; then
+  ASSET_RESPONSE=$(curl -sS -o /dev/null -w '%{http_code} %{content_type}' "http://localhost:38429${MAIN_ASSET}" 2>/dev/null || true)
+  if [[ "$ASSET_RESPONSE" == 200*javascript* ]]; then
+    ok "frontend JavaScript bundle is served (${MAIN_ASSET})"
+  else
+    fail "frontend JavaScript bundle is unavailable (${MAIN_ASSET}: ${ASSET_RESPONSE:-no response})"
+  fi
+fi
+
 # ── 4. Identity inside container ──────────────────────────────────────────────
 section "4. Host identity inside container"
 

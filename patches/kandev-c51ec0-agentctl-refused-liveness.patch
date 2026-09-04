@@ -1,0 +1,87 @@
+diff --git a/apps/backend/internal/agent/runtime/lifecycle/manager_interaction.go b/apps/backend/internal/agent/runtime/lifecycle/manager_interaction.go
+index 8b963a9c8..cfed8aeb8 100644
+--- a/apps/backend/internal/agent/runtime/lifecycle/manager_interaction.go
++++ b/apps/backend/internal/agent/runtime/lifecycle/manager_interaction.go
+@@ -7,6 +7,7 @@ import (
+ 	"maps"
+ 	"sort"
+ 	"strings"
++	"syscall"
+ 	"time"
+ 
+ 	"go.uber.org/zap"
+@@ -1415,6 +1416,17 @@ func (m *Manager) ProbeAgentRunningForSession(ctx context.Context, sessionID str
+ 
+ 	status, err := execution.agentctl.GetStatus(ctx)
+ 	if err != nil {
++		// agentctl is bound to a loopback port owned by this execution. Once the
++		// startup grace has elapsed, an actively refused connection means that
++		// listener no longer exists, so the runtime is definitively not live.
++		// Preserve fail-closed behavior for timeouts and all other ambiguous
++		// transport failures.
++		if errors.Is(err, syscall.ECONNREFUSED) {
++			m.logger.Debug("agentctl status listener is gone",
++				zap.String("session_id", sessionID),
++				zap.Error(err))
++			return false, nil
++		}
+ 		m.logger.Debug("failed to get agentctl status",
+ 			zap.String("session_id", sessionID),
+ 			zap.Error(err))
+diff --git a/apps/backend/internal/agent/runtime/lifecycle/manager_interaction_test.go b/apps/backend/internal/agent/runtime/lifecycle/manager_interaction_test.go
+index 27ff16a94..e28991389 100644
+--- a/apps/backend/internal/agent/runtime/lifecycle/manager_interaction_test.go
++++ b/apps/backend/internal/agent/runtime/lifecycle/manager_interaction_test.go
+@@ -1307,6 +1307,52 @@ func TestIsAgentRunningForSession(t *testing.T) {
+ 		}
+ 		require.False(t, mgr.IsAgentRunningForSession(context.Background(), "session-acp-stopped"))
+ 	})
++
++	t.Run("expired ACP execution with refused status port is stale", func(t *testing.T) {
++		statusServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
++			w.WriteHeader(http.StatusOK)
++		}))
++		client := createTestClient(t, statusServer.URL)
++		statusServer.Close()
++		t.Cleanup(client.Close)
++
++		store := NewExecutionStore()
++		require.NoError(t, store.Add(&AgentExecution{
++			ID:        "exec-acp-refused",
++			SessionID: "session-acp-refused",
++			Status:    v1.AgentStatusStarting,
++			StartedAt: time.Now().Add(-5 * time.Minute),
++			agentctl:  client,
++		}))
++
++		mgr := &Manager{executionStore: store, logger: newTestLogger().WithFields()}
++		running, err := mgr.ProbeAgentRunningForSession(context.Background(), "session-acp-refused")
++		require.NoError(t, err)
++		require.False(t, running)
++	})
++
++	t.Run("non-refusal status failure remains uncertain", func(t *testing.T) {
++		statusServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
++			http.Error(w, "unavailable", http.StatusServiceUnavailable)
++		}))
++		t.Cleanup(statusServer.Close)
++
++		client := createTestClient(t, statusServer.URL)
++		t.Cleanup(client.Close)
++
++		store := NewExecutionStore()
++		require.NoError(t, store.Add(&AgentExecution{
++			ID:        "exec-acp-uncertain",
++			SessionID: "session-acp-uncertain",
++			Status:    v1.AgentStatusRunning,
++			agentctl:  client,
++		}))
++
++		mgr := &Manager{executionStore: store, logger: newTestLogger().WithFields()}
++		running, err := mgr.ProbeAgentRunningForSession(context.Background(), "session-acp-uncertain")
++		require.Error(t, err)
++		require.False(t, running)
++	})
+ }
+ 
+ func TestIsAgentReadyForPrompt(t *testing.T) {

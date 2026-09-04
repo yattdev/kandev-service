@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# Rebuild the local backend liveness overlay from the exact deployed upstream
+# revision. This is intentionally pinned: applying the patch to a newer source
+# tree without review could mask an upstream implementation change.
+set -euo pipefail
+
+HOTFIX_REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+HOTFIX_REVISION="c51ec0a21b1997fb267289cecf493d941112d7a7"
+HOTFIX_UPSTREAM="https://github.com/kdlbs/kandev.git"
+HOTFIX_PATCH="$HOTFIX_REPO_DIR/patches/kandev-c51ec0-agentctl-refused-liveness.patch"
+HOTFIX_OUTPUT="$HOTFIX_REPO_DIR/.local-hotfix/kandev"
+HOTFIX_BUILD_ROOT="$(mktemp -d /tmp/kandev-liveness-hotfix.XXXXXX)"
+trap 'rm -rf "$HOTFIX_BUILD_ROOT"' EXIT
+
+bash "$HOTFIX_REPO_DIR/scripts/require-main-branch.sh" "$HOTFIX_REPO_DIR"
+
+for command_name in git go make node pnpm install; do
+    command -v "$command_name" >/dev/null || {
+        echo "ERROR: required command is unavailable: $command_name" >&2
+        exit 1
+    }
+done
+
+echo "Cloning Kandev revision $HOTFIX_REVISION ..."
+git clone --quiet --filter=blob:none --no-checkout "$HOTFIX_UPSTREAM" "$HOTFIX_BUILD_ROOT/source"
+git -C "$HOTFIX_BUILD_ROOT/source" checkout --quiet --detach "$HOTFIX_REVISION"
+
+git -C "$HOTFIX_BUILD_ROOT/source" apply --check "$HOTFIX_PATCH"
+git -C "$HOTFIX_BUILD_ROOT/source" apply "$HOTFIX_PATCH"
+
+echo "Running focused lifecycle tests ..."
+(
+    cd "$HOTFIX_BUILD_ROOT/source/apps/backend"
+    go test ./internal/agent/runtime/lifecycle
+)
+
+echo "Building and embedding frontend assets ..."
+(
+    cd "$HOTFIX_BUILD_ROOT/source/apps"
+    pnpm install --frozen-lockfile
+)
+make -C "$HOTFIX_BUILD_ROOT/source" build-web sync-embedded-web
+
+embedded_index="$HOTFIX_BUILD_ROOT/source/apps/backend/internal/webapp/embedded/generated/index.html"
+test -s "$embedded_index"
+grep -Eq '<script[^>]+src="/assets/[^"]+\.js"' "$embedded_index" || {
+    echo "ERROR: built frontend index has no JavaScript asset" >&2
+    exit 1
+}
+
+echo "Building frontend-complete backend overlay ..."
+make -C "$HOTFIX_BUILD_ROOT/source/apps/backend" build-kandev
+install -m 0755 "$HOTFIX_BUILD_ROOT/source/apps/backend/bin/kandev" "$HOTFIX_OUTPUT"
+
+echo "Installed $HOTFIX_OUTPUT"
+sha256sum "$HOTFIX_OUTPUT"

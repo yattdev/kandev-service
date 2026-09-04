@@ -1,0 +1,187 @@
+#!/usr/bin/env bash
+# Add a persistent emergency swapfile for large concurrent agent bursts. This
+# does not impose memory or process limits. The existing /swap.img remains the
+# first-priority swap device and this file provides an additional 32 GiB.
+set -euo pipefail
+
+SWAP_REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SWAP_PATH="${KANDEV_SWAP_PATH:-/swap-kandev.img}"
+SWAP_SIZE_GIB="${KANDEV_SWAP_SIZE_GIB:-32}"
+SWAP_PRIORITY="${KANDEV_SWAP_PRIORITY:--2}"
+SWAP_SWAPPINESS="${KANDEV_SWAPPINESS:-10}"
+SWAP_FSTAB="/etc/fstab"
+SWAP_SYSCTL="/etc/sysctl.d/90-kandev-swap.conf"
+SWAP_BEGIN="# BEGIN kandev additional swap (managed by scripts/configure-kandev-swap)"
+SWAP_END="# END kandev additional swap"
+SWAP_MODE="plan"
+
+usage() {
+    cat <<'EOF'
+Usage:
+  scripts/configure-kandev-swap --plan
+  sudo scripts/configure-kandev-swap --apply
+
+Defaults to a 32 GiB /swap-kandev.img, retains the existing swap, sets the new
+file to priority -2, and sets vm.swappiness=10. Override with
+KANDEV_SWAP_SIZE_GIB, KANDEV_SWAP_PATH, KANDEV_SWAP_PRIORITY, or
+KANDEV_SWAPPINESS.
+EOF
+}
+
+case "${1:---plan}" in
+    --plan) SWAP_MODE="plan" ;;
+    --apply) SWAP_MODE="apply" ;;
+    -h|--help) usage; exit 0 ;;
+    *) usage >&2; exit 2 ;;
+esac
+
+log() {
+    echo "[kandev-swap] $*"
+}
+
+for swap_command in awk chmod cp df dirname fallocate findmnt flock free grep install \
+    mkdir mkswap numfmt rm stat swapoff swapon sysctl; do
+    command -v "$swap_command" >/dev/null || {
+        echo "ERROR: required command is unavailable: $swap_command" >&2
+        exit 1
+    }
+done
+
+bash "$SWAP_REPO_DIR/scripts/require-main-branch.sh" "$SWAP_REPO_DIR"
+
+[[ "$SWAP_PATH" =~ ^/[A-Za-z0-9._/-]+$ && "$SWAP_PATH" != "/" ]] || {
+    echo "ERROR: KANDEV_SWAP_PATH must be a simple absolute file path below /" >&2
+    exit 1
+}
+[[ "$SWAP_SIZE_GIB" =~ ^[1-9][0-9]*$ ]] || {
+    echo "ERROR: KANDEV_SWAP_SIZE_GIB must be a positive integer" >&2
+    exit 1
+}
+[[ "$SWAP_SWAPPINESS" =~ ^[0-9]+$ ]] && (( SWAP_SWAPPINESS <= 200 )) || {
+    echo "ERROR: KANDEV_SWAPPINESS must be between 0 and 200" >&2
+    exit 1
+}
+[[ "$SWAP_PRIORITY" =~ ^-?[0-9]+$ ]] && (( SWAP_PRIORITY >= -32768 && SWAP_PRIORITY <= 32767 )) || {
+    echo "ERROR: KANDEV_SWAP_PRIORITY must be between -32768 and 32767" >&2
+    exit 1
+}
+
+SWAP_BYTES=$(( SWAP_SIZE_GIB * 1024 * 1024 * 1024 ))
+SWAP_PARENT="$(dirname "$SWAP_PATH")"
+SWAP_PARENT_MOUNT="$(findmnt -n -o TARGET --target "$SWAP_PARENT")"
+SWAP_ROOT_FREE="$(df --output=avail -B1 "$SWAP_PARENT" | awk 'NR == 2 {print $1}')"
+
+log "existing swap:"
+swapon --show || true
+log "new file:     $SWAP_PATH ($(numfmt --to=iec-i --suffix=B "$SWAP_BYTES"))"
+log "filesystem:   $SWAP_PARENT_MOUNT"
+log "available:    $(numfmt --to=iec-i --suffix=B "$SWAP_ROOT_FREE")"
+log "swappiness:   $(sysctl -n vm.swappiness) -> $SWAP_SWAPPINESS"
+
+[[ "$SWAP_PARENT_MOUNT" == "/" ]] || {
+    echo "ERROR: $SWAP_PATH must reside on the root filesystem" >&2
+    exit 1
+}
+if [[ ! -e "$SWAP_PATH" ]] && (( SWAP_ROOT_FREE < SWAP_BYTES + 10 * 1024 * 1024 * 1024 )); then
+    echo "ERROR: insufficient free space for swap plus a 10 GiB reserve" >&2
+    exit 1
+fi
+
+[[ "$SWAP_MODE" == "apply" ]] || {
+    log "plan only; run with sudo and --apply to create and activate it"
+    exit 0
+}
+
+[[ "$(id -u)" -eq 0 ]] || {
+    echo "ERROR: --apply must run as root (use sudo)" >&2
+    exit 1
+}
+
+exec 9>/run/kandev-swap-configuration.lock
+flock -n 9 || { echo "ERROR: another swap configuration is running" >&2; exit 75; }
+
+SWAP_TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+SWAP_BACKUP_DIR="/var/backups/kandev-swap/$SWAP_TIMESTAMP"
+SWAP_CREATED=0
+SWAP_ACTIVATED=0
+mkdir -p "$SWAP_BACKUP_DIR"
+cp -a "$SWAP_FSTAB" "$SWAP_BACKUP_DIR/fstab"
+if [[ -e "$SWAP_SYSCTL" ]]; then
+    cp -a "$SWAP_SYSCTL" "$SWAP_BACKUP_DIR/90-kandev-swap.conf"
+else
+    : >"$SWAP_BACKUP_DIR/90-kandev-swap.conf.absent"
+fi
+
+rollback_swap() {
+    local swap_status="$1"
+    set +e
+    log "configuration failed; rolling back the new swapfile"
+    if [[ "$SWAP_ACTIVATED" -eq 1 ]]; then
+        swapoff "$SWAP_PATH"
+    fi
+    install -m "$(stat -c '%a' "$SWAP_BACKUP_DIR/fstab")" \
+        "$SWAP_BACKUP_DIR/fstab" "$SWAP_FSTAB"
+    if [[ -e "$SWAP_BACKUP_DIR/90-kandev-swap.conf.absent" ]]; then
+        rm -f -- "$SWAP_SYSCTL"
+    else
+        install -D -m "$(stat -c '%a' "$SWAP_BACKUP_DIR/90-kandev-swap.conf")" \
+            "$SWAP_BACKUP_DIR/90-kandev-swap.conf" "$SWAP_SYSCTL"
+    fi
+    sysctl --system >/dev/null
+    if [[ "$SWAP_CREATED" -eq 1 ]]; then
+        rm -f -- "$SWAP_PATH"
+    fi
+    exit "$swap_status"
+}
+trap 'rollback_swap $?' ERR INT TERM
+
+if [[ -e "$SWAP_PATH" ]]; then
+    [[ -f "$SWAP_PATH" && ! -L "$SWAP_PATH" ]] || {
+        echo "ERROR: $SWAP_PATH is not a regular, non-symlink file" >&2
+        false
+    }
+    [[ "$(stat -c '%s' "$SWAP_PATH")" -eq "$SWAP_BYTES" ]] || {
+        echo "ERROR: existing $SWAP_PATH does not have the requested size" >&2
+        false
+    }
+else
+    SWAP_CREATED=1
+    fallocate -l "${SWAP_SIZE_GIB}G" "$SWAP_PATH"
+    chmod 0600 "$SWAP_PATH"
+    mkswap "$SWAP_PATH" >/dev/null
+fi
+
+chmod 0600 "$SWAP_PATH"
+if ! grep -Fq "$SWAP_PATH" /proc/swaps; then
+    swapon --priority "$SWAP_PRIORITY" "$SWAP_PATH"
+    SWAP_ACTIVATED=1
+fi
+
+SWAP_FSTAB_NEW="$SWAP_BACKUP_DIR/fstab.new"
+awk -v begin="$SWAP_BEGIN" -v end="$SWAP_END" \
+    -v path="$SWAP_PATH" -v priority="$SWAP_PRIORITY" '
+    $0 == begin {inside = 1; next}
+    $0 == end {inside = 0; next}
+    !inside {print}
+    END {
+        print begin
+        print path " none swap sw,pri=" priority " 0 0"
+        print end
+    }
+' "$SWAP_FSTAB" >"$SWAP_FSTAB_NEW"
+install -m 0644 "$SWAP_FSTAB_NEW" "$SWAP_FSTAB"
+
+printf '# Managed by scripts/configure-kandev-swap\nvm.swappiness=%s\n' \
+    "$SWAP_SWAPPINESS" >"$SWAP_BACKUP_DIR/90-kandev-swap.conf.new"
+install -D -m 0644 "$SWAP_BACKUP_DIR/90-kandev-swap.conf.new" "$SWAP_SYSCTL"
+sysctl -w "vm.swappiness=$SWAP_SWAPPINESS" >/dev/null
+
+grep -Fq "$SWAP_PATH" /proc/swaps
+grep -Fq "$SWAP_PATH none swap sw,pri=$SWAP_PRIORITY 0 0" "$SWAP_FSTAB"
+[[ "$(sysctl -n vm.swappiness)" == "$SWAP_SWAPPINESS" ]]
+
+trap - ERR INT TERM
+log "swap configured successfully"
+swapon --show
+free -h
+log "configuration backup: $SWAP_BACKUP_DIR"

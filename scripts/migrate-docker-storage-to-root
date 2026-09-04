@@ -1,0 +1,317 @@
+#!/usr/bin/env bash
+# Move both Docker and containerd state from the dedicated ~200 GB partition to
+# the much larger root filesystem. The old data is deliberately retained as a
+# rollback copy; no source data or mount configuration is deleted here.
+set -euo pipefail
+
+MIGRATION_REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+MIGRATION_DOCKER_SOURCE="/var/lib/docker"
+MIGRATION_CONTAINERD_SOURCE="/var/lib/containerd"
+MIGRATION_DOCKER_TARGET="/docker"
+MIGRATION_CONTAINERD_TARGET="/containerd"
+MIGRATION_DOCKER_CONFIG="/etc/docker/daemon.json"
+MIGRATION_CONTAINERD_CONFIG="/etc/containerd/config.toml"
+MIGRATION_CONTAINERD_DROPIN="/etc/systemd/system/containerd.service.d/10-wait-for-mount.conf"
+MIGRATION_HEALTH_URL="${KANDEV_MIGRATION_HEALTH_URL:-http://127.0.0.1:38429/}"
+MIGRATION_HEALTH_TIMEOUT_SECS="${KANDEV_MIGRATION_HEALTH_TIMEOUT_SECS:-960}"
+MIGRATION_MODE="plan"
+MIGRATION_ROLLBACK_REQUIRED=0
+MIGRATION_ROLLBACK_RUNNING=0
+MIGRATION_BACKUP_DIR=""
+MIGRATION_RUNNING_CONTAINERS=""
+
+usage() {
+    cat <<'EOF'
+Usage:
+  sudo scripts/migrate-docker-storage-to-root --plan
+  sudo scripts/migrate-docker-storage-to-root --apply
+
+The apply operation performs an online pre-copy, stops Docker/containerd for a
+final synchronized copy, switches both roots, restarts the previously running
+containers, and requires Kandev HTTP 200. Configuration is rolled back
+automatically if validation fails. Old /var/lib data is retained.
+EOF
+}
+
+case "${1:---plan}" in
+    --plan) MIGRATION_MODE="plan" ;;
+    --apply) MIGRATION_MODE="apply" ;;
+    -h|--help) usage; exit 0 ;;
+    *) usage >&2; exit 2 ;;
+esac
+
+log() {
+    echo "[docker-storage-migration] $*"
+}
+
+require_commands() {
+    local migration_command
+    for migration_command in "$@"; do
+        command -v "$migration_command" >/dev/null || {
+            echo "ERROR: required command is unavailable: $migration_command" >&2
+            exit 1
+        }
+    done
+}
+
+source_bytes() {
+    du -sx --block-size=1 "$MIGRATION_DOCKER_SOURCE" "$MIGRATION_CONTAINERD_SOURCE" \
+        | awk '{total += $1} END {print total + 0}'
+}
+
+root_available_bytes() {
+    df --output=avail -B1 / | awk 'NR == 2 {print $1}'
+}
+
+show_plan() {
+    local migration_used migration_available migration_required
+    migration_used="$(source_bytes)"
+    migration_available="$(root_available_bytes)"
+    migration_required=$(( migration_used + migration_used / 5 ))
+
+    log "Docker:     $MIGRATION_DOCKER_SOURCE -> $MIGRATION_DOCKER_TARGET"
+    log "containerd: $MIGRATION_CONTAINERD_SOURCE -> $MIGRATION_CONTAINERD_TARGET"
+    log "source data: $(numfmt --to=iec-i --suffix=B "$migration_used")"
+    log "root free:   $(numfmt --to=iec-i --suffix=B "$migration_available")"
+    log "required:    $(numfmt --to=iec-i --suffix=B "$migration_required") (data plus 20% reserve)"
+    log "old source data will remain untouched for rollback"
+
+    if (( migration_available < migration_required )); then
+        echo "ERROR: root does not have enough free space for a safe copy" >&2
+        return 1
+    fi
+}
+
+backup_file() {
+    local migration_path="$1"
+    local migration_name="$2"
+    if [[ -e "$migration_path" ]]; then
+        cp -a "$migration_path" "$MIGRATION_BACKUP_DIR/$migration_name"
+    else
+        : >"$MIGRATION_BACKUP_DIR/$migration_name.absent"
+    fi
+}
+
+restore_file() {
+    local migration_path="$1"
+    local migration_name="$2"
+    if [[ -e "$MIGRATION_BACKUP_DIR/$migration_name.absent" ]]; then
+        rm -f -- "$migration_path"
+    else
+        install -D -m "$(stat -c '%a' "$MIGRATION_BACKUP_DIR/$migration_name")" \
+            "$MIGRATION_BACKUP_DIR/$migration_name" "$migration_path"
+    fi
+}
+
+prepare_target() {
+    local migration_source="$1"
+    local migration_target="$2"
+    local migration_marker="$migration_target/.kandev-storage-migration-target"
+
+    if [[ -e "$migration_target" && ! -d "$migration_target" ]]; then
+        echo "ERROR: target exists and is not a directory: $migration_target" >&2
+        return 1
+    fi
+    if [[ -d "$migration_target" && ! -e "$migration_marker" ]]; then
+        if find "$migration_target" -mindepth 1 -print -quit | grep -q .; then
+            echo "ERROR: refusing an unmanaged non-empty target: $migration_target" >&2
+            return 1
+        fi
+    fi
+
+    mkdir -p "$migration_target"
+    chmod --reference="$migration_source" "$migration_target"
+    chown --reference="$migration_source" "$migration_target"
+    : >"$migration_marker"
+}
+
+sync_state() {
+    local migration_source="$1"
+    local migration_target="$2"
+    local migration_delete="${3:-}"
+    local -a migration_args=(-aHAXx --numeric-ids --info=stats1 \
+        --exclude=/.kandev-storage-migration-target)
+    if [[ "$migration_delete" == "delete" ]]; then
+        migration_args+=(--delete)
+    fi
+    local migration_status=0
+    rsync "${migration_args[@]}" "$migration_source/" "$migration_target/" || migration_status=$?
+    # A live Docker tree can legitimately remove a transient file between
+    # rsync's scan and copy. The stopped/final pass remains strict.
+    if [[ "$migration_delete" != "delete" && "$migration_status" -eq 24 ]]; then
+        log "online pre-copy observed transient files; the final stopped pass will reconcile them"
+        return 0
+    fi
+    return "$migration_status"
+}
+
+write_new_configuration() {
+    local migration_tmp
+
+    migration_tmp="$MIGRATION_BACKUP_DIR/daemon.json.new"
+    if [[ -e "$MIGRATION_DOCKER_CONFIG" ]]; then
+        jq '. + {"data-root": "/docker"}' "$MIGRATION_DOCKER_CONFIG" >"$migration_tmp"
+    else
+        jq -n '{"data-root": "/docker"}' >"$migration_tmp"
+    fi
+    dockerd --validate --config-file "$migration_tmp" >/dev/null
+    install -D -m 0644 "$migration_tmp" "$MIGRATION_DOCKER_CONFIG"
+
+    migration_tmp="$MIGRATION_BACKUP_DIR/config.toml.new"
+    awk '
+        BEGIN {changed = 0}
+        $0 ~ /^[[:space:]]*#?[[:space:]]*root[[:space:]]*=/ {
+            if (!changed) print "root = \"/containerd\""
+            changed = 1
+            next
+        }
+        {lines[NR] = $0}
+        END {
+            if (!changed) print "root = \"/containerd\""
+            for (line = 1; line <= NR; line++) if (line in lines) print lines[line]
+        }
+    ' "$MIGRATION_CONTAINERD_CONFIG" >"$migration_tmp"
+    containerd --config "$migration_tmp" config dump >/dev/null
+    install -D -m 0644 "$migration_tmp" "$MIGRATION_CONTAINERD_CONFIG"
+
+    migration_tmp="$MIGRATION_BACKUP_DIR/containerd-wait.conf.new"
+    printf '[Unit]\nRequiresMountsFor=/containerd\n' >"$migration_tmp"
+    install -D -m 0644 "$migration_tmp" "$MIGRATION_CONTAINERD_DROPIN"
+}
+
+wait_for_kandev() {
+    local migration_deadline migration_code
+    migration_deadline=$(( SECONDS + MIGRATION_HEALTH_TIMEOUT_SECS ))
+    while (( SECONDS < migration_deadline )); do
+        migration_code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 \
+            "$MIGRATION_HEALTH_URL" 2>/dev/null || true)"
+        [[ "$migration_code" == "200" ]] && return 0
+        sleep 2
+    done
+    return 1
+}
+
+restart_previous_containers() {
+    local migration_container
+    while IFS= read -r migration_container; do
+        [[ -n "$migration_container" ]] || continue
+        docker start "$migration_container" >/dev/null
+    done <"$MIGRATION_RUNNING_CONTAINERS"
+}
+
+rollback_configuration() {
+    [[ "$MIGRATION_ROLLBACK_REQUIRED" -eq 1 ]] || return 0
+    [[ "$MIGRATION_ROLLBACK_RUNNING" -eq 0 ]] || return 0
+    MIGRATION_ROLLBACK_RUNNING=1
+    MIGRATION_ROLLBACK_REQUIRED=0
+    set +e
+
+    log "validation failed; restoring original configuration"
+    systemctl stop docker.service docker.socket containerd.service
+    restore_file "$MIGRATION_DOCKER_CONFIG" daemon.json
+    restore_file "$MIGRATION_CONTAINERD_CONFIG" config.toml
+    restore_file "$MIGRATION_CONTAINERD_DROPIN" containerd-wait.conf
+    systemctl daemon-reload
+    systemctl start containerd.service
+    systemctl start docker.socket docker.service
+    restart_previous_containers
+    if wait_for_kandev; then
+        log "rollback verified: Kandev returned HTTP 200 on the original storage roots"
+    else
+        log "CRITICAL: rollback completed but Kandev did not return HTTP 200" >&2
+    fi
+}
+
+on_exit() {
+    local migration_status="$1"
+    if [[ "$MIGRATION_ROLLBACK_REQUIRED" -eq 1 ]]; then
+        rollback_configuration
+    fi
+    exit "$migration_status"
+}
+
+require_commands awk chmod chown containerd cp curl date df docker dockerd du find \
+    findmnt flock grep install jq mkdir numfmt rm rsync sleep stat systemctl
+bash "$MIGRATION_REPO_DIR/scripts/require-main-branch.sh" "$MIGRATION_REPO_DIR"
+
+[[ "$(id -u)" -eq 0 ]] || {
+    echo "ERROR: storage inspection and migration must run as root (use sudo)" >&2
+    exit 1
+}
+
+[[ -d "$MIGRATION_DOCKER_SOURCE" ]] || { echo "ERROR: missing $MIGRATION_DOCKER_SOURCE" >&2; exit 1; }
+[[ -d "$MIGRATION_CONTAINERD_SOURCE" ]] || { echo "ERROR: missing $MIGRATION_CONTAINERD_SOURCE" >&2; exit 1; }
+[[ -f "$MIGRATION_CONTAINERD_CONFIG" ]] || { echo "ERROR: missing $MIGRATION_CONTAINERD_CONFIG" >&2; exit 1; }
+
+show_plan
+[[ "$MIGRATION_MODE" == "apply" ]] || {
+    log "plan only; run with sudo and --apply to perform the migration"
+    exit 0
+}
+
+exec 9>/run/kandev-docker-storage-migration.lock
+flock -n 9 || { echo "ERROR: another storage migration is running" >&2; exit 75; }
+
+MIGRATION_TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+MIGRATION_BACKUP_DIR="/var/backups/kandev-docker-storage/$MIGRATION_TIMESTAMP"
+MIGRATION_RUNNING_CONTAINERS="$MIGRATION_BACKUP_DIR/running-containers"
+mkdir -p "$MIGRATION_BACKUP_DIR"
+
+backup_file "$MIGRATION_DOCKER_CONFIG" daemon.json
+backup_file "$MIGRATION_CONTAINERD_CONFIG" config.toml
+backup_file "$MIGRATION_CONTAINERD_DROPIN" containerd-wait.conf
+docker ps -q >"$MIGRATION_RUNNING_CONTAINERS"
+
+prepare_target "$MIGRATION_DOCKER_SOURCE" "$MIGRATION_DOCKER_TARGET"
+prepare_target "$MIGRATION_CONTAINERD_SOURCE" "$MIGRATION_CONTAINERD_TARGET"
+[[ "$(findmnt -n -o TARGET --target "$MIGRATION_DOCKER_TARGET")" == "/" ]] || {
+    echo "ERROR: $MIGRATION_DOCKER_TARGET is not on the root filesystem" >&2
+    exit 1
+}
+[[ "$(findmnt -n -o TARGET --target "$MIGRATION_CONTAINERD_TARGET")" == "/" ]] || {
+    echo "ERROR: $MIGRATION_CONTAINERD_TARGET is not on the root filesystem" >&2
+    exit 1
+}
+
+log "performing online pre-copy while containers remain available"
+sync_state "$MIGRATION_DOCKER_SOURCE" "$MIGRATION_DOCKER_TARGET"
+sync_state "$MIGRATION_CONTAINERD_SOURCE" "$MIGRATION_CONTAINERD_TARGET"
+
+trap 'on_exit $?' EXIT
+trap 'exit 130' INT TERM
+MIGRATION_ROLLBACK_REQUIRED=1
+
+log "stopping Docker and containerd for the final synchronized copy"
+systemctl stop docker.service docker.socket
+systemctl stop containerd.service
+sync_state "$MIGRATION_DOCKER_SOURCE" "$MIGRATION_DOCKER_TARGET" delete
+sync_state "$MIGRATION_CONTAINERD_SOURCE" "$MIGRATION_CONTAINERD_TARGET" delete
+
+write_new_configuration
+systemctl daemon-reload
+systemctl start containerd.service
+systemctl start docker.socket docker.service
+
+[[ "$(docker info --format '{{.DockerRootDir}}')" == "$MIGRATION_DOCKER_TARGET" ]] || {
+    echo "ERROR: Docker did not activate $MIGRATION_DOCKER_TARGET" >&2
+    exit 1
+}
+containerd config dump | awk -F "['\"]" '
+    $1 == "root = " && $2 == "/containerd" { found = 1 }
+    END { exit !found }
+' || {
+    echo "ERROR: containerd did not activate $MIGRATION_CONTAINERD_TARGET" >&2
+    exit 1
+}
+
+restart_previous_containers
+wait_for_kandev || {
+    echo "ERROR: Kandev did not return HTTP 200 after the storage migration" >&2
+    exit 1
+}
+
+MIGRATION_ROLLBACK_REQUIRED=0
+trap - EXIT INT TERM
+log "migration accepted: Docker uses /docker, containerd uses /containerd, and Kandev is HTTP 200"
+log "rollback copies remain at /var/lib/docker and /var/lib/containerd"
+log "configuration backup: $MIGRATION_BACKUP_DIR"

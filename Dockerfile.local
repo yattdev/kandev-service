@@ -363,11 +363,14 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh /usr/local/bin/codex-sandbox-pr
     /usr/local/bin/kandev-agent-docker-client /usr/local/bin/kandev-agent-docker-token \
     /usr/local/bin/emulator /usr/local/bin/adb
 
-# Optional tested binary overlay while a local agentctl source fix is waiting
-# for an upstream image release. Both binaries are required as a pair: the
+# Optional tested binary overlays while local source fixes are waiting for an
+# upstream image release. The agentctl binaries are required as a pair: the
 # native executable serves the current container and linux-amd64 is copied into
-# task runtimes. Keeping the overlay in the ordinary build context means
-# update.sh cannot silently discard the fix on the next local image rebuild.
+# task runtimes. A backend overlay is independent and replaces the executable
+# behind /usr/local/bin/kandev; it must be built with the matching frontend
+# assets embedded (see .local-hotfix/README.md). Keeping overlays in the ordinary
+# build context means update.sh cannot silently discard them on the next local
+# image rebuild.
 COPY .local-hotfix/ /opt/kandev-local-hotfix/
 RUN native=/opt/kandev-local-hotfix/agentctl \
     && remote=/opt/kandev-local-hotfix/agentctl-linux-amd64 \
@@ -375,4 +378,9 @@ RUN native=/opt/kandev-local-hotfix/agentctl \
          test -x "$native" && test -x "$remote"; \
          install -m 0755 "$native" /usr/local/bin/agentctl; \
          install -m 0755 "$remote" /app/apps/backend/bin/agentctl-linux-amd64; \
+       fi \
+    && backend=/opt/kandev-local-hotfix/kandev \
+    && if [ -e "$backend" ]; then \
+         test -x "$backend"; \
+         install -m 0755 "$backend" /app/apps/backend/bin/kandev; \
        fi
