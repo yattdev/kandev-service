@@ -451,7 +451,12 @@ def main() -> None:
             "kandev.session_id": "session-live",
             "kandev.task_environment_id": "env-ordinary",
         }
-        runtime_info = {"Id": "container-live", "Config": {"Labels": runtime_labels}}
+        runtime_info = {
+            "Id": "container-live",
+            "Name": "/runtime-live",
+            "State": {"Status": "running"},
+            "Config": {"Labels": runtime_labels},
+        }
         assert broker.container_workspace_ids(runtime_info) == {"ws-one"}
         # Re-reading an existing runtime registration is deterministic and
         # does not require a second principal or ownership record.
@@ -480,6 +485,26 @@ def main() -> None:
         }
         assert broker.container_workspace_ids(cross_workspace_runtime) == {"ws-two"}
         assert "ws-one" not in broker.container_workspace_ids(cross_workspace_runtime)
+
+        original_run_command = broker.run_command
+
+        def fake_container_listing(
+            args, cwd, timeout=broker.COMMAND_TIMEOUT, environment_overrides=None
+        ):
+            if args == [broker.DOCKER_BIN, "container", "ls", "--all", "--quiet"]:
+                return 0, "container-live\ncontainer-other\n", ""
+            if args[:4] == [broker.DOCKER_BIN, "inspect", "--type", "container"]:
+                return 0, json.dumps([runtime_info, cross_workspace_runtime]), ""
+            raise AssertionError(f"unexpected source-list command: {args}")
+
+        broker.run_command = fake_container_listing
+        try:
+            visible = broker.list_workspace_containers("ws-one")
+        finally:
+            broker.run_command = original_run_command
+        assert len(visible) == 1
+        assert visible[0]["name"] == "runtime-live"
+        assert visible[0]["id"] == "container-li"
 
         stale_session_runtime = json.loads(json.dumps(runtime_info))
         stale_session_runtime["Config"]["Labels"]["kandev.session_id"] = "session-stale"
@@ -516,6 +541,9 @@ def main() -> None:
             database.execute(
                 "UPDATE executors_running SET status = 'stopped' WHERE session_id = 'session-live'"
             )
+        assert broker.container_workspace_ids(runtime_info) == set()
+        with sqlite3.connect(metadata) as database:
+            database.execute("DELETE FROM executors_running WHERE session_id = 'session-live'")
         assert broker.container_workspace_ids(runtime_info) == set()
 
         destination, container_destination = broker.target_task_inbox(
