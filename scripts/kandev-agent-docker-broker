@@ -73,6 +73,15 @@ COMPOSE_PROJECT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 STATIC_BACKUP_NAME = "last_db.sql"
 AUDIT_LOCK = threading.Lock()
 EXPORT_LOCK = threading.Lock()
+ACTIVE_TASK_SESSION_STATES = {"CREATED", "STARTING", "RUNNING", "WAITING_FOR_INPUT"}
+ACTIVE_TASK_ENVIRONMENT_STATES = {"creating", "ready"}
+ACTIVE_EXECUTOR_STATES = {"starting", "prepared", "running", "ready"}
+RUNTIME_IDENTITY_LABELS = {
+    "kandev.managed",
+    "kandev.task_id",
+    "kandev.session_id",
+    "kandev.task_environment_id",
+}
 
 COMPOSE_VALUE_OPTIONS = {
     "-f",
@@ -754,6 +763,66 @@ def container_path_for_host(path: str) -> Path | None:
     return None
 
 
+def registered_runtime_workspace_ids(
+    info: dict[str, Any], labels: dict[str, Any], database: sqlite3.Connection
+) -> set[str] | None:
+    """Resolve one backend-managed runtime through its live DB registration.
+
+    ``None`` means the container does not claim Kandev runtime identity and the
+    Compose ownership paths may be considered. Any partial, stale, or spoofed
+    runtime identity returns an empty set so it cannot fall back to those less
+    specific heuristics.
+    """
+    if not any(label in labels for label in RUNTIME_IDENTITY_LABELS):
+        return None
+    task_id = str(labels.get("kandev.task_id") or "")
+    session_id = str(labels.get("kandev.session_id") or "")
+    environment_id = str(labels.get("kandev.task_environment_id") or "")
+    container_id = str(info.get("Id") or "")
+    if (
+        labels.get("kandev.managed") != "true"
+        or not task_id
+        or not session_id
+        or not environment_id
+        or not container_id
+    ):
+        return set()
+
+    placeholders = ", ".join("?" for _ in ACTIVE_TASK_SESSION_STATES)
+    environment_placeholders = ", ".join("?" for _ in ACTIVE_TASK_ENVIRONMENT_STATES)
+    executor_placeholders = ", ".join("?" for _ in ACTIVE_EXECUTOR_STATES)
+    row = database.execute(
+        f"""
+        SELECT t.workspace_id
+        FROM tasks t
+        JOIN task_sessions ts
+          ON ts.id = ? AND ts.task_id = t.id
+        JOIN task_environments te
+          ON te.id = ? AND te.task_id = t.id
+        JOIN executors_running er
+          ON er.session_id = ts.id AND er.task_id = t.id
+        WHERE t.id = ? AND t.archived_at IS NULL
+          AND ts.task_environment_id = te.id
+          AND ts.state IN ({placeholders})
+          AND te.status IN ({environment_placeholders})
+          AND te.container_id = ?
+          AND er.status IN ({executor_placeholders})
+          AND er.container_id = ?
+        """,
+        (
+            session_id,
+            environment_id,
+            task_id,
+            *sorted(ACTIVE_TASK_SESSION_STATES),
+            *sorted(ACTIVE_TASK_ENVIRONMENT_STATES),
+            container_id,
+            *sorted(ACTIVE_EXECUTOR_STATES),
+            container_id,
+        ),
+    ).fetchone()
+    return {str(row["workspace_id"])} if row else set()
+
+
 def container_workspace_ids(info: dict[str, Any]) -> set[str]:
     labels = (info.get("Config") or {}).get("Labels") or {}
     workspace_ids: set[str] = set()
@@ -761,6 +830,9 @@ def container_workspace_ids(info: dict[str, Any]) -> set[str]:
     working_dir = container_path_for_host(str(working_dir_raw)) if working_dir_raw else None
 
     with kandev_db() as database:
+        runtime_workspace_ids = registered_runtime_workspace_ids(info, labels, database)
+        if runtime_workspace_ids is not None:
+            return runtime_workspace_ids
         if working_dir and is_within(working_dir, Path("/data/tasks")):
             relative = working_dir.relative_to("/data/tasks")
             if relative.parts:

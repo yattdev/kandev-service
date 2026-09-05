@@ -245,8 +245,17 @@ def main() -> None:
                     id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, archived_at TEXT
                 );
                 CREATE TABLE task_environments (
-                    task_id TEXT NOT NULL, workspace_path TEXT, task_dir_name TEXT,
+                    id TEXT PRIMARY KEY, task_id TEXT NOT NULL, status TEXT NOT NULL,
+                    workspace_path TEXT, container_id TEXT, task_dir_name TEXT,
                     updated_at TEXT
+                );
+                CREATE TABLE task_sessions (
+                    id TEXT PRIMARY KEY, task_id TEXT NOT NULL, state TEXT NOT NULL,
+                    task_environment_id TEXT
+                );
+                CREATE TABLE executors_running (
+                    id TEXT PRIMARY KEY, session_id TEXT NOT NULL UNIQUE,
+                    task_id TEXT NOT NULL, status TEXT NOT NULL, container_id TEXT
                 );
                 CREATE TABLE repositories (
                     id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, local_path TEXT,
@@ -265,26 +274,82 @@ def main() -> None:
                     ("11111111-1111-1111-1111-111111111111", "ws-one"),
                     ("22222222-2222-2222-2222-222222222222", "ws-one"),
                     ("33333333-3333-3333-3333-333333333333", "ws-one"),
+                    ("44444444-4444-4444-4444-444444444444", "ws-two"),
                 ),
             )
             database.executemany(
-                "INSERT INTO task_environments(task_id, workspace_path, task_dir_name) "
-                "VALUES (?, ?, ?)",
+                "INSERT INTO task_environments(id, task_id, status, workspace_path, "
+                "container_id, task_dir_name) VALUES (?, ?, ?, ?, ?, ?)",
                 (
                     (
+                        "env-coordinator",
                         "11111111-1111-1111-1111-111111111111",
+                        "ready",
                         "/data/tasks/coord-task/coordinator",
+                        "",
                         "coord-task",
                     ),
                     (
+                        "env-ordinary",
                         "22222222-2222-2222-2222-222222222222",
+                        "ready",
                         "/data/tasks/ordinary-task/app",
+                        "container-live",
                         "ordinary-task",
                     ),
                     (
+                        "env-target",
                         "33333333-3333-3333-3333-333333333333",
+                        "ready",
                         "/data/tasks/target-task/app",
+                        "",
                         "target-task",
+                    ),
+                    (
+                        "env-other",
+                        "44444444-4444-4444-4444-444444444444",
+                        "ready",
+                        "/data/tasks/other-task/app",
+                        "container-other",
+                        "other-task",
+                    ),
+                ),
+            )
+            database.executemany(
+                "INSERT INTO task_sessions(id, task_id, state, task_environment_id) "
+                "VALUES (?, ?, ?, ?)",
+                (
+                    (
+                        "session-live",
+                        "22222222-2222-2222-2222-222222222222",
+                        "WAITING_FOR_INPUT",
+                        "env-ordinary",
+                    ),
+                    (
+                        "session-other",
+                        "44444444-4444-4444-4444-444444444444",
+                        "RUNNING",
+                        "env-other",
+                    ),
+                ),
+            )
+            database.executemany(
+                "INSERT INTO executors_running(id, session_id, task_id, status, container_id) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    (
+                        "execution-live",
+                        "session-live",
+                        "22222222-2222-2222-2222-222222222222",
+                        "ready",
+                        "container-live",
+                    ),
+                    (
+                        "execution-other",
+                        "session-other",
+                        "44444444-4444-4444-4444-444444444444",
+                        "running",
+                        "container-other",
                     ),
                 ),
             )
@@ -379,6 +444,79 @@ def main() -> None:
         }
         assert "ws-one" in broker.container_workspace_ids(same_workspace_info)
         assert "ws-one" not in broker.container_workspace_ids(other_workspace_info)
+
+        runtime_labels = {
+            "kandev.managed": "true",
+            "kandev.task_id": "22222222-2222-2222-2222-222222222222",
+            "kandev.session_id": "session-live",
+            "kandev.task_environment_id": "env-ordinary",
+        }
+        runtime_info = {"Id": "container-live", "Config": {"Labels": runtime_labels}}
+        assert broker.container_workspace_ids(runtime_info) == {"ws-one"}
+        # Re-reading an existing runtime registration is deterministic and
+        # does not require a second principal or ownership record.
+        assert broker.container_workspace_ids(runtime_info) == {"ws-one"}
+        original_docker_inspect = broker.docker_inspect_container
+        broker.docker_inspect_container = lambda _: runtime_info
+        try:
+            assert broker.require_workspace_container("runtime-live", "ws-one") == runtime_info
+            expect_denied(
+                lambda: broker.require_workspace_container("runtime-live", "ws-two"),
+                "another workspace received a registered task runtime",
+            )
+        finally:
+            broker.docker_inspect_container = original_docker_inspect
+
+        cross_workspace_runtime = {
+            "Id": "container-other",
+            "Config": {
+                "Labels": {
+                    "kandev.managed": "true",
+                    "kandev.task_id": "44444444-4444-4444-4444-444444444444",
+                    "kandev.session_id": "session-other",
+                    "kandev.task_environment_id": "env-other",
+                }
+            },
+        }
+        assert broker.container_workspace_ids(cross_workspace_runtime) == {"ws-two"}
+        assert "ws-one" not in broker.container_workspace_ids(cross_workspace_runtime)
+
+        stale_session_runtime = json.loads(json.dumps(runtime_info))
+        stale_session_runtime["Config"]["Labels"]["kandev.session_id"] = "session-stale"
+        assert broker.container_workspace_ids(stale_session_runtime) == set()
+
+        spoofed_container_runtime = json.loads(json.dumps(runtime_info))
+        spoofed_container_runtime["Id"] = "container-spoofed"
+        assert broker.container_workspace_ids(spoofed_container_runtime) == set()
+
+        incomplete_runtime = json.loads(json.dumps(runtime_info))
+        del incomplete_runtime["Config"]["Labels"]["kandev.task_environment_id"]
+        incomplete_runtime["Config"]["Labels"][
+            "com.docker.compose.project.working_dir"
+        ] = str(base / "app")
+        assert broker.container_workspace_ids(incomplete_runtime) == set()
+
+        with sqlite3.connect(metadata) as database:
+            database.execute(
+                "UPDATE task_sessions SET state = 'COMPLETED' WHERE id = 'session-live'"
+            )
+        assert broker.container_workspace_ids(runtime_info) == set()
+        with sqlite3.connect(metadata) as database:
+            database.execute(
+                "UPDATE task_sessions SET state = 'WAITING_FOR_INPUT' WHERE id = 'session-live'"
+            )
+            database.execute(
+                "UPDATE task_environments SET status = 'stopped' WHERE id = 'env-ordinary'"
+            )
+        assert broker.container_workspace_ids(runtime_info) == set()
+        with sqlite3.connect(metadata) as database:
+            database.execute(
+                "UPDATE task_environments SET status = 'ready' WHERE id = 'env-ordinary'"
+            )
+            database.execute(
+                "UPDATE executors_running SET status = 'stopped' WHERE session_id = 'session-live'"
+            )
+        assert broker.container_workspace_ids(runtime_info) == set()
 
         destination, container_destination = broker.target_task_inbox(
             "33333333-3333-3333-3333-333333333333", "ws-one", "source.sql"
