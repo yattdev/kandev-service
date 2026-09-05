@@ -112,6 +112,17 @@ def main() -> None:
             "privileged service was accepted",
         )
 
+        spoofed_instance_model = json.loads(json.dumps(model))
+        spoofed_instance_model["services"]["app"]["labels"] = {
+            "kandev.instance_id": "another-task-execution"
+        }
+        expect_denied(
+            lambda: broker.validate_model(
+                spoofed_instance_model, repository, task_root, task_root, project
+            ),
+            "agent-selected Kandev execution identity was accepted",
+        )
+
         external_model = json.loads(json.dumps(model))
         external_model["volumes"]["state"] = {"external": True, "name": "production"}
         expect_denied(
@@ -255,7 +266,8 @@ def main() -> None:
                 );
                 CREATE TABLE executors_running (
                     id TEXT PRIMARY KEY, session_id TEXT NOT NULL UNIQUE,
-                    task_id TEXT NOT NULL, status TEXT NOT NULL, container_id TEXT
+                    task_id TEXT NOT NULL, status TEXT NOT NULL, container_id TEXT,
+                    agent_execution_id TEXT
                 );
                 CREATE TABLE repositories (
                     id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, local_path TEXT,
@@ -334,8 +346,8 @@ def main() -> None:
                 ),
             )
             database.executemany(
-                "INSERT INTO executors_running(id, session_id, task_id, status, container_id) "
-                "VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO executors_running(id, session_id, task_id, status, container_id, "
+                "agent_execution_id) VALUES (?, ?, ?, ?, ?, ?)",
                 (
                     (
                         "execution-live",
@@ -343,6 +355,7 @@ def main() -> None:
                         "22222222-2222-2222-2222-222222222222",
                         "ready",
                         "",
+                        "instance-live",
                     ),
                     (
                         "execution-other",
@@ -350,6 +363,7 @@ def main() -> None:
                         "44444444-4444-4444-4444-444444444444",
                         "running",
                         "",
+                        "instance-other",
                     ),
                 ),
             )
@@ -468,6 +482,25 @@ def main() -> None:
         # Re-reading an existing runtime registration is deterministic and
         # does not require a second principal or ownership record.
         assert broker.container_workspace_ids(runtime_info) == {"ws-one"}
+
+        # Canonical Docker executors clone inside /workspace and deliberately
+        # have no host workspace bind. Their backend-issued instance label is
+        # still an exact binding to executors_running.agent_execution_id.
+        clone_inside_runtime = json.loads(json.dumps(runtime_info))
+        clone_inside_runtime["Config"]["Labels"]["kandev.instance_id"] = "instance-live"
+        clone_inside_runtime["Mounts"] = []
+        assert broker.container_workspace_ids(clone_inside_runtime) == {"ws-one"}
+
+        wrong_instance_runtime = json.loads(json.dumps(clone_inside_runtime))
+        wrong_instance_runtime["Config"]["Labels"]["kandev.instance_id"] = "instance-wrong"
+        assert broker.container_workspace_ids(wrong_instance_runtime) == set()
+
+        # A WorkingDir string is agent-controlled and cannot substitute for an
+        # inspected bind source when all durable container IDs are empty.
+        forged_unmounted_runtime = json.loads(json.dumps(runtime_info))
+        forged_unmounted_runtime["Config"]["WorkingDir"] = "/data/tasks/ordinary-task"
+        forged_unmounted_runtime["Mounts"] = []
+        assert broker.container_workspace_ids(forged_unmounted_runtime) == set()
         original_docker_inspect = broker.docker_inspect_container
         broker.docker_inspect_container = lambda _: runtime_info
         try:
@@ -559,6 +592,9 @@ def main() -> None:
                 "WHERE id = 'env-ordinary'"
             )
         assert broker.container_workspace_ids(runtime_info) == {"ws-one"}
+        exact_id_clone_inside_runtime = json.loads(json.dumps(runtime_info))
+        exact_id_clone_inside_runtime["Mounts"] = []
+        assert broker.container_workspace_ids(exact_id_clone_inside_runtime) == {"ws-one"}
         with sqlite3.connect(metadata) as database:
             database.execute(
                 "UPDATE executors_running SET container_id = 'container-wrong' "
@@ -617,9 +653,10 @@ def main() -> None:
         assert broker.container_workspace_ids(runtime_info) == set()
         with sqlite3.connect(metadata) as database:
             database.execute(
-                "INSERT INTO executors_running(id, session_id, task_id, status, container_id) "
-                "VALUES ('execution-restored', 'session-live', "
-                "'22222222-2222-2222-2222-222222222222', 'ready', 'container-live')"
+                "INSERT INTO executors_running(id, session_id, task_id, status, container_id, "
+                "agent_execution_id) VALUES ('execution-restored', 'session-live', "
+                "'22222222-2222-2222-2222-222222222222', 'ready', 'container-live', "
+                "'instance-live')"
             )
             database.execute("DELETE FROM task_environments WHERE id = 'env-ordinary'")
         assert broker.container_workspace_ids(runtime_info) == set()

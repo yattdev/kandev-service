@@ -509,8 +509,12 @@ def validate_model(
                 raise BrokerError(f"Compose service {service_name} uses forbidden security_opt: {option}")
         labels = service.get("labels") or {}
         label_names = labels.keys() if isinstance(labels, dict) else (str(item).split("=", 1)[0] for item in labels)
-        if any(str(name).startswith("com.docker.compose.") for name in label_names):
-            raise BrokerError(f"Compose service {service_name} overrides reserved project labels")
+        if any(
+            str(name).startswith("com.docker.compose.")
+            or str(name) == "kandev.instance_id"
+            for name in label_names
+        ):
+            raise BrokerError(f"Compose service {service_name} overrides reserved ownership labels")
 
         build = service.get("build")
         if isinstance(build, str):
@@ -769,7 +773,12 @@ def container_path_for_host(path: str) -> Path | None:
 
 
 def inspected_container_working_dir(info: dict[str, Any]) -> Path | None:
-    """Translate a container working directory through its inspected bind mount."""
+    """Translate a container working directory through its inspected bind mount.
+
+    The in-container working-directory string is not ownership evidence on its
+    own: a guarded Compose service may select an arbitrary directory. Only a
+    Docker-inspected bind source can establish the corresponding host path.
+    """
     config = info.get("Config") or {}
     working_dir_raw = str(config.get("WorkingDir") or "")
     if not working_dir_raw:
@@ -802,7 +811,7 @@ def inspected_container_working_dir(info: dict[str, Any]) -> Path | None:
             best_match = (depth, translated)
     if best_match is not None:
         return best_match[1]
-    return container_path_for_host(str(working_dir))
+    return None
 
 
 def registered_runtime_workspace_ids(
@@ -820,6 +829,7 @@ def registered_runtime_workspace_ids(
     task_id = str(labels.get("kandev.task_id") or "")
     session_id = str(labels.get("kandev.session_id") or "")
     environment_id = str(labels.get("kandev.task_environment_id") or "")
+    instance_id = str(labels.get("kandev.instance_id") or "")
     # A partial label set is not authoritative enough to revoke an otherwise
     # valid trusted Compose/workdir association. Once all identity labels are
     # present, however, a stale or conflicting claim must fail closed.
@@ -827,7 +837,7 @@ def registered_runtime_workspace_ids(
         return None
     container_id = str(info.get("Id") or "")
     working_dir = inspected_container_working_dir(info)
-    if labels.get("kandev.managed") != "true" or not container_id or working_dir is None:
+    if labels.get("kandev.managed") != "true" or not container_id:
         return set()
 
     placeholders = ", ".join("?" for _ in ACTIVE_TASK_SESSION_STATES)
@@ -837,7 +847,8 @@ def registered_runtime_workspace_ids(
         f"""
         SELECT t.workspace_id, te.workspace_path, te.task_dir_name,
                te.container_id AS environment_container_id,
-               er.container_id AS executor_container_id
+               er.container_id AS executor_container_id,
+               er.agent_execution_id
         FROM tasks t
         JOIN task_sessions ts
           ON ts.id = ? AND ts.task_id = t.id
@@ -862,10 +873,18 @@ def registered_runtime_workspace_ids(
     ).fetchone()
     if row is None:
         return set()
+    persisted_instance_id = str(row["agent_execution_id"] or "")
+    if instance_id and instance_id != persisted_instance_id:
+        return set()
+
+    exact_container_binding = False
     for column in ("environment_container_id", "executor_container_id"):
         persisted_container_id = str(row[column] or "")
         if persisted_container_id and persisted_container_id != container_id:
             return set()
+        if persisted_container_id == container_id:
+            exact_container_binding = True
+    exact_instance_binding = bool(instance_id and instance_id == persisted_instance_id)
 
     roots: list[Path] = []
     workspace_path_raw = str(row["workspace_path"] or "")
@@ -876,7 +895,10 @@ def registered_runtime_workspace_ids(
     task_dir_name = str(row["task_dir_name"] or "")
     if TASK_DIR_RE.fullmatch(task_dir_name):
         roots.append(Path("/data/tasks") / task_dir_name)
-    if not any(working_dir == root or is_within(working_dir, root) for root in roots):
+    path_binding = working_dir is not None and any(
+        working_dir == root or is_within(working_dir, root) for root in roots
+    )
+    if not (exact_container_binding or exact_instance_binding or path_binding):
         return set()
     return {str(row["workspace_id"])}
 
