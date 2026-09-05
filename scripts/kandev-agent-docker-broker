@@ -745,11 +745,14 @@ def coordinator_context(task_root: Path) -> dict[str, str]:
 
 
 def container_path_for_host(path: str) -> Path | None:
-    candidate = Path(path)
+    candidate = Path(os.path.normpath(path))
+    if not candidate.is_absolute():
+        return None
     mappings = [
         (os.environ.get("KANDEV_HOST_CODE_DIR", ""), Path("/data/home/Code")),
         (os.environ.get("KANDEV_HOST_DATA_DIR", ""), Path("/data")),
     ]
+    matches: list[tuple[int, Path]] = []
     for host_prefix, container_prefix in mappings:
         if not host_prefix:
             continue
@@ -757,10 +760,49 @@ def container_path_for_host(path: str) -> Path | None:
             relative = candidate.relative_to(Path(host_prefix))
         except ValueError:
             continue
-        return container_prefix / relative
+        matches.append((len(Path(host_prefix).parts), container_prefix / relative))
+    if matches:
+        return max(matches, key=lambda item: item[0])[1]
     if candidate == Path("/data") or is_within(candidate, Path("/data")):
         return candidate
     return None
+
+
+def inspected_container_working_dir(info: dict[str, Any]) -> Path | None:
+    """Translate a container working directory through its inspected bind mount."""
+    config = info.get("Config") or {}
+    working_dir_raw = str(config.get("WorkingDir") or "")
+    if not working_dir_raw:
+        return None
+    working_dir = Path(os.path.normpath(working_dir_raw))
+    if not working_dir.is_absolute():
+        return None
+
+    best_match: tuple[int, Path] | None = None
+    for mount in info.get("Mounts") or []:
+        if not isinstance(mount, dict) or mount.get("Type") != "bind":
+            continue
+        source_raw = str(mount.get("Source") or "")
+        destination_raw = str(mount.get("Destination") or "")
+        if not source_raw or not destination_raw:
+            continue
+        source = Path(os.path.normpath(source_raw))
+        destination = Path(os.path.normpath(destination_raw))
+        if not source.is_absolute() or not destination.is_absolute():
+            continue
+        try:
+            relative = working_dir.relative_to(destination)
+        except ValueError:
+            continue
+        translated = container_path_for_host(str(source / relative))
+        if translated is None:
+            continue
+        depth = len(destination.parts)
+        if best_match is None or depth > best_match[0]:
+            best_match = (depth, translated)
+    if best_match is not None:
+        return best_match[1]
+    return container_path_for_host(str(working_dir))
 
 
 def registered_runtime_workspace_ids(
@@ -768,24 +810,24 @@ def registered_runtime_workspace_ids(
 ) -> set[str] | None:
     """Resolve one backend-managed runtime through its live DB registration.
 
-    ``None`` means the container does not claim Kandev runtime identity and the
-    Compose ownership paths may be considered. Any partial, stale, or spoofed
-    runtime identity returns an empty set so it cannot fall back to those less
-    specific heuristics.
+    ``None`` means the container has no complete Kandev runtime identity, so an
+    independently trusted Compose ownership path may still be considered. A
+    complete but stale, conflicting, or spoofed identity returns an empty set
+    and cannot fall back to those less specific heuristics.
     """
     if not any(label in labels for label in RUNTIME_IDENTITY_LABELS):
         return None
     task_id = str(labels.get("kandev.task_id") or "")
     session_id = str(labels.get("kandev.session_id") or "")
     environment_id = str(labels.get("kandev.task_environment_id") or "")
+    # A partial label set is not authoritative enough to revoke an otherwise
+    # valid trusted Compose/workdir association. Once all identity labels are
+    # present, however, a stale or conflicting claim must fail closed.
+    if not task_id or not session_id or not environment_id:
+        return None
     container_id = str(info.get("Id") or "")
-    if (
-        labels.get("kandev.managed") != "true"
-        or not task_id
-        or not session_id
-        or not environment_id
-        or not container_id
-    ):
+    working_dir = inspected_container_working_dir(info)
+    if labels.get("kandev.managed") != "true" or not container_id or working_dir is None:
         return set()
 
     placeholders = ", ".join("?" for _ in ACTIVE_TASK_SESSION_STATES)
@@ -793,7 +835,9 @@ def registered_runtime_workspace_ids(
     executor_placeholders = ", ".join("?" for _ in ACTIVE_EXECUTOR_STATES)
     row = database.execute(
         f"""
-        SELECT t.workspace_id
+        SELECT t.workspace_id, te.workspace_path, te.task_dir_name,
+               te.container_id AS environment_container_id,
+               er.container_id AS executor_container_id
         FROM tasks t
         JOIN task_sessions ts
           ON ts.id = ? AND ts.task_id = t.id
@@ -805,9 +849,7 @@ def registered_runtime_workspace_ids(
           AND ts.task_environment_id = te.id
           AND ts.state IN ({placeholders})
           AND te.status IN ({environment_placeholders})
-          AND te.container_id = ?
           AND er.status IN ({executor_placeholders})
-          AND er.container_id = ?
         """,
         (
             session_id,
@@ -815,12 +857,28 @@ def registered_runtime_workspace_ids(
             task_id,
             *sorted(ACTIVE_TASK_SESSION_STATES),
             *sorted(ACTIVE_TASK_ENVIRONMENT_STATES),
-            container_id,
             *sorted(ACTIVE_EXECUTOR_STATES),
-            container_id,
         ),
     ).fetchone()
-    return {str(row["workspace_id"])} if row else set()
+    if row is None:
+        return set()
+    for column in ("environment_container_id", "executor_container_id"):
+        persisted_container_id = str(row[column] or "")
+        if persisted_container_id and persisted_container_id != container_id:
+            return set()
+
+    roots: list[Path] = []
+    workspace_path_raw = str(row["workspace_path"] or "")
+    if workspace_path_raw:
+        workspace_path = container_path_for_host(workspace_path_raw)
+        if workspace_path is not None:
+            roots.append(workspace_path)
+    task_dir_name = str(row["task_dir_name"] or "")
+    if TASK_DIR_RE.fullmatch(task_dir_name):
+        roots.append(Path("/data/tasks") / task_dir_name)
+    if not any(working_dir == root or is_within(working_dir, root) for root in roots):
+        return set()
+    return {str(row["workspace_id"])}
 
 
 def container_workspace_ids(info: dict[str, Any]) -> set[str]:

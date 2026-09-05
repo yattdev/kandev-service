@@ -294,7 +294,7 @@ def main() -> None:
                         "22222222-2222-2222-2222-222222222222",
                         "ready",
                         "/data/tasks/ordinary-task/app",
-                        "container-live",
+                        "",
                         "ordinary-task",
                     ),
                     (
@@ -310,7 +310,7 @@ def main() -> None:
                         "44444444-4444-4444-4444-444444444444",
                         "ready",
                         "/data/tasks/other-task/app",
-                        "container-other",
+                        "",
                         "other-task",
                     ),
                 ),
@@ -342,14 +342,14 @@ def main() -> None:
                         "session-live",
                         "22222222-2222-2222-2222-222222222222",
                         "ready",
-                        "container-live",
+                        "",
                     ),
                     (
                         "execution-other",
                         "session-other",
                         "44444444-4444-4444-4444-444444444444",
                         "running",
-                        "container-other",
+                        "",
                     ),
                 ),
             )
@@ -455,7 +455,14 @@ def main() -> None:
             "Id": "container-live",
             "Name": "/runtime-live",
             "State": {"Status": "running"},
-            "Config": {"Labels": runtime_labels},
+            "Config": {"Labels": runtime_labels, "WorkingDir": "/workspace"},
+            "Mounts": [
+                {
+                    "Type": "bind",
+                    "Source": str(data_root / "tasks" / "ordinary-task" / "app"),
+                    "Destination": "/workspace",
+                }
+            ],
         }
         assert broker.container_workspace_ids(runtime_info) == {"ws-one"}
         # Re-reading an existing runtime registration is deterministic and
@@ -480,8 +487,16 @@ def main() -> None:
                     "kandev.task_id": "44444444-4444-4444-4444-444444444444",
                     "kandev.session_id": "session-other",
                     "kandev.task_environment_id": "env-other",
-                }
+                },
+                "WorkingDir": "/workspace",
             },
+            "Mounts": [
+                {
+                    "Type": "bind",
+                    "Source": str(data_root / "tasks" / "other-task" / "app"),
+                    "Destination": "/workspace",
+                }
+            ],
         }
         assert broker.container_workspace_ids(cross_workspace_runtime) == {"ws-two"}
         assert "ws-one" not in broker.container_workspace_ids(cross_workspace_runtime)
@@ -508,18 +523,70 @@ def main() -> None:
 
         stale_session_runtime = json.loads(json.dumps(runtime_info))
         stale_session_runtime["Config"]["Labels"]["kandev.session_id"] = "session-stale"
+        stale_session_runtime["Config"]["Labels"][
+            "com.docker.compose.project.working_dir"
+        ] = str(base / "app")
         assert broker.container_workspace_ids(stale_session_runtime) == set()
 
-        spoofed_container_runtime = json.loads(json.dumps(runtime_info))
-        spoofed_container_runtime["Id"] = "container-spoofed"
-        assert broker.container_workspace_ids(spoofed_container_runtime) == set()
+        wrong_path_runtime = json.loads(json.dumps(runtime_info))
+        wrong_path_runtime["Mounts"][0]["Source"] = str(
+            data_root / "tasks" / "other-task" / "app"
+        )
+        wrong_path_runtime["Config"]["Labels"][
+            "com.docker.compose.project.working_dir"
+        ] = str(base / "app")
+        assert broker.container_workspace_ids(wrong_path_runtime) == set()
 
         incomplete_runtime = json.loads(json.dumps(runtime_info))
         del incomplete_runtime["Config"]["Labels"]["kandev.task_environment_id"]
         incomplete_runtime["Config"]["Labels"][
             "com.docker.compose.project.working_dir"
         ] = str(base / "app")
-        assert broker.container_workspace_ids(incomplete_runtime) == set()
+        assert broker.container_workspace_ids(incomplete_runtime) == {"ws-one"}
+
+        # Empty persisted IDs are the deployed shape. Once either source gains
+        # an ID, it becomes an additional exact constraint without weakening
+        # the authoritative identity/path binding.
+        with sqlite3.connect(metadata) as database:
+            database.execute(
+                "UPDATE task_environments SET container_id = 'container-wrong' "
+                "WHERE id = 'env-ordinary'"
+            )
+        assert broker.container_workspace_ids(runtime_info) == set()
+        with sqlite3.connect(metadata) as database:
+            database.execute(
+                "UPDATE task_environments SET container_id = 'container-live' "
+                "WHERE id = 'env-ordinary'"
+            )
+        assert broker.container_workspace_ids(runtime_info) == {"ws-one"}
+        with sqlite3.connect(metadata) as database:
+            database.execute(
+                "UPDATE executors_running SET container_id = 'container-wrong' "
+                "WHERE session_id = 'session-live'"
+            )
+        assert broker.container_workspace_ids(runtime_info) == set()
+        with sqlite3.connect(metadata) as database:
+            database.execute(
+                "UPDATE executors_running SET container_id = 'container-live' "
+                "WHERE session_id = 'session-live'"
+            )
+        assert broker.container_workspace_ids(runtime_info) == {"ws-one"}
+
+        spoofed_container_runtime = json.loads(json.dumps(runtime_info))
+        spoofed_container_runtime["Id"] = "container-spoofed"
+        assert broker.container_workspace_ids(spoofed_container_runtime) == set()
+
+        with sqlite3.connect(metadata) as database:
+            database.execute(
+                "UPDATE tasks SET archived_at = '2026-09-05T00:00:00Z' "
+                "WHERE id = '22222222-2222-2222-2222-222222222222'"
+            )
+        assert broker.container_workspace_ids(runtime_info) == set()
+        with sqlite3.connect(metadata) as database:
+            database.execute(
+                "UPDATE tasks SET archived_at = NULL "
+                "WHERE id = '22222222-2222-2222-2222-222222222222'"
+            )
 
         with sqlite3.connect(metadata) as database:
             database.execute(
@@ -543,7 +610,18 @@ def main() -> None:
             )
         assert broker.container_workspace_ids(runtime_info) == set()
         with sqlite3.connect(metadata) as database:
+            database.execute(
+                "UPDATE executors_running SET status = 'ready' WHERE session_id = 'session-live'"
+            )
             database.execute("DELETE FROM executors_running WHERE session_id = 'session-live'")
+        assert broker.container_workspace_ids(runtime_info) == set()
+        with sqlite3.connect(metadata) as database:
+            database.execute(
+                "INSERT INTO executors_running(id, session_id, task_id, status, container_id) "
+                "VALUES ('execution-restored', 'session-live', "
+                "'22222222-2222-2222-2222-222222222222', 'ready', 'container-live')"
+            )
+            database.execute("DELETE FROM task_environments WHERE id = 'env-ordinary'")
         assert broker.container_workspace_ids(runtime_info) == set()
 
         destination, container_destination = broker.target_task_inbox(
