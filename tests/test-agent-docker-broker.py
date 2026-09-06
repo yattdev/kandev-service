@@ -112,6 +112,17 @@ def main() -> None:
             "privileged service was accepted",
         )
 
+        spoofed_instance_model = json.loads(json.dumps(model))
+        spoofed_instance_model["services"]["app"]["labels"] = {
+            "kandev.instance_id": "another-task-execution"
+        }
+        expect_denied(
+            lambda: broker.validate_model(
+                spoofed_instance_model, repository, task_root, task_root, project
+            ),
+            "agent-selected Kandev execution identity was accepted",
+        )
+
         external_model = json.loads(json.dumps(model))
         external_model["volumes"]["state"] = {"external": True, "name": "production"}
         expect_denied(
@@ -245,8 +256,18 @@ def main() -> None:
                     id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, archived_at TEXT
                 );
                 CREATE TABLE task_environments (
-                    task_id TEXT NOT NULL, workspace_path TEXT, task_dir_name TEXT,
+                    id TEXT PRIMARY KEY, task_id TEXT NOT NULL, status TEXT NOT NULL,
+                    workspace_path TEXT, container_id TEXT, task_dir_name TEXT,
                     updated_at TEXT
+                );
+                CREATE TABLE task_sessions (
+                    id TEXT PRIMARY KEY, task_id TEXT NOT NULL, state TEXT NOT NULL,
+                    task_environment_id TEXT
+                );
+                CREATE TABLE executors_running (
+                    id TEXT PRIMARY KEY, session_id TEXT NOT NULL UNIQUE,
+                    task_id TEXT NOT NULL, status TEXT NOT NULL, container_id TEXT,
+                    agent_execution_id TEXT
                 );
                 CREATE TABLE repositories (
                     id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, local_path TEXT,
@@ -265,26 +286,84 @@ def main() -> None:
                     ("11111111-1111-1111-1111-111111111111", "ws-one"),
                     ("22222222-2222-2222-2222-222222222222", "ws-one"),
                     ("33333333-3333-3333-3333-333333333333", "ws-one"),
+                    ("44444444-4444-4444-4444-444444444444", "ws-two"),
                 ),
             )
             database.executemany(
-                "INSERT INTO task_environments(task_id, workspace_path, task_dir_name) "
-                "VALUES (?, ?, ?)",
+                "INSERT INTO task_environments(id, task_id, status, workspace_path, "
+                "container_id, task_dir_name) VALUES (?, ?, ?, ?, ?, ?)",
                 (
                     (
+                        "env-coordinator",
                         "11111111-1111-1111-1111-111111111111",
+                        "ready",
                         "/data/tasks/coord-task/coordinator",
+                        "",
                         "coord-task",
                     ),
                     (
+                        "env-ordinary",
                         "22222222-2222-2222-2222-222222222222",
+                        "ready",
                         "/data/tasks/ordinary-task/app",
+                        "",
                         "ordinary-task",
                     ),
                     (
+                        "env-target",
                         "33333333-3333-3333-3333-333333333333",
+                        "ready",
                         "/data/tasks/target-task/app",
+                        "",
                         "target-task",
+                    ),
+                    (
+                        "env-other",
+                        "44444444-4444-4444-4444-444444444444",
+                        "ready",
+                        "/data/tasks/other-task/app",
+                        "",
+                        "other-task",
+                    ),
+                ),
+            )
+            database.executemany(
+                "INSERT INTO task_sessions(id, task_id, state, task_environment_id) "
+                "VALUES (?, ?, ?, ?)",
+                (
+                    (
+                        "session-live",
+                        "22222222-2222-2222-2222-222222222222",
+                        "WAITING_FOR_INPUT",
+                        "env-ordinary",
+                    ),
+                    (
+                        "session-other",
+                        "44444444-4444-4444-4444-444444444444",
+                        "RUNNING",
+                        "env-other",
+                    ),
+                ),
+            )
+            database.executemany(
+                "INSERT INTO executors_running(id, session_id, task_id, status, container_id, "
+                "agent_execution_id) VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    (
+                        "execution-live",
+                        "session-live",
+                        "22222222-2222-2222-2222-222222222222",
+                        "ready",
+                        "",
+                        "instance-live",
+                    ),
+                    (
+                        "execution-other",
+                        "session-other",
+                        "44444444-4444-4444-4444-444444444444",
+                        "running",
+                        "",
+                        "instance-other",
                     ),
                 ),
             )
@@ -379,6 +458,208 @@ def main() -> None:
         }
         assert "ws-one" in broker.container_workspace_ids(same_workspace_info)
         assert "ws-one" not in broker.container_workspace_ids(other_workspace_info)
+
+        runtime_labels = {
+            "kandev.managed": "true",
+            "kandev.task_id": "22222222-2222-2222-2222-222222222222",
+            "kandev.session_id": "session-live",
+            "kandev.task_environment_id": "env-ordinary",
+        }
+        runtime_info = {
+            "Id": "container-live",
+            "Name": "/runtime-live",
+            "State": {"Status": "running"},
+            "Config": {"Labels": runtime_labels, "WorkingDir": "/workspace"},
+            "Mounts": [
+                {
+                    "Type": "bind",
+                    "Source": str(data_root / "tasks" / "ordinary-task" / "app"),
+                    "Destination": "/workspace",
+                }
+            ],
+        }
+        assert broker.container_workspace_ids(runtime_info) == {"ws-one"}
+        # Re-reading an existing runtime registration is deterministic and
+        # does not require a second principal or ownership record.
+        assert broker.container_workspace_ids(runtime_info) == {"ws-one"}
+
+        # Canonical Docker executors clone inside /workspace and deliberately
+        # have no host workspace bind. Their backend-issued instance label is
+        # still an exact binding to executors_running.agent_execution_id.
+        clone_inside_runtime = json.loads(json.dumps(runtime_info))
+        clone_inside_runtime["Config"]["Labels"]["kandev.instance_id"] = "instance-live"
+        clone_inside_runtime["Mounts"] = []
+        assert broker.container_workspace_ids(clone_inside_runtime) == {"ws-one"}
+
+        wrong_instance_runtime = json.loads(json.dumps(clone_inside_runtime))
+        wrong_instance_runtime["Config"]["Labels"]["kandev.instance_id"] = "instance-wrong"
+        assert broker.container_workspace_ids(wrong_instance_runtime) == set()
+
+        # A WorkingDir string is agent-controlled and cannot substitute for an
+        # inspected bind source when all durable container IDs are empty.
+        forged_unmounted_runtime = json.loads(json.dumps(runtime_info))
+        forged_unmounted_runtime["Config"]["WorkingDir"] = "/data/tasks/ordinary-task"
+        forged_unmounted_runtime["Mounts"] = []
+        assert broker.container_workspace_ids(forged_unmounted_runtime) == set()
+        original_docker_inspect = broker.docker_inspect_container
+        broker.docker_inspect_container = lambda _: runtime_info
+        try:
+            assert broker.require_workspace_container("runtime-live", "ws-one") == runtime_info
+            expect_denied(
+                lambda: broker.require_workspace_container("runtime-live", "ws-two"),
+                "another workspace received a registered task runtime",
+            )
+        finally:
+            broker.docker_inspect_container = original_docker_inspect
+
+        cross_workspace_runtime = {
+            "Id": "container-other",
+            "Config": {
+                "Labels": {
+                    "kandev.managed": "true",
+                    "kandev.task_id": "44444444-4444-4444-4444-444444444444",
+                    "kandev.session_id": "session-other",
+                    "kandev.task_environment_id": "env-other",
+                },
+                "WorkingDir": "/workspace",
+            },
+            "Mounts": [
+                {
+                    "Type": "bind",
+                    "Source": str(data_root / "tasks" / "other-task" / "app"),
+                    "Destination": "/workspace",
+                }
+            ],
+        }
+        assert broker.container_workspace_ids(cross_workspace_runtime) == {"ws-two"}
+        assert "ws-one" not in broker.container_workspace_ids(cross_workspace_runtime)
+
+        original_run_command = broker.run_command
+
+        def fake_container_listing(
+            args, cwd, timeout=broker.COMMAND_TIMEOUT, environment_overrides=None
+        ):
+            if args == [broker.DOCKER_BIN, "container", "ls", "--all", "--quiet"]:
+                return 0, "container-live\ncontainer-other\n", ""
+            if args[:4] == [broker.DOCKER_BIN, "inspect", "--type", "container"]:
+                return 0, json.dumps([runtime_info, cross_workspace_runtime]), ""
+            raise AssertionError(f"unexpected source-list command: {args}")
+
+        broker.run_command = fake_container_listing
+        try:
+            visible = broker.list_workspace_containers("ws-one")
+        finally:
+            broker.run_command = original_run_command
+        assert len(visible) == 1
+        assert visible[0]["name"] == "runtime-live"
+        assert visible[0]["id"] == "container-li"
+
+        stale_session_runtime = json.loads(json.dumps(runtime_info))
+        stale_session_runtime["Config"]["Labels"]["kandev.session_id"] = "session-stale"
+        stale_session_runtime["Config"]["Labels"][
+            "com.docker.compose.project.working_dir"
+        ] = str(base / "app")
+        assert broker.container_workspace_ids(stale_session_runtime) == set()
+
+        wrong_path_runtime = json.loads(json.dumps(runtime_info))
+        wrong_path_runtime["Mounts"][0]["Source"] = str(
+            data_root / "tasks" / "other-task" / "app"
+        )
+        wrong_path_runtime["Config"]["Labels"][
+            "com.docker.compose.project.working_dir"
+        ] = str(base / "app")
+        assert broker.container_workspace_ids(wrong_path_runtime) == set()
+
+        incomplete_runtime = json.loads(json.dumps(runtime_info))
+        del incomplete_runtime["Config"]["Labels"]["kandev.task_environment_id"]
+        incomplete_runtime["Config"]["Labels"][
+            "com.docker.compose.project.working_dir"
+        ] = str(base / "app")
+        assert broker.container_workspace_ids(incomplete_runtime) == {"ws-one"}
+
+        # Empty persisted IDs are the deployed shape. Once either source gains
+        # an ID, it becomes an additional exact constraint without weakening
+        # the authoritative identity/path binding.
+        with sqlite3.connect(metadata) as database:
+            database.execute(
+                "UPDATE task_environments SET container_id = 'container-wrong' "
+                "WHERE id = 'env-ordinary'"
+            )
+        assert broker.container_workspace_ids(runtime_info) == set()
+        with sqlite3.connect(metadata) as database:
+            database.execute(
+                "UPDATE task_environments SET container_id = 'container-live' "
+                "WHERE id = 'env-ordinary'"
+            )
+        assert broker.container_workspace_ids(runtime_info) == {"ws-one"}
+        exact_id_clone_inside_runtime = json.loads(json.dumps(runtime_info))
+        exact_id_clone_inside_runtime["Mounts"] = []
+        assert broker.container_workspace_ids(exact_id_clone_inside_runtime) == {"ws-one"}
+        with sqlite3.connect(metadata) as database:
+            database.execute(
+                "UPDATE executors_running SET container_id = 'container-wrong' "
+                "WHERE session_id = 'session-live'"
+            )
+        assert broker.container_workspace_ids(runtime_info) == set()
+        with sqlite3.connect(metadata) as database:
+            database.execute(
+                "UPDATE executors_running SET container_id = 'container-live' "
+                "WHERE session_id = 'session-live'"
+            )
+        assert broker.container_workspace_ids(runtime_info) == {"ws-one"}
+
+        spoofed_container_runtime = json.loads(json.dumps(runtime_info))
+        spoofed_container_runtime["Id"] = "container-spoofed"
+        assert broker.container_workspace_ids(spoofed_container_runtime) == set()
+
+        with sqlite3.connect(metadata) as database:
+            database.execute(
+                "UPDATE tasks SET archived_at = '2026-09-05T00:00:00Z' "
+                "WHERE id = '22222222-2222-2222-2222-222222222222'"
+            )
+        assert broker.container_workspace_ids(runtime_info) == set()
+        with sqlite3.connect(metadata) as database:
+            database.execute(
+                "UPDATE tasks SET archived_at = NULL "
+                "WHERE id = '22222222-2222-2222-2222-222222222222'"
+            )
+
+        with sqlite3.connect(metadata) as database:
+            database.execute(
+                "UPDATE task_sessions SET state = 'COMPLETED' WHERE id = 'session-live'"
+            )
+        assert broker.container_workspace_ids(runtime_info) == set()
+        with sqlite3.connect(metadata) as database:
+            database.execute(
+                "UPDATE task_sessions SET state = 'WAITING_FOR_INPUT' WHERE id = 'session-live'"
+            )
+            database.execute(
+                "UPDATE task_environments SET status = 'stopped' WHERE id = 'env-ordinary'"
+            )
+        assert broker.container_workspace_ids(runtime_info) == set()
+        with sqlite3.connect(metadata) as database:
+            database.execute(
+                "UPDATE task_environments SET status = 'ready' WHERE id = 'env-ordinary'"
+            )
+            database.execute(
+                "UPDATE executors_running SET status = 'stopped' WHERE session_id = 'session-live'"
+            )
+        assert broker.container_workspace_ids(runtime_info) == set()
+        with sqlite3.connect(metadata) as database:
+            database.execute(
+                "UPDATE executors_running SET status = 'ready' WHERE session_id = 'session-live'"
+            )
+            database.execute("DELETE FROM executors_running WHERE session_id = 'session-live'")
+        assert broker.container_workspace_ids(runtime_info) == set()
+        with sqlite3.connect(metadata) as database:
+            database.execute(
+                "INSERT INTO executors_running(id, session_id, task_id, status, container_id, "
+                "agent_execution_id) VALUES ('execution-restored', 'session-live', "
+                "'22222222-2222-2222-2222-222222222222', 'ready', 'container-live', "
+                "'instance-live')"
+            )
+            database.execute("DELETE FROM task_environments WHERE id = 'env-ordinary'")
+        assert broker.container_workspace_ids(runtime_info) == set()
 
         destination, container_destination = broker.target_task_inbox(
             "33333333-3333-3333-3333-333333333333", "ws-one", "source.sql"

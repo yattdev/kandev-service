@@ -73,6 +73,15 @@ COMPOSE_PROJECT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 STATIC_BACKUP_NAME = "last_db.sql"
 AUDIT_LOCK = threading.Lock()
 EXPORT_LOCK = threading.Lock()
+ACTIVE_TASK_SESSION_STATES = {"CREATED", "STARTING", "RUNNING", "WAITING_FOR_INPUT"}
+ACTIVE_TASK_ENVIRONMENT_STATES = {"creating", "ready"}
+ACTIVE_EXECUTOR_STATES = {"starting", "prepared", "running", "ready"}
+RUNTIME_IDENTITY_LABELS = {
+    "kandev.managed",
+    "kandev.task_id",
+    "kandev.session_id",
+    "kandev.task_environment_id",
+}
 
 COMPOSE_VALUE_OPTIONS = {
     "-f",
@@ -500,8 +509,12 @@ def validate_model(
                 raise BrokerError(f"Compose service {service_name} uses forbidden security_opt: {option}")
         labels = service.get("labels") or {}
         label_names = labels.keys() if isinstance(labels, dict) else (str(item).split("=", 1)[0] for item in labels)
-        if any(str(name).startswith("com.docker.compose.") for name in label_names):
-            raise BrokerError(f"Compose service {service_name} overrides reserved project labels")
+        if any(
+            str(name).startswith("com.docker.compose.")
+            or str(name) == "kandev.instance_id"
+            for name in label_names
+        ):
+            raise BrokerError(f"Compose service {service_name} overrides reserved ownership labels")
 
         build = service.get("build")
         if isinstance(build, str):
@@ -736,11 +749,14 @@ def coordinator_context(task_root: Path) -> dict[str, str]:
 
 
 def container_path_for_host(path: str) -> Path | None:
-    candidate = Path(path)
+    candidate = Path(os.path.normpath(path))
+    if not candidate.is_absolute():
+        return None
     mappings = [
         (os.environ.get("KANDEV_HOST_CODE_DIR", ""), Path("/data/home/Code")),
         (os.environ.get("KANDEV_HOST_DATA_DIR", ""), Path("/data")),
     ]
+    matches: list[tuple[int, Path]] = []
     for host_prefix, container_prefix in mappings:
         if not host_prefix:
             continue
@@ -748,10 +764,143 @@ def container_path_for_host(path: str) -> Path | None:
             relative = candidate.relative_to(Path(host_prefix))
         except ValueError:
             continue
-        return container_prefix / relative
+        matches.append((len(Path(host_prefix).parts), container_prefix / relative))
+    if matches:
+        return max(matches, key=lambda item: item[0])[1]
     if candidate == Path("/data") or is_within(candidate, Path("/data")):
         return candidate
     return None
+
+
+def inspected_container_working_dir(info: dict[str, Any]) -> Path | None:
+    """Translate a container working directory through its inspected bind mount.
+
+    The in-container working-directory string is not ownership evidence on its
+    own: a guarded Compose service may select an arbitrary directory. Only a
+    Docker-inspected bind source can establish the corresponding host path.
+    """
+    config = info.get("Config") or {}
+    working_dir_raw = str(config.get("WorkingDir") or "")
+    if not working_dir_raw:
+        return None
+    working_dir = Path(os.path.normpath(working_dir_raw))
+    if not working_dir.is_absolute():
+        return None
+
+    best_match: tuple[int, Path] | None = None
+    for mount in info.get("Mounts") or []:
+        if not isinstance(mount, dict) or mount.get("Type") != "bind":
+            continue
+        source_raw = str(mount.get("Source") or "")
+        destination_raw = str(mount.get("Destination") or "")
+        if not source_raw or not destination_raw:
+            continue
+        source = Path(os.path.normpath(source_raw))
+        destination = Path(os.path.normpath(destination_raw))
+        if not source.is_absolute() or not destination.is_absolute():
+            continue
+        try:
+            relative = working_dir.relative_to(destination)
+        except ValueError:
+            continue
+        translated = container_path_for_host(str(source / relative))
+        if translated is None:
+            continue
+        depth = len(destination.parts)
+        if best_match is None or depth > best_match[0]:
+            best_match = (depth, translated)
+    if best_match is not None:
+        return best_match[1]
+    return None
+
+
+def registered_runtime_workspace_ids(
+    info: dict[str, Any], labels: dict[str, Any], database: sqlite3.Connection
+) -> set[str] | None:
+    """Resolve one backend-managed runtime through its live DB registration.
+
+    ``None`` means the container has no complete Kandev runtime identity, so an
+    independently trusted Compose ownership path may still be considered. A
+    complete but stale, conflicting, or spoofed identity returns an empty set
+    and cannot fall back to those less specific heuristics.
+    """
+    if not any(label in labels for label in RUNTIME_IDENTITY_LABELS):
+        return None
+    task_id = str(labels.get("kandev.task_id") or "")
+    session_id = str(labels.get("kandev.session_id") or "")
+    environment_id = str(labels.get("kandev.task_environment_id") or "")
+    instance_id = str(labels.get("kandev.instance_id") or "")
+    # A partial label set is not authoritative enough to revoke an otherwise
+    # valid trusted Compose/workdir association. Once all identity labels are
+    # present, however, a stale or conflicting claim must fail closed.
+    if not task_id or not session_id or not environment_id:
+        return None
+    container_id = str(info.get("Id") or "")
+    working_dir = inspected_container_working_dir(info)
+    if labels.get("kandev.managed") != "true" or not container_id:
+        return set()
+
+    placeholders = ", ".join("?" for _ in ACTIVE_TASK_SESSION_STATES)
+    environment_placeholders = ", ".join("?" for _ in ACTIVE_TASK_ENVIRONMENT_STATES)
+    executor_placeholders = ", ".join("?" for _ in ACTIVE_EXECUTOR_STATES)
+    row = database.execute(
+        f"""
+        SELECT t.workspace_id, te.workspace_path, te.task_dir_name,
+               te.container_id AS environment_container_id,
+               er.container_id AS executor_container_id,
+               er.agent_execution_id
+        FROM tasks t
+        JOIN task_sessions ts
+          ON ts.id = ? AND ts.task_id = t.id
+        JOIN task_environments te
+          ON te.id = ? AND te.task_id = t.id
+        JOIN executors_running er
+          ON er.session_id = ts.id AND er.task_id = t.id
+        WHERE t.id = ? AND t.archived_at IS NULL
+          AND ts.task_environment_id = te.id
+          AND ts.state IN ({placeholders})
+          AND te.status IN ({environment_placeholders})
+          AND er.status IN ({executor_placeholders})
+        """,
+        (
+            session_id,
+            environment_id,
+            task_id,
+            *sorted(ACTIVE_TASK_SESSION_STATES),
+            *sorted(ACTIVE_TASK_ENVIRONMENT_STATES),
+            *sorted(ACTIVE_EXECUTOR_STATES),
+        ),
+    ).fetchone()
+    if row is None:
+        return set()
+    persisted_instance_id = str(row["agent_execution_id"] or "")
+    if instance_id and instance_id != persisted_instance_id:
+        return set()
+
+    exact_container_binding = False
+    for column in ("environment_container_id", "executor_container_id"):
+        persisted_container_id = str(row[column] or "")
+        if persisted_container_id and persisted_container_id != container_id:
+            return set()
+        if persisted_container_id == container_id:
+            exact_container_binding = True
+    exact_instance_binding = bool(instance_id and instance_id == persisted_instance_id)
+
+    roots: list[Path] = []
+    workspace_path_raw = str(row["workspace_path"] or "")
+    if workspace_path_raw:
+        workspace_path = container_path_for_host(workspace_path_raw)
+        if workspace_path is not None:
+            roots.append(workspace_path)
+    task_dir_name = str(row["task_dir_name"] or "")
+    if TASK_DIR_RE.fullmatch(task_dir_name):
+        roots.append(Path("/data/tasks") / task_dir_name)
+    path_binding = working_dir is not None and any(
+        working_dir == root or is_within(working_dir, root) for root in roots
+    )
+    if not (exact_container_binding or exact_instance_binding or path_binding):
+        return set()
+    return {str(row["workspace_id"])}
 
 
 def container_workspace_ids(info: dict[str, Any]) -> set[str]:
@@ -761,6 +910,9 @@ def container_workspace_ids(info: dict[str, Any]) -> set[str]:
     working_dir = container_path_for_host(str(working_dir_raw)) if working_dir_raw else None
 
     with kandev_db() as database:
+        runtime_workspace_ids = registered_runtime_workspace_ids(info, labels, database)
+        if runtime_workspace_ids is not None:
+            return runtime_workspace_ids
         if working_dir and is_within(working_dir, Path("/data/tasks")):
             relative = working_dir.relative_to("/data/tasks")
             if relative.parts:
