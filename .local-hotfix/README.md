@@ -9,24 +9,28 @@ the two `agentctl` binaries here; the backend overlay is independent.
 
 The overlay deployed for Support requests
 `a335c345-f10a-4ae2-a598-7197e94da5d5` and
-`25ab4998-3933-48f4-bc2e-374355b35f9e` was built from source commit
-`cf35864d884661372cc660a24ab255438d6434bd`. That commit is a tested superset
+`25ab4998-3933-48f4-bc2e-374355b35f9e`, and
+`489c9c57-b9ca-4766-b7fa-c4a71dc6b7b4` was built from source commit
+`df1916c062b530553d2235896c82010ba6373499`. That commit is a tested superset
 of PR #3473 (`a91e0e66f87456b0c380ad749ddf9734ddf8f37a`) and the still-required live
 queue, wake-coalescing, terminal-queue recovery, guarded-inference, liveness,
 active-worktree attachment, and attachment-response hotfixes. It adds the
 guarded exact-profile assignment capability without replacing those fixes,
 then exposes that single capability to the backend-verified canonical Kanban
-Coordinator while ordinary task catalogs remain unchanged.
+Coordinator while ordinary task catalogs remain unchanged. It also projects a
+strict exact-model startup denial through `list_task_sessions_kandev` as a
+bounded typed `startup_failure`, while leaving arbitrary raw provider errors
+private.
 
 The corresponding binary SHA-256 values are:
 
-- `agentctl`: `91affd565fcfb08ef2b9257f09e3e210761472dfa16bf8f8883da2652cb67839`
-- `agentctl-linux-amd64`: `8255052ef13e0f7deb636af514d119d7bf095cea68c4e06f90c2db99af56b013`
-- `kandev`: `63fbb8555f4a1608bc895e1705ef94ab2bd533bc338676f1546be64d226a0d4a`
+- `agentctl`: `3bae175f5980f3d4c3fba84a587017725d39955f3954184a84e62d82ab45d5b4`
+- `agentctl-linux-amd64`: `d7ab09a6890d5d7ce112bc7a5804ff26ba90822f7218058736cac5622d8f05e4`
+- `kandev`: `f34b31bfce78f80632bb25674a2a2778d9a99621ae0152d0d3366c82b083b51d`
 
 The immediately preceding overlay is retained at
-`/tmp/kandev-exact-profile-exposure-before` with directory mode `0700` and
-file modes `0600`; its three hashes are recorded in the Support receipt. It is
+`/tmp/kandev-gpt54-start-before` with directory mode `0700` and file modes
+`0600`; its three hashes are recorded in the Support receipt. It is
 the binary rollback source in addition to `kandev-safe-deploy`'s image rollback.
 
 The backend was built only after `build-web` and `sync-embedded-web`, so it
