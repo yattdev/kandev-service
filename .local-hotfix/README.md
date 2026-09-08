@@ -7,12 +7,12 @@ release. The binaries are ignored by Git, but `Dockerfile.local` installs them
 into every local image rebuild when they are present. Never place only one of
 the two `agentctl` binaries here; the backend overlay is independent.
 
-The overlay deployed for Support requests
+The overlay was deployed for Support requests
 `a335c345-f10a-4ae2-a598-7197e94da5d5` and
 `25ab4998-3933-48f4-bc2e-374355b35f9e`, and
 `489c9c57-b9ca-4766-b7fa-c4a71dc6b7b4` and
-`2064d88b-24c1-4ba2-abf1-b41095a56ffa`, with the backend extended for
-`27d32008-a595-4e0a-8c9e-ef04ba97b119`, was built from source commit
+`2064d88b-24c1-4ba2-abf1-b41095a56ffa`. The backend now staged for
+`27d32008-a595-4e0a-8c9e-ef04ba97b119` was built from source commit
 `b401a094d5fc0f81613eb8470c2544ce87e16f74`. That commit is a tested superset
 of PR #3473 (`a91e0e66f87456b0c380ad749ddf9734ddf8f37a`) and the still-required live
 queue, wake-coalescing, terminal-queue recovery, guarded-inference, liveness,
