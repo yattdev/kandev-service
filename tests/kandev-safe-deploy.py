@@ -61,6 +61,9 @@ elif args and args[0] == "compose":
         current.write_text(target.read_text().strip())
         if os.environ.get("KANDEV_DEPLOY_TEST_UP_FAIL") == "candidate" and count == 1:
             raise SystemExit(17)
+elif args and args[0] == "run":
+    if os.environ.get("KANDEV_DEPLOY_TEST_PREFLIGHT_FAIL") == "1":
+        raise SystemExit(78)
 elif args and args[0] == "logs":
     print("fake logs")
 else:
@@ -83,7 +86,7 @@ else:
 
 class SafeDeployTest(unittest.TestCase):
     def run_deploy(
-        self, ready: str, *, up_failure: str = ""
+        self, ready: str, *, up_failure: str = "", preflight_failure: bool = False
     ) -> tuple[subprocess.CompletedProcess[str], Path, Path]:
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -106,6 +109,7 @@ class SafeDeployTest(unittest.TestCase):
             "KANDEV_DEPLOY_TEST_STATE": str(state),
             "KANDEV_DEPLOY_TEST_READY": ready,
             "KANDEV_DEPLOY_TEST_UP_FAIL": up_failure,
+            "KANDEV_DEPLOY_TEST_PREFLIGHT_FAIL": "1" if preflight_failure else "0",
             "KANDEV_DEPLOY_HEALTH_TIMEOUT_SECS": "1",
             "KANDEV_DEPLOY_HEALTH_INTERVAL_SECS": "0.05",
             "KANDEV_DEPLOY_LOG": str(log),
@@ -145,6 +149,15 @@ class SafeDeployTest(unittest.TestCase):
         self.assertIn("Docker Compose failed while recreating the candidate", output)
         self.assertIn("Rollback verified", output)
         self.assertIn("recreation failed and was rolled back successfully", output)
+
+    def test_runtime_preflight_failure_preserves_running_image(self) -> None:
+        completed, state, log = self.run_deploy(
+            "always", preflight_failure=True
+        )
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertEqual((state / "current-image").read_text(), "sha256:old")
+        self.assertFalse((state / "up-count").exists())
+        self.assertIn("guarded runtime preflight failed", log.read_text())
 
 
 if __name__ == "__main__":

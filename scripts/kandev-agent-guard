@@ -180,10 +180,11 @@ bwrap_args=(
     --unshare-ipc
     --unshare-uts
     --ro-bind / /
-    # Keep the container's existing read-only procfs. Do not add `--proc` here:
-    # image updates cannot reload the host's AppArmor policy, so requiring a
-    # new procfs mount makes every ACP provider exit before its handshake when
-    # the image and host policy are briefly out of sync.
+    # PID isolation requires a matching procfs. Reusing the container mount
+    # makes namespace PID 2 absent from /proc and breaks nested bubblewrap.
+    # Candidate deployment preflight verifies the loaded host AppArmor policy
+    # permits this exact namespace-local mount before recreating Kandev.
+    --proc /proc
     --dev /dev
     --tmpfs /tmp
     --tmpfs /run

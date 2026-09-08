@@ -155,6 +155,22 @@ if [[ -z "$KANDEV_DEPLOY_CANDIDATE_ID" ]]; then
     exit 1
 fi
 
+# Exercise the candidate's exact nested-userns and private-procfs path under
+# the currently loaded host security profiles before touching the live
+# container. This catches image/AppArmor drift without granting privileges or
+# mounting deployment data.
+deploy_log "Validating candidate guarded runtime under loaded host security policy ..."
+if ! docker run --rm \
+    --security-opt seccomp="$KANDEV_DEPLOY_DIR/seccomp/kandev-bwrap.json" \
+    --security-opt apparmor=kandev-codex \
+    "$KANDEV_DEPLOY_CANDIDATE_ID" /usr/local/bin/codex-sandbox-preflight \
+    >>"$KANDEV_DEPLOY_LOG" 2>&1; then
+    deploy_log "CRITICAL: candidate guarded runtime preflight failed; running Kandev was preserved."
+    deploy_log "Load the reviewed profile with: sudo bash scripts/install-codex-apparmor.sh"
+    exit 1
+fi
+deploy_log "Candidate guarded runtime preflight passed."
+
 deploy_log "Recreating Kandev with candidate $KANDEV_DEPLOY_CANDIDATE_ID ..."
 if ! compose_recreate; then
     deploy_log "CRITICAL: Docker Compose failed while recreating the candidate; starting automatic rollback."

@@ -98,6 +98,8 @@ fi
 rmdir "$utility_nested"
 (cd "$task_root" && "$GUARD" -- sh -ceu '
     grep -Eq "^NoNewPrivs:[[:space:]]+1$" /proc/self/status
+    test -r "/proc/$$/status"
+    bwrap --unshare-user --dev-bind / / true
     if sudo -n true 2>/dev/null; then
         echo "ERROR: guarded process escalated through sudo" >&2
         exit 1
