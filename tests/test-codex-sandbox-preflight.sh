@@ -16,7 +16,7 @@ case " $* " in
     *)
         case " $* " in
             *" --unshare-pid "*) exit 1 ;;
-            *" -- true ") exit 0 ;;
+            *" --bind /proc /proc "*) exit 0 ;;
             *) exit 1 ;;
         esac
         ;;

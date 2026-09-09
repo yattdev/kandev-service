@@ -36,8 +36,9 @@ if ! bwrap \
     --unshare-user \
     --unshare-net \
     --ro-bind / / \
+    --bind /proc /proc \
     --dev /dev \
-    -- true \
+    -- sh -ceu 'test -r /proc/$$/status; bwrap --unshare-user --dev-bind / / true' \
     2>>"$preflight_error"; then
     echo "ERROR: Codex workspace-write sandbox cannot create its bubblewrap namespaces." >&2
     echo "The worker runtime must use seccomp/kandev-bwrap.json and permit nested unprivileged user namespaces; do not use seccomp=unconfined or CAP_SYS_ADMIN." >&2

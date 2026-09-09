@@ -442,6 +442,8 @@ if grep -Eq -- '--proc[[:space:]]+/proc([[:space:])]|$)' \
     "$COMPOSE_DIR/scripts/kandev-agent-guard" && \
    grep -Eq -- '--unshare-pid[[:space:]]+--proc[[:space:]]+/proc' \
     "$COMPOSE_DIR/scripts/kandev-agent-guard" && \
+   grep -Eq -- '--bind[[:space:]]+/proc[[:space:]]+/proc' \
+    "$COMPOSE_DIR/scripts/kandev-agent-guard" && \
    grep -q 'KANDEV_PRIVATE_PROC_MARKER' \
     "$COMPOSE_DIR/scripts/kandev-agent-guard" && \
    grep -Eq '^[[:space:]]*mount[[:space:]]+fstype=proc' \

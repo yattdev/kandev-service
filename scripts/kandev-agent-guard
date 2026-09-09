@@ -187,6 +187,10 @@ bwrap_args=(
 private_proc_marker="${KANDEV_PRIVATE_PROC_MARKER:-/run/kandev-private-proc-supported}"
 if [[ -f "$private_proc_marker" ]]; then
     bwrap_args+=(--unshare-pid --proc /proc)
+else
+    # The inherited procfs must remain writable for nested user namespaces to
+    # populate child uid_map/gid_map files. AppArmor still mediates proc writes.
+    bwrap_args+=(--bind /proc /proc)
 fi
 bound["$writable_root"]=1
 
