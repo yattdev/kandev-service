@@ -176,20 +176,18 @@ bwrap_args=(
     --die-with-parent
     --new-session
     --unshare-user
-    --unshare-pid
     --unshare-ipc
     --unshare-uts
     --ro-bind / /
-    # PID isolation requires a matching procfs. Reusing the container mount
-    # makes namespace PID 2 absent from /proc and breaks nested bubblewrap.
-    # Candidate deployment preflight verifies the loaded host AppArmor policy
-    # permits this exact namespace-local mount before recreating Kandev.
-    --proc /proc
     --dev /dev
     --tmpfs /tmp
     --tmpfs /run
     --bind "$writable_root" "$writable_root"
 )
+private_proc_marker="${KANDEV_PRIVATE_PROC_MARKER:-/run/kandev-private-proc-supported}"
+if [[ -f "$private_proc_marker" ]]; then
+    bwrap_args+=(--unshare-pid --proc /proc)
+fi
 bound["$writable_root"]=1
 
 # Android agents receive only the KVM virtualization device. The SDK and base

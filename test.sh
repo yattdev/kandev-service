@@ -438,13 +438,23 @@ else
   fail "kandev-codex AppArmor policy does not compile (or apparmor_parser is missing)"
 fi
 
-if grep -Eq '^[[:space:]]*--proc[[:space:]]+/proc([[:space:]]|$)' \
+if grep -Eq -- '--proc[[:space:]]+/proc([[:space:])]|$)' \
+    "$COMPOSE_DIR/scripts/kandev-agent-guard" && \
+   grep -Eq -- '--unshare-pid[[:space:]]+--proc[[:space:]]+/proc' \
+    "$COMPOSE_DIR/scripts/kandev-agent-guard" && \
+   grep -q 'KANDEV_PRIVATE_PROC_MARKER' \
     "$COMPOSE_DIR/scripts/kandev-agent-guard" && \
    grep -Eq '^[[:space:]]*mount[[:space:]]+fstype=proc' \
     "$COMPOSE_DIR/apparmor/kandev-codex"; then
-  ok "agent guard and AppArmor profile require namespace-local procfs"
+  ok "agent guard conditionally enables namespace-local procfs"
 else
-  fail "agent guard/profile private procfs policy is incomplete"
+  fail "agent guard/profile private procfs fallback is incomplete"
+fi
+
+if bash "$COMPOSE_DIR/tests/test-codex-sandbox-preflight.sh"; then
+  ok "sandbox preflight falls back when private procfs is unavailable"
+else
+  fail "sandbox preflight private procfs fallback failed"
 fi
 
 COMPOSE_SECURITY=$(cd "$COMPOSE_DIR" && docker compose config --format json 2>/dev/null || echo '{}')
