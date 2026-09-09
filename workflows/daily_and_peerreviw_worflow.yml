@@ -12,6 +12,8 @@ workflows:
           is_start_step: true
           show_in_command_panel: true
           allow_manual_move: true
+          profile_session_start_policy: reuse
+          profile_session_end_policy: complete
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
         - name: Spec
@@ -36,6 +38,8 @@ workflows:
             agent_name: Copilot
             model: gpt-5.6-sol
             mode: https://agentclientprotocol.com/protocol/session-modes#plan
+          profile_session_start_policy: reuse
+          profile_session_end_policy: complete
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
         - name: Todo
@@ -49,6 +53,8 @@ workflows:
           is_start_step: false
           show_in_command_panel: false
           allow_manual_move: true
+          profile_session_start_policy: reuse
+          profile_session_end_policy: complete
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
         - name: Work
@@ -69,6 +75,8 @@ workflows:
             agent_name: Copilot
             model: gpt-5.6-terra
             mode: https://agentclientprotocol.com/protocol/session-modes#agent
+          profile_session_start_policy: reuse
+          profile_session_end_policy: complete
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
         - name: Blocked
@@ -83,8 +91,10 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Copilot
-            model: savoirfairelinux/DeepInfra/deepseek-ai%2FDeepSeek-V4-Flash
+            model: savoirfairelinux/DeepInfra/moonshotai%2FKimi-K3
             mode: https://agentclientprotocol.com/protocol/session-modes#agent
+          profile_session_start_policy: reuse
+          profile_session_end_policy: complete
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
         - name: Review
@@ -104,6 +114,8 @@ workflows:
             agent_name: Copilot
             model: savoirfairelinux/DeepInfra/moonshotai%2FKimi-K3
             mode: https://agentclientprotocol.com/protocol/session-modes#autopilot
+          profile_session_start_policy: reuse
+          profile_session_end_policy: complete
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
         - name: QA
@@ -124,6 +136,8 @@ workflows:
             agent_name: Copilot
             model: gpt-5.6-sol
             mode: https://agentclientprotocol.com/protocol/session-modes#agent
+          profile_session_start_policy: reuse
+          profile_session_end_policy: complete
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
         - name: PR
@@ -140,8 +154,10 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Copilot
-            model: savoirfairelinux/DeepInfra/deepseek-ai%2FDeepSeek-V4-Flash
+            model: savoirfairelinux/DeepInfra/moonshotai%2FKimi-K3
             mode: https://agentclientprotocol.com/protocol/session-modes#agent
+          profile_session_start_policy: reuse
+          profile_session_end_policy: complete
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
         - name: CI Fixup
@@ -158,8 +174,10 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Copilot
-            model: savoirfairelinux/DeepInfra/deepseek-ai%2FDeepSeek-V4-Flash
+            model: savoirfairelinux/DeepInfra/moonshotai%2FKimi-K3
             mode: https://agentclientprotocol.com/protocol/session-modes#agent
+          profile_session_start_policy: reuse
+          profile_session_end_policy: complete
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
         - name: Human-QA
@@ -174,8 +192,10 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Copilot
-            model: gpt-5.3-codex
+            model: gpt-5.6-terra
             mode: https://agentclientprotocol.com/protocol/session-modes#agent
+          profile_session_start_policy: reuse
+          profile_session_end_policy: complete
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
         - name: ToDeploy
@@ -185,6 +205,8 @@ workflows:
           is_start_step: false
           show_in_command_panel: false
           allow_manual_move: true
+          profile_session_start_policy: reuse
+          profile_session_end_policy: complete
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
         - name: Done
@@ -200,8 +222,10 @@ workflows:
           auto_archive_after_hours: 72
           agent_profile:
             agent_name: Copilot
-            model: savoirfairelinux/DeepInfra/deepseek-ai%2FDeepSeek-V4-Flash
+            model: gpt-5.6-terra
             mode: https://agentclientprotocol.com/protocol/session-modes#agent
+          profile_session_start_policy: reuse
+          profile_session_end_policy: complete
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
     - name: PR Review
@@ -213,6 +237,8 @@ workflows:
           is_start_step: true
           show_in_command_panel: false
           allow_manual_move: true
+          profile_session_start_policy: reuse
+          profile_session_end_policy: complete
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
         - name: Review
@@ -231,6 +257,8 @@ workflows:
             agent_name: Copilot
             model: gpt-5.3-codex
             mode: https://agentclientprotocol.com/protocol/session-modes#autopilot
+          profile_session_start_policy: reuse
+          profile_session_end_policy: complete
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
         - name: QA
@@ -249,6 +277,8 @@ workflows:
             agent_name: Copilot
             model: gpt-5.6-sol
             mode: https://agentclientprotocol.com/protocol/session-modes#autopilot
+          profile_session_start_policy: reuse
+          profile_session_end_policy: complete
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
         - name: Human-QA
@@ -269,8 +299,10 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Copilot
-            model: gpt-5.3-codex
+            model: gpt-5.6-terra
             mode: https://agentclientprotocol.com/protocol/session-modes#agent
+          profile_session_start_policy: reuse
+          profile_session_end_policy: complete
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
         - name: Done
@@ -285,9 +317,11 @@ workflows:
           allow_manual_move: true
           auto_archive_after_hours: 72
           agent_profile:
-            agent_name: Codex
+            agent_name: Copilot
             model: gpt-5.6-terra
-            mode: agent-full-access
+            mode: https://agentclientprotocol.com/protocol/session-modes#agent
+          profile_session_start_policy: reuse
+          profile_session_end_policy: complete
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
 
