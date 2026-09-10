@@ -7,11 +7,13 @@ release. The binaries are ignored by Git, but `Dockerfile.local` installs them
 into every local image rebuild when they are present. Never place only one of
 the two `agentctl` binaries here; the backend overlay is independent.
 
-The overlay was deployed for Support requests
+The agentctl overlay was deployed for Support requests
 `a335c345-f10a-4ae2-a598-7197e94da5d5` and
 `25ab4998-3933-48f4-bc2e-374355b35f9e`, and
 `489c9c57-b9ca-4766-b7fa-c4a71dc6b7b4` and
-`2064d88b-24c1-4ba2-abf1-b41095a56ffa`. The backend now staged for
+`2064d88b-24c1-4ba2-abf1-b41095a56ffa`.
+
+The backend previously staged for
 `27d32008-a595-4e0a-8c9e-ef04ba97b119` was built from source commit
 `b401a094d5fc0f81613eb8470c2544ce87e16f74`. That commit is a tested superset
 of PR #3473 (`a91e0e66f87456b0c380ad749ddf9734ddf8f37a`) and the still-required live
@@ -34,6 +36,11 @@ The corresponding binary SHA-256 values are:
 - `agentctl`: `6e3563891cd742f2e959e44243d4226b4185810cec34c630a294dac138c18a4f`
 - `agentctl-linux-amd64`: `66ccf5731bf0f42ad0cf0812f50666cb6c70b6d73bce2d1c6c261a66996272fb`
 - `kandev`: `7304609866abe143480fdaa9e26feccdfae699e6795eaaf1bd4b55d508066427`
+
+The backend overlay was retired when upstream `v0.94.0` became available. Its
+exact binary is retained outside the Docker build context at
+`~/.local/share/kandev/hotfix-backups/kandev-b401a094d5fc0f81613eb8470c2544ce87e16f74`.
+Only the paired agentctl overlays remain active.
 
 The immediately preceding overlay is retained at
 `/tmp/kandev-review-qa-before-27d32008` with directory mode `0700` and file mode
