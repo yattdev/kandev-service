@@ -694,9 +694,16 @@ else
   fail "compose relative source resolved to '${COMPOSE_SRC}' (expected a host path under ${HOME})"
 fi
 
-section "13. Branch guard (deployment runs only from main)"
+section "13. Main checkout enforcement"
 
 GUARD="$(dirname "${BASH_SOURCE[0]:-$0}")/scripts/require-main-branch.sh"
+CHECKOUT="$(dirname "${BASH_SOURCE[0]:-$0}")/scripts/ensure-main-checkout.sh"
+
+if bash "$COMPOSE_DIR/tests/test-ensure-main-checkout.sh" >/dev/null 2>&1; then
+  ok "main checkout helper safely switches clean deployments"
+else
+  fail "main checkout helper regression tests failed"
+fi
 
 if [[ -x "$GUARD" ]]; then
   ok "scripts/require-main-branch.sh exists and is executable"
@@ -736,12 +743,12 @@ else
   fail "guard blocked a non-git directory"
 fi
 
-# Every entry point that reads the compose files must call the guard.
+# Every entry point that reads the compose files must ensure the main checkout.
 for entry in kandev-start.sh kandev-start-hub.sh update.sh kandev-pull.sh; do
-  if grep -q 'require-main-branch.sh' "$entry" 2>/dev/null; then
-    ok "$entry invokes the branch guard"
+  if grep -q 'ensure-main-checkout.sh' "$entry" 2>/dev/null; then
+    ok "$entry ensures the main deployment checkout"
   else
-    fail "$entry does not invoke the branch guard"
+    fail "$entry does not ensure the main deployment checkout"
   fi
 done
 
@@ -791,15 +798,33 @@ else
   fail "kandev-start.sh can fall back to a different checkout"
 fi
 
-# The systemd deployment must use the one canonical checkout, refuse tracked
-# edits, and switch it to main before kandev-start.sh runs.
-if grep -Fq 'WorkingDirectory=%h/Code/kandev' install-office.sh \
-   && grep -Fq 'ExecStartPre=/usr/bin/git -C %h/Code/kandev diff --quiet' install-office.sh \
-   && grep -Fq 'ExecStartPre=/usr/bin/git -C %h/Code/kandev diff --cached --quiet' install-office.sh \
-   && grep -Fq 'ExecStartPre=/usr/bin/git -C %h/Code/kandev switch main' install-office.sh; then
-  ok "install-office.sh safely switches the canonical deployment checkout to main"
+# Installed systemd units must use external git commands rather than relying on
+# a helper that may not exist on an old workflow branch.
+SYSTEMD_MAIN_OK=1
+for installer in install-office.sh install-laptop.sh install-hub.sh; do
+  grep -Fq 'ExecStartPre=/usr/bin/git -C %h/Code/kandev diff --quiet' "$installer" \
+    && grep -Fq 'ExecStartPre=/usr/bin/git -C %h/Code/kandev diff --cached --quiet' "$installer" \
+    && grep -Fq 'ExecStartPre=/usr/bin/git -C %h/Code/kandev switch main' "$installer" \
+    || SYSTEMD_MAIN_OK=0
+done
+if [[ "$SYSTEMD_MAIN_OK" -eq 1 ]]; then
+  ok "installed systemd units safely switch the canonical checkout to main"
 else
-  fail "install-office.sh does not enforce a clean main deployment checkout"
+  fail "an installed systemd unit can run from a non-main checkout"
+fi
+
+CRON_MAIN_OK=1
+for installer in install-office.sh install-laptop.sh; do
+  grep -Fq 'MAIN_CHECKOUT="/usr/bin/git -C $USER_HOME/Code/kandev diff --quiet' "$installer" \
+    && grep -Fq '/usr/bin/git -C $USER_HOME/Code/kandev switch main' "$installer" \
+    && grep -Fq 'UPDATE_ENTRY="30 3 * * * $MAIN_CHECKOUT && bash' "$installer" \
+    && grep -Fq 'PULL_ENTRY="0 6,13,18 * * * $MAIN_CHECKOUT && bash' "$installer" \
+    || CRON_MAIN_OK=0
+done
+if [[ "$CRON_MAIN_OK" -eq 1 ]]; then
+  ok "installed cron jobs switch clean checkouts to main before running"
+else
+  fail "an installed cron job can run from a non-main checkout"
 fi
 
 # The startup guard must work under user systemd's minimal PATH. Do not depend

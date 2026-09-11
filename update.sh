@@ -47,6 +47,10 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"; }
 
 log "--- kandev update check ---"
 
+# Cron may fire while a workflow-editing branch is checked out. Move a clean
+# canonical checkout back to main before reading build or Compose configuration.
+bash "$COMPOSE_DIR/scripts/ensure-main-checkout.sh" "$COMPOSE_DIR"
+
 # Get digest of currently running image
 OLD_DIGEST=$(docker inspect kandev --format '{{.Image}}' 2>/dev/null || echo "none")
 
@@ -96,11 +100,6 @@ cd "$COMPOSE_DIR"
 
 # Validate node-level prerequisites before a rebuild/recreate (or an
 # "already up to date" early exit) can leave agents on a broken runtime.
-# Refuse to run the deployment from a non-main checkout. The compose files are
-# read from the current working tree, so a stale *-workflow branch silently
-# produces a misconfigured container (2026-08-21 crash-loop outage).
-# Override deliberately with KANDEV_ALLOW_BRANCH=1.
-bash "$COMPOSE_DIR/scripts/require-main-branch.sh" "$COMPOSE_DIR"
 bash "$COMPOSE_DIR/scripts/check-codex-runtime.sh"
 
 # ── Decide whether the local image must be (re)built ─────────────────────────

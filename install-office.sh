@@ -44,8 +44,8 @@ After=default.target
 Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=%h/Code/kandev
-# Never deploy a workflow-editing branch. Refuse to carry tracked changes onto
-# main, then safely switch the single canonical checkout before every start.
+# These checks live outside the repository script so they still work when the
+# currently checked-out workflow branch predates the checkout helper.
 ExecStartPre=/usr/bin/git -C %h/Code/kandev diff --quiet
 ExecStartPre=/usr/bin/git -C %h/Code/kandev diff --cached --quiet
 ExecStartPre=/usr/bin/git -C %h/Code/kandev switch main
@@ -170,7 +170,8 @@ fi
 # ── 8. Crons ─────────────────────────────────────────────────────────────────
 mkdir -p "$USER_HOME/logs"
 
-UPDATE_ENTRY="30 3 * * * bash $USER_HOME/Code/kandev/update.sh >> $USER_HOME/logs/kandev-update.log 2>&1"
+MAIN_CHECKOUT="/usr/bin/git -C $USER_HOME/Code/kandev diff --quiet && /usr/bin/git -C $USER_HOME/Code/kandev diff --cached --quiet && /usr/bin/git -C $USER_HOME/Code/kandev switch main"
+UPDATE_ENTRY="30 3 * * * $MAIN_CHECKOUT && bash $USER_HOME/Code/kandev/update.sh >> $USER_HOME/logs/kandev-update.log 2>&1"
 if ! crontab -l 2>/dev/null | grep -q "kandev/update.sh"; then
     ( crontab -l 2>/dev/null; echo "$UPDATE_ENTRY" ) | crontab -
     echo "[install-office] cron: daily update added (03:30)"
@@ -184,7 +185,7 @@ fi
 
 # Periodic pull: if this host isn't the active writer and a peer is newer,
 # pull the freshest data + restart kandev (no-ops otherwise). 06:00/13:00/18:00.
-PULL_ENTRY="0 6,13,18 * * * bash $USER_HOME/Code/kandev/kandev-pull.sh >> $USER_HOME/logs/kandev-sync.log 2>&1"
+PULL_ENTRY="0 6,13,18 * * * $MAIN_CHECKOUT && bash $USER_HOME/Code/kandev/kandev-pull.sh >> $USER_HOME/logs/kandev-sync.log 2>&1"
 if ! crontab -l 2>/dev/null | grep -q "kandev-pull.sh"; then
     ( crontab -l 2>/dev/null; echo "$PULL_ENTRY" ) | crontab -
     echo "[install-office] cron: periodic pull added (06:00/13:00/18:00)"

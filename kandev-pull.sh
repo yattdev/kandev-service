@@ -47,11 +47,9 @@ ARG="${1:-}"
 mkdir -p "$(dirname "$LOG")"
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [pull] $*" | tee -a "$LOG"; }
 
-# Refuse to run the deployment from a non-main checkout. The compose files are
-# read from the current working tree, so a stale *-workflow branch silently
-# produces a misconfigured container (2026-08-21 crash-loop outage).
-# Override deliberately with KANDEV_ALLOW_BRANCH=1.
-bash "$COMPOSE_DIR/scripts/require-main-branch.sh" "$COMPOSE_DIR"
+# Cron may run while a workflow-editing branch is checked out. Switch a clean
+# checkout back to main before reading any deployment configuration.
+bash "$COMPOSE_DIR/scripts/ensure-main-checkout.sh" "$COMPOSE_DIR"
 
 if [[ -f "$HOST_ID_FILE" ]]; then
   HOST_ID="$(tr -d '[:space:]' < "$HOST_ID_FILE")"
