@@ -12,6 +12,8 @@ workflows:
           is_start_step: true
           show_in_command_panel: true
           allow_manual_move: true
+          profile_session_start_policy: reuse
+          profile_session_end_policy: complete
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
         - name: Spec
@@ -35,7 +37,9 @@ workflows:
           agent_profile:
             agent_name: Codex
             model: gpt-5.6-sol
-            mode: agent
+            mode: agent-full-access
+          profile_session_start_policy: reuse
+          profile_session_end_policy: park
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
         - name: Todo
@@ -49,6 +53,8 @@ workflows:
           is_start_step: false
           show_in_command_panel: false
           allow_manual_move: true
+          profile_session_start_policy: reuse
+          profile_session_end_policy: complete
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
         - name: Work
@@ -68,7 +74,9 @@ workflows:
           agent_profile:
             agent_name: Codex
             model: gpt-5.6-terra
-            mode: agent
+            mode: agent-full-access
+          profile_session_start_policy: reuse
+          profile_session_end_policy: park
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
         - name: Blocked
@@ -85,7 +93,9 @@ workflows:
           agent_profile:
             agent_name: Codex
             model: gpt-5.6-terra
-            mode: agent
+            mode: agent-full-access
+          profile_session_start_policy: reuse
+          profile_session_end_policy: park
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
         - name: Review
@@ -104,7 +114,9 @@ workflows:
           agent_profile:
             agent_name: Codex
             model: gpt-5.5
-            mode: agent
+            mode: agent-full-access
+          profile_session_start_policy: new
+          profile_session_end_policy: complete
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
         - name: QA
@@ -122,7 +134,9 @@ workflows:
           agent_profile:
             agent_name: Codex
             model: gpt-5.6-sol
-            mode: agent
+            mode: agent-full-access
+          profile_session_start_policy: new
+          profile_session_end_policy: complete
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
         - name: PR
@@ -139,8 +153,10 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Codex
-            model: gpt-5.4
-            mode: agent
+            model: gpt-5.6-terra
+            mode: agent-full-access
+          profile_session_start_policy: reuse
+          profile_session_end_policy: complete
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
         - name: CI Fixup
@@ -159,6 +175,8 @@ workflows:
             agent_name: Codex
             model: gpt-5.6-luna
             mode: agent-full-access
+          profile_session_start_policy: reuse
+          profile_session_end_policy: complete
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
         - name: Human-QA
@@ -174,7 +192,9 @@ workflows:
           agent_profile:
             agent_name: Codex
             model: gpt-5.6-terra
-            mode: agent
+            mode: agent-full-access
+          profile_session_start_policy: reuse
+          profile_session_end_policy: park
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
         - name: ToDeploy
@@ -184,6 +204,8 @@ workflows:
           is_start_step: false
           show_in_command_panel: false
           allow_manual_move: true
+          profile_session_start_policy: reuse
+          profile_session_end_policy: complete
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
         - name: Done
@@ -199,8 +221,10 @@ workflows:
           auto_archive_after_hours: 72
           agent_profile:
             agent_name: Codex
-            model: gpt-5.4
-            mode: agent
+            model: gpt-5.6-terra
+            mode: agent-full-access
+          profile_session_start_policy: new
+          profile_session_end_policy: complete
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
     - name: PR Review
@@ -212,6 +236,8 @@ workflows:
           is_start_step: true
           show_in_command_panel: false
           allow_manual_move: true
+          profile_session_start_policy: reuse
+          profile_session_end_policy: complete
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
         - name: Review
@@ -230,6 +256,8 @@ workflows:
             agent_name: Codex
             model: gpt-5.5
             mode: agent-full-access
+          profile_session_start_policy: new
+          profile_session_end_policy: park
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
         - name: QA
@@ -248,6 +276,8 @@ workflows:
             agent_name: Codex
             model: gpt-5.6-sol
             mode: agent-full-access
+          profile_session_start_policy: new
+          profile_session_end_policy: park
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
         - name: Human-QA
@@ -269,7 +299,9 @@ workflows:
           agent_profile:
             agent_name: Codex
             model: gpt-5.6-terra
-            mode: agent
+            mode: agent-full-access
+          profile_session_start_policy: reuse
+          profile_session_end_policy: park
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
         - name: Done
@@ -285,8 +317,10 @@ workflows:
           auto_archive_after_hours: 72
           agent_profile:
             agent_name: Codex
-            model: gpt-5.4
-            mode: agent
+            model: gpt-5.6-terra
+            mode: agent-full-access
+          profile_session_start_policy: new
+          profile_session_end_policy: complete
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
 
