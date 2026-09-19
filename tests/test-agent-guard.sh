@@ -227,6 +227,8 @@ managed_source="${managed_common%/.git}"
         *":$1:"*) ;;
         *) echo "ERROR: managed kdlbs/kandev mise config is not trusted inside guard" >&2; exit 1 ;;
     esac
+    test "$(git config --get gc.auto)" = 0
+    test "$(git config --get maintenance.auto)" = false
     npx --version >/dev/null
 ' sh "$managed_root" "$managed_common" "$managed_source")
 managed_source_probe="$managed_source/.kandev-guard-managed-source-escape-$$"

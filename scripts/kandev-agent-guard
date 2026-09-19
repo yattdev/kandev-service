@@ -184,6 +184,23 @@ bwrap_args=(
     --tmpfs /run
     --bind "$writable_root" "$writable_root"
 )
+
+# Fetch can invoke `git maintenance run --auto`, which scans every linked
+# worktree and locks each worktree HEAD/reflog. Sibling administration
+# directories are deliberately read-only in this namespace, so automatic
+# maintenance is both unnecessary and incompatible with that boundary. Keep
+# ordinary fetch/add/commit working without granting sibling writes; explicit
+# repository maintenance remains available to the source owner outside the
+# task guard.
+if [[ "$scope_kind" == "project" ]]; then
+    bwrap_args+=(
+        --setenv GIT_CONFIG_COUNT 2
+        --setenv GIT_CONFIG_KEY_0 gc.auto
+        --setenv GIT_CONFIG_VALUE_0 0
+        --setenv GIT_CONFIG_KEY_1 maintenance.auto
+        --setenv GIT_CONFIG_VALUE_1 false
+    )
+fi
 private_proc_marker="${KANDEV_PRIVATE_PROC_MARKER:-/run/kandev-private-proc-supported}"
 if [[ -f "$private_proc_marker" ]]; then
     bwrap_args+=(--unshare-pid --proc /proc)

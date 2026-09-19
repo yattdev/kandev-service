@@ -267,6 +267,13 @@ Git tries to create `.git/worktrees/<id>/index.lock`. The startup policy in
 database triggers so newly created or edited profiles retain this
 full-access-inside-the-guard invariant for every provider.
 
+The guard also disables Git's *automatic* maintenance for agent commands.
+Post-fetch maintenance scans and locks every linked worktree's HEAD/reflog,
+which conflicts with the deliberate read-only sibling administration
+directories. Normal fetch/add/commit remain available for the validated task
+worktree; explicit repository maintenance stays with the source owner outside
+the task guard.
+
 Operator diagnostic (runs the same preflight in the actual worker image and
 with the same two policies as Compose):
 
