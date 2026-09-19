@@ -37,10 +37,31 @@ The corresponding binary SHA-256 values are:
 - `agentctl-linux-amd64`: `66ccf5731bf0f42ad0cf0812f50666cb6c70b6d73bce2d1c6c261a66996272fb`
 - `kandev`: `7304609866abe143480fdaa9e26feccdfae699e6795eaaf1bd4b55d508066427`
 
-The backend overlay was retired when upstream `v0.94.0` became available. Its
+That backend overlay was retired when upstream `v0.94.0` became available. Its
 exact binary is retained outside the Docker build context at
 `~/.local/share/kandev/hotfix-backups/kandev-b401a094d5fc0f81613eb8470c2544ce87e16f74`.
-Only the paired agentctl overlays remain active.
+
+The active backend overlay for Support request
+`103af197-ff16-45a9-a9af-176244d588d3` is built from canonical
+`upstream/main` commit `d355a672b1db624048f8ff87bc456a1729f78cb0`. That
+commit is a strict descendant of the live image revision
+`33b7bd9bf09cf443d69a74d22bfb462b911d0b9c`, so it preserves the released
+backend fixes. It includes reviewed plan-safety commit
+`b1b885714` (`feat: protect agent plan edits and recover revisions (#3745)`):
+plan reads return a bounded metadata block containing the opaque
+`write_version`, and whole-plan writes advertise and enforce
+`expected_version` before mutation. Suspicious reductions additionally require
+`allow_truncation=true`; append mode remains available without weakening the
+compare-and-swap guard. Focused MCP/server/handler/service tests passed, and the
+candidate embeds a freshly built complete web application.
+
+The active backend overlay SHA-256 is
+`1b89be2057eed1fc1a4a168a2b4896d16ceabfd67e7975ca2dbb08f7feeab60a`.
+The immediately preceding live backend is retained at
+`/tmp/kandev-plan-cas-before-103af197/kandev` with directory mode `0700`, file
+mode `0600`, and SHA-256
+`f5a0919c9f1e3c0309a3fa36efe76f29bb1f8bc2bb793ab2472055000dae0380`.
+The paired agentctl overlays remain active and unchanged.
 
 The immediately preceding overlay is retained at
 `/tmp/kandev-review-qa-before-27d32008` with directory mode `0700` and file mode
