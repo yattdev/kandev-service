@@ -116,10 +116,9 @@ The immediately preceding v0.95 backend is retained at
 `/tmp/kandev-coordinator-profile-before-0bf73ca8/kandev` with directory mode
 `0700`, file mode `0600`, and SHA-256
 `f5a0919c9f1e3c0309a3fa36efe76f29bb1f8bc2bb793ab2472055000dae0380`.
-The active `agentctl` pair remains unchanged from commit
-`d41672428e2424b385ee9adff84ad033d266293f` and therefore retains the plan-CAS,
-queue-recovery, attachment, startup-failure, and exact-profile tool fixes
-documented above.
+The active `agentctl` pair is the strict child commit `7283d9f1a` documented
+above. It retains the plan-CAS, queue-recovery, attachment, startup-failure,
+and exact-profile tool fixes while exposing the matching handoff schema.
 
 An earlier candidate built directly from the pre-v0.95 owner tip had SHA-256
 `eff3845eefb7b1f2631e278c02b47b80ab66bdfbe798c73f5752c9e928ad6a44` and
