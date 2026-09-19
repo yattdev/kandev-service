@@ -31,7 +31,7 @@ lane-scoped exact profile from leaking into an unconfigured successor lane:
 the successor now stops before an agent prompt and emits a bounded profile
 selection warning.
 
-The corresponding binary SHA-256 values are:
+The original paired binary SHA-256 values were:
 
 - `agentctl`: `6e3563891cd742f2e959e44243d4226b4185810cec34c630a294dac138c18a4f`
 - `agentctl-linux-amd64`: `66ccf5731bf0f42ad0cf0812f50666cb6c70b6d73bce2d1c6c261a66996272fb`
@@ -41,27 +41,37 @@ That backend overlay was retired when upstream `v0.94.0` became available. Its
 exact binary is retained outside the Docker build context at
 `~/.local/share/kandev/hotfix-backups/kandev-b401a094d5fc0f81613eb8470c2544ce87e16f74`.
 
-The active backend overlay for Support request
-`103af197-ff16-45a9-a9af-176244d588d3` is built from canonical
-`upstream/main` commit `d355a672b1db624048f8ff87bc456a1729f78cb0`. That
-commit is a strict descendant of the live image revision
-`33b7bd9bf09cf443d69a74d22bfb462b911d0b9c`, so it preserves the released
-backend fixes. It includes reviewed plan-safety commit
-`b1b885714` (`feat: protect agent plan edits and recover revisions (#3745)`):
-plan reads return a bounded metadata block containing the opaque
-`write_version`, and whole-plan writes advertise and enforce
-`expected_version` before mutation. Suspicious reductions additionally require
-`allow_truncation=true`; append mode remains available without weakening the
-compare-and-swap guard. Focused MCP/server/handler/service tests passed, and the
-candidate embeds a freshly built complete web application.
+For Support request `103af197-ff16-45a9-a9af-176244d588d3`, the paired
+`agentctl` overlays were rebuilt from source commit
+`d41672428e2424b385ee9adff84ad033d266293f`. That commit is a strict child of
+the deployed hotfix source `b401a094d5fc0f81613eb8470c2544ce87e16f74`, so it
+retains the exact-profile, startup-failure, queue-recovery, attachment, and
+other agent-facing tools above. It ports only the reviewed agent-facing plan
+projection from upstream plan-safety commit `b1b885714`: plan reads return a
+bounded metadata block containing an opaque version and the exact plan body as
+a separate block; whole-plan writes advertise and forward `expected_version`
+and `allow_truncation`; and successful create/update acknowledgements return
+the resulting version. The v0.95 base backend already provides the guarded CAS
+implementation and remains unoverlaid.
 
-The active backend overlay SHA-256 is
-`1b89be2057eed1fc1a4a168a2b4896d16ceabfd67e7975ca2dbb08f7feeab60a`.
-The immediately preceding live backend is retained at
+The active paired binary SHA-256 values are:
+
+- `agentctl`: `8a3ba55c4f0b4e27a8de5835ef36ea08e901c1c195f218e1ea5a47353b380f8f`
+- `agentctl-linux-amd64`: `7a1ba8be64931d9edf5c6d4a227cf94081da630aaf8768792759e6ea99932df6`
+
+The immediately preceding pair is retained at
+`/tmp/kandev-plan-cas-agentctl-before-103af197` with directory mode `0700`,
+file mode `0600`, and SHA-256 values
+`6e3563891cd742f2e959e44243d4226b4185810cec34c630a294dac138c18a4f`
+and `66ccf5731bf0f42ad0cf0812f50666cb6c70b6d73bce2d1c6c261a66996272fb`.
+The v0.95 backend binary from immediately before the interim reconciliation is
+retained at
 `/tmp/kandev-plan-cas-before-103af197/kandev` with directory mode `0700`, file
 mode `0600`, and SHA-256
 `f5a0919c9f1e3c0309a3fa36efe76f29bb1f8bc2bb793ab2472055000dae0380`.
-The paired agentctl overlays remain active and unchanged.
+The discarded interim upstream backend candidate is retained outside the build
+context at `/tmp/kandev-plan-cas-upstream-backend-interim-103af197` with
+SHA-256 `1b89be2057eed1fc1a4a168a2b4896d16ceabfd67e7975ca2dbb08f7feeab60a`.
 
 The immediately preceding overlay is retained at
 `/tmp/kandev-review-qa-before-27d32008` with directory mode `0700` and file mode
