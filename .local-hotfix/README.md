@@ -54,10 +54,25 @@ and `allow_truncation`; and successful create/update acknowledgements return
 the resulting version. The v0.95 base backend already provides the guarded CAS
 implementation and remains unoverlaid.
 
+For Support request `0bf73ca8-18bf-41c1-af92-b9521133de78`, the paired
+`agentctl` overlays were advanced to source commit `7283d9f1a` on branch
+`support/coordinator-handoff-agentctl-0bf73ca8`. That commit is a strict child
+of `d41672428e2424b385ee9adff84ad033d266293f`, so it retains the plan-CAS,
+queue-recovery, attachment, startup-failure, and exact-profile tools. It adds
+the capability-gated `handoff_coordinator_primary_kandev` catalog entry,
+argument schema, and WebSocket forwarding action that match the backend
+implementation described below.
+
 The active paired binary SHA-256 values are:
 
-- `agentctl`: `8a3ba55c4f0b4e27a8de5835ef36ea08e901c1c195f218e1ea5a47353b380f8f`
-- `agentctl-linux-amd64`: `7a1ba8be64931d9edf5c6d4a227cf94081da630aaf8768792759e6ea99932df6`
+- `agentctl`: `09d1f826194ce488f07cc20d82ede1e81bb4b8418b677489972553a96ba05af7`
+- `agentctl-linux-amd64`: `fb84c0a928e725b2537c5b69fefe252347e281a2e441cfb46157e83c3aee729b`
+
+The immediately preceding `d41672428` pair is retained at
+`/tmp/kandev-handoff-agentctl-before-0bf73ca8` with directory mode `0700`, file
+mode `0600`, and SHA-256 values
+`8a3ba55c4f0b4e27a8de5835ef36ea08e901c1c195f218e1ea5a47353b380f8f`
+and `7a1ba8be64931d9edf5c6d4a227cf94081da630aaf8768792759e6ea99932df6`.
 
 For Support request `0bf73ca8-18bf-41c1-af92-b9521133de78`, the backend
 overlay was restored from source commit
@@ -148,3 +163,13 @@ single liveness patch; it is not the reproducer for this superset overlay.
 
 Remove an overlay after its corresponding fix is verified in the upstream base
 image; otherwise the local overlay deliberately continues to win.
+
+The Coordinator must track these temporary backend and sidecar overlays in a
+Kandev-source implementation task and carry the reviewed change through the
+normal pull-request and release gates. After that change is merged and present
+in the latest upstream image, the Coordinator must send Kandev Support a new
+request containing the merged PR/commit and released image identity. Support
+then removes all three overlay binaries, updates the base image, deploys through
+`scripts/kandev-safe-deploy --build`, and verifies HTTP readiness, security
+profiles, the effective tool catalog, and the full local test suite before
+discarding the rollback image.
