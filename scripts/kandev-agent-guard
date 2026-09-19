@@ -503,8 +503,16 @@ for marker in "${git_markers[@]}"; do
         bound["$common"]=1
     fi
 
-    if [[ -d "$common/worktrees" ]]; then
+    if [[ -d "$common/worktrees" && -z "${bound[$common/worktrees]:-}" ]]; then
+        # One task can legitimately contain more than one worktree from the
+        # same repository. Reapplying this parent read-only mount after the
+        # first worktree's writable child bind would mask that child again.
+        # Install the registry boundary once, then layer every validated own
+        # worktree administration directory on top of it.
         bwrap_args+=(--ro-bind "$common/worktrees" "$common/worktrees")
+        bound["$common/worktrees"]=1
+    fi
+    if [[ -d "$common/worktrees" ]]; then
         bwrap_args+=(--bind "$gitdir" "$gitdir")
     fi
 
