@@ -388,8 +388,9 @@ The request file must be a bounded UTF-8 JSON object inside the Coordinator's
 exact task root with non-empty `problem`, `evidence`, `expected_outcome`, and
 `security_constraints` strings. Records and responses are scoped to the
 originating coordinator task and workspace. The host worker uses a dedicated
-persistent Codex thread, separate from the operator's interactive support chat,
-so normal conversation cannot hold its thread-store writer lock. The worker
+Codex thread, rotated between requests after 24 hours and separate from the
+operator's interactive support chat, so normal conversation cannot hold its
+thread-store writer lock. The worker
 runs with automatic approval review: it may autonomously perform safe support
 work, but a Coordinator request cannot widen broker scope, grant raw host or
 Docker access, expose secrets, or authorize destructive action. A non-zero
@@ -408,14 +409,20 @@ and smallest next action. Missing/invalid outcome markers map to return code 70.
 `docker kandev support status` surfaces the normalized `resolution_status`, and
 the user-service journal records request start, requeue, and terminal outcome.
 
-The dedicated thread ID is host-local state in mode-0600
-`~/.config/kandev/support.env` as `KANDEV_SUPPORT_THREAD_ID=<uuid>`; it is not
-committed to this sanitized repository. `systemd/kandev-support.service` reads
-that file and intentionally fails closed when it is absent. The live unit is a
-copy, not a symlink, so after changing the tracked unit install it into
-`~/.config/systemd/user/`, run `systemctl --user daemon-reload`, and restart the
-service. Worker restarts atomically requeue an interrupted `processing` record
-and preserve oldest-first delivery.
+The worker keeps one dedicated Codex thread for at most 24 rolling hours. It
+starts a fresh thread for the first request after that boundary, then records
+the emitted `thread.started` ID and creation time atomically in the mode-0600
+host file `~/.local/share/kandev/support-broker/thread-state.json`. An in-flight
+request is never killed at the boundary; rotation happens between requests.
+`KANDEV_SUPPORT_THREAD_MAX_AGE_SECS` can override the 86400-second default.
+The private `~/.config/kandev/support.env` remains the service's host-local
+configuration file and is not committed to this sanitized repository.
+`systemd/kandev-support.service` reads that file and intentionally fails closed
+when it is absent. The live unit is a copy, not a symlink, so after changing the
+tracked unit install it into `~/.config/systemd/user/`, run
+`systemctl --user daemon-reload`, and restart the service. Worker restarts
+atomically requeue an interrupted `processing` record and preserve oldest-first
+delivery.
 
 For large coordinator-charter synchronization, use
 `docker kandev workspace description-update <file>`. It accepts only a UTF-8
@@ -592,7 +599,7 @@ Use `kandev-ssh-agent.sh` when:
 | `scripts/kandev-agent-docker-client` | Docker-compatible agent-side client for the constrained Compose broker |
 | `scripts/kandev-agent-guard` | Bubblewrap filesystem boundary; mints a task token and exposes only the constrained broker socket |
 | `scripts/kandev-agent-emulator` / `scripts/kandev-agent-adb` | Expose host Android tools with ephemeral headless AVD defaults and persistent adb state |
-| `scripts/kandev-support-worker` / `systemd/kandev-support.service` | Host-side worker that drains validated Coordinator support requests through a dedicated persistent Codex thread, isolated from the operator's interactive thread lock; snapshots the live deployment before every request and rejects/rolls back any changed deployment that does not reach HTTP 200 |
+| `scripts/kandev-support-worker` / `systemd/kandev-support.service` | Host-side worker that drains validated Coordinator support requests through a dedicated Codex thread rotated between requests after 24 hours, isolated from the operator's interactive thread lock; snapshots the live deployment before every request and rejects/rolls back any changed deployment that does not reach HTTP 200 |
 | `scripts/kandev-safe-deploy` | Transactional build/recreate gate for autonomous deployments: captures the active image, requires HTTP 200, automatically restores the prior image on failure, verifies rollback health, and exits non-zero for a rejected candidate |
 | `mise.default.toml` | System-wide mise config (`/etc/mise/config.toml`): global language versions matched to host |
 | `setup-toolchains.sh` | One-time helper: installs the mise language toolchains into the persistent `/data` volume |

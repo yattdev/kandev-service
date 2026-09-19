@@ -459,8 +459,14 @@ it for up to two higher-scrutiny passes, carrying the prior evidence forward and
 explicitly auditing agent-facing restrictions versus Support's reviewed host
 authority. Only a blocker that survives those remediation passes is delivered
 as terminal. Writer contention remains queued with capped backoff.
-Delivery runs on the host through a dedicated persistent Codex support thread,
-so it does not contend with an operator's interactive Codex conversation. The
+Delivery runs on the host through a dedicated Codex support thread, so it does
+not contend with an operator's interactive Codex conversation. The worker
+rotates to a fresh thread between requests after 24 rolling hours; it never
+interrupts an in-flight request. The current thread ID and creation time are
+stored atomically in mode-0600
+`~/.local/share/kandev/support-broker/thread-state.json`. The
+`KANDEV_SUPPORT_THREAD_MAX_AGE_SECS` service setting controls the limit and
+defaults to 86400. The
 worker is approval-reviewed and receives explicit writable scope for both the
 deployment checkout and `~/Code/kandev-source`. This lets it inspect and repair
 platform source rather than incorrectly classifying a locally fixable defect as
@@ -475,9 +481,9 @@ overlay must also retain every still-required fix in the currently deployed
 pair; a request for one new fix cannot silently remove another. The broker still validates
 Coordinator identity and scopes every request/response to
 its originating task and workspace.
-Its persistent thread ID is kept outside the repository in the mode-0600 host
-file `~/.config/kandev/support.env`; the user service fails closed if that file
-is absent.
+Private service overrides remain outside the repository in
+`~/.config/kandev/support.env`; the user service fails closed if that file is
+absent.
 
 Logical dumps may contain sensitive application data. The current Bubblewrap
 policy is a write-confinement boundary, not a distinct-UID confidentiality

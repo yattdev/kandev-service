@@ -27,7 +27,8 @@ class WorkerTest(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         worker.QUEUE = Path(self.temporary.name)
-        worker.THREAD_ID = "00000000-0000-0000-0000-000000000001"
+        worker.THREAD_STATE_OVERRIDE = ""
+        worker.THREAD_MAX_AGE_SECONDS = 86400
         worker.SOURCE_REPOSITORY = Path("/home/test/Code/kandev-source")
         self.notify = mock.patch.object(worker, "notify_coordinator")
         self.notify_mock = self.notify.start()
@@ -49,6 +50,15 @@ class WorkerTest(unittest.TestCase):
         self.addCleanup(self.postcondition.stop)
         for directory in ("pending", "processing", "records", "responses", "notifications"):
             (worker.QUEUE / directory).mkdir()
+        self.seed_thread()
+
+    def seed_thread(self, created_at: float | None = None) -> str:
+        thread_id = "00000000-0000-0000-0000-000000000001"
+        worker.persist_thread_state(
+            thread_id,
+            worker.time.time() if created_at is None else created_at,
+        )
+        return thread_id
 
     def record(self, request_id: str, created_at: str = "2026-08-29T00:00:00Z") -> Path:
         path = worker.QUEUE / "pending" / f"{request_id}.json"
@@ -66,6 +76,7 @@ class WorkerTest(unittest.TestCase):
 
     def test_success_uses_dedicated_thread_and_reviewed_approval(self) -> None:
         path = self.record("request-success")
+        thread_id = self.seed_thread()
         completed = subprocess.CompletedProcess(
             [], 0, "KANDEV_SUPPORT_STATUS: RESOLVED\nsupport reply\n", ""
         )
@@ -83,7 +94,7 @@ class WorkerTest(unittest.TestCase):
                 "resume",
             ],
         )
-        self.assertEqual(command[6], worker.THREAD_ID)
+        self.assertEqual(command[6], thread_id)
         self.assertIn("Inspect both checkouts", command[7])
         self.assertIn("upstream/main is the canonical project base", command[7])
         self.assertIn("A yielded tool is not a completed tool", command[7])
@@ -95,6 +106,58 @@ class WorkerTest(unittest.TestCase):
         self.assertEqual(response["resolution_status"], "resolved")
         self.assertEqual(response["coordinator_notification"], "delivered")
         self.assertEqual(response["coordinator_message_id"], "message-id")
+
+    def test_expired_thread_starts_fresh_and_persists_new_identity(self) -> None:
+        path = self.record("request-rotated")
+        self.seed_thread(created_at=100.0)
+        new_thread_id = "00000000-0000-0000-0000-000000000002"
+        completed = subprocess.CompletedProcess(
+            [],
+            0,
+            "\n".join((
+                json.dumps({"type": "thread.started", "thread_id": new_thread_id}),
+                json.dumps({"type": "turn.started"}),
+                json.dumps({
+                    "type": "item.completed",
+                    "item": {
+                        "type": "agent_message",
+                        "text": "KANDEV_SUPPORT_STATUS: RESOLVED\nrotated reply",
+                    },
+                }),
+                json.dumps({"type": "turn.completed"}),
+            )),
+            "",
+        )
+        with (
+            mock.patch.object(worker.time, "time", return_value=86500.0),
+            mock.patch.object(worker.subprocess, "run", return_value=completed) as run,
+        ):
+            worker.process(path)
+
+        command = run.call_args.args[0]
+        self.assertEqual(command[:5], [
+            worker.CODEX,
+            "exec",
+            "--approve-for-me",
+            "--add-dir",
+            str(worker.SOURCE_REPOSITORY),
+        ])
+        self.assertEqual(command[5], "--json")
+        self.assertNotIn("resume", command)
+        state = json.loads(worker.thread_state_path().read_text())
+        self.assertEqual(state, {"thread_id": new_thread_id, "created_at": 86500.0})
+        response = json.loads((worker.QUEUE / "responses/request-rotated.json").read_text())
+        self.assertEqual(response["returncode"], 0)
+        self.assertEqual(response["resolution_status"], "resolved")
+        self.assertEqual(response["stdout"], "KANDEV_SUPPORT_STATUS: RESOLVED\nrotated reply")
+
+    def test_missing_thread_state_starts_fresh(self) -> None:
+        worker.thread_state_path().unlink()
+        self.assertEqual(worker.reusable_thread_id(now=100.0), "")
+
+    def test_future_thread_state_is_not_reused(self) -> None:
+        self.seed_thread(created_at=101.0)
+        self.assertEqual(worker.reusable_thread_id(now=100.0), "")
 
     def test_diagnosis_without_explicit_outcome_is_not_success(self) -> None:
         path = self.record("request-incomplete")

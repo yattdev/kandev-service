@@ -24,8 +24,9 @@ REPOSITORY = Path(os.environ.get("KANDEV_SUPPORT_REPOSITORY", Path.home() / "Cod
 SOURCE_REPOSITORY = Path(
     os.environ.get("KANDEV_SUPPORT_SOURCE_REPOSITORY", Path.home() / "Code/kandev-source")
 )
-THREAD_ID = os.environ.get("KANDEV_SUPPORT_THREAD_ID", "")
 CODEX = os.environ.get("KANDEV_SUPPORT_CODEX", "codex")
+THREAD_MAX_AGE_SECONDS = int(os.environ.get("KANDEV_SUPPORT_THREAD_MAX_AGE_SECS", "86400"))
+THREAD_STATE_OVERRIDE = os.environ.get("KANDEV_SUPPORT_THREAD_STATE", "")
 KANDEV_DB = Path(
     os.environ.get("KANDEV_SUPPORT_DB", Path.home() / ".local/share/kandev/data/kandev.db")
 )
@@ -46,6 +47,103 @@ HEALTH_URL = os.environ.get("KANDEV_SUPPORT_HEALTH_URL", "http://127.0.0.1:38429
 # it must never accept a deployment while the board still returns 503.
 HEALTH_TIMEOUT_SECONDS = int(os.environ.get("KANDEV_SUPPORT_HEALTH_TIMEOUT_SECS", "960"))
 HEALTH_POLL_SECONDS = float(os.environ.get("KANDEV_SUPPORT_HEALTH_POLL_SECS", "2"))
+
+
+def thread_state_path() -> Path:
+    """Keep the rotating thread identity with the durable broker queue."""
+    return Path(THREAD_STATE_OVERRIDE) if THREAD_STATE_OVERRIDE else QUEUE / "thread-state.json"
+
+
+def reusable_thread_id(now: float | None = None) -> str:
+    """Return the current thread only while it is inside the rolling age limit."""
+    try:
+        state = json.loads(thread_state_path().read_text(encoding="utf-8"))
+        thread_id = state["thread_id"]
+        created_at = float(state["created_at"])
+    except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError):
+        return ""
+    current_time = time.time() if now is None else now
+    age = current_time - created_at
+    if not isinstance(thread_id, str) or not thread_id or age < 0 or age >= THREAD_MAX_AGE_SECONDS:
+        return ""
+    return thread_id
+
+
+def persist_thread_state(thread_id: str, created_at: float) -> None:
+    """Atomically publish a newly-created support thread for later requests."""
+    state_path = thread_state_path()
+    state_path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+    temporary = state_path.with_name(f".{state_path.name}.tmp")
+    temporary.write_text(
+        json.dumps({"thread_id": thread_id, "created_at": created_at}),
+        encoding="utf-8",
+    )
+    temporary.chmod(0o600)
+    temporary.replace(state_path)
+
+
+def parse_codex_jsonl(output: str) -> tuple[str, str]:
+    """Extract the new thread identity and final agent message from `codex exec --json`."""
+    thread_id = ""
+    final_message = ""
+    for line in output.splitlines():
+        try:
+            event = json.loads(line)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if event.get("type") == "thread.started" and isinstance(event.get("thread_id"), str):
+            thread_id = event["thread_id"]
+        item = event.get("item")
+        if (
+            event.get("type") == "item.completed"
+            and isinstance(item, dict)
+            and item.get("type") == "agent_message"
+            and isinstance(item.get("text"), str)
+        ):
+            final_message = item["text"]
+    return thread_id, final_message
+
+
+def run_support_turn(record: dict[str, object]) -> subprocess.CompletedProcess[str]:
+    """Resume a young thread, or create and record a fresh one after 24 hours."""
+    common = [
+        CODEX,
+        "exec",
+        "--approve-for-me",
+        "--add-dir",
+        str(SOURCE_REPOSITORY),
+    ]
+    thread_id = reusable_thread_id()
+    created_at = time.time()
+    if thread_id:
+        command = [*common, "resume", thread_id, prompt(record)]
+    else:
+        command = [*common, "--json", prompt(record)]
+        print("Kandev Support starting a fresh Codex thread", flush=True)
+    completed = subprocess.run(
+        command,
+        cwd=REPOSITORY,
+        text=True,
+        capture_output=True,
+        timeout=3600,
+        check=False,
+        env={**os.environ, "KANDEV_SUPPORT_BROKER_REQUEST_ID": str(record["id"])},
+    )
+    if thread_id:
+        return completed
+
+    new_thread_id, final_message = parse_codex_jsonl(completed.stdout)
+    returncode = completed.returncode
+    stderr = completed.stderr
+    if new_thread_id:
+        persist_thread_state(new_thread_id, created_at)
+    elif returncode == 0:
+        returncode = 70
+        stderr += "Kandev Support worker could not capture the fresh Codex thread ID.\n"
+    if returncode == 0 and not final_message:
+        returncode = 70
+        stderr += "Kandev Support worker could not capture the fresh Codex final message.\n"
+    return subprocess.CompletedProcess(command, returncode, final_message, stderr)
 
 
 @contextmanager
@@ -377,24 +475,7 @@ def process(path: Path) -> None:
     before_deployment = deployment_guard(record, processing)
     print(f"Kandev Support processing {record['id']}", flush=True)
     try:
-        completed = subprocess.run(
-            [
-                CODEX,
-                "exec",
-                "--approve-for-me",
-                "--add-dir",
-                str(SOURCE_REPOSITORY),
-                "resume",
-                THREAD_ID,
-                prompt(record),
-            ],
-            cwd=REPOSITORY,
-            text=True,
-            capture_output=True,
-            timeout=3600,
-            check=False,
-            env={**os.environ, "KANDEV_SUPPORT_BROKER_REQUEST_ID": record["id"]},
-        )
+        completed = run_support_turn(record)
         response = {"returncode": completed.returncode, "stdout": completed.stdout[-1024 * 1024:], "stderr": completed.stderr[-256 * 1024:]}
     except Exception as exc:
         response = {"returncode": 70, "stdout": "", "stderr": f"Kandev Support worker failed: {exc}\n"}
@@ -557,8 +638,8 @@ def pending_requests() -> list[Path]:
 
 
 def main() -> int:
-    if not THREAD_ID:
-        raise SystemExit("KANDEV_SUPPORT_THREAD_ID is required")
+    if THREAD_MAX_AGE_SECONDS <= 0:
+        raise SystemExit("KANDEV_SUPPORT_THREAD_MAX_AGE_SECS must be positive")
     for directory in ("pending", "processing", "records", "responses", "notifications"):
         (QUEUE / directory).mkdir(parents=True, mode=0o700, exist_ok=True)
     recover_interrupted()

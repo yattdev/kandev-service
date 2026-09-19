@@ -1049,7 +1049,7 @@ fi
 section "18. Autonomous Coordinator support worker"
 
 if PYTHONDONTWRITEBYTECODE=1 python3 "$COMPOSE_DIR/tests/kandev-support-worker.py" >/dev/null 2>&1; then
-  ok "support worker uses a dedicated reviewed thread and restart-safe FIFO queue"
+  ok "support worker rotates its reviewed thread and preserves a restart-safe FIFO queue"
 else
   fail "tests/kandev-support-worker.py failed"
 fi
