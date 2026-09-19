@@ -415,6 +415,9 @@ the emitted `thread.started` ID and creation time atomically in the mode-0600
 host file `~/.local/share/kandev/support-broker/thread-state.json`. An in-flight
 request is never killed at the boundary; rotation happens between requests.
 `KANDEV_SUPPORT_THREAD_MAX_AGE_SECS` can override the 86400-second default.
+`KANDEV_SUPPORT_TURN_TIMEOUT_SECS` bounds each support turn and defaults to
+7200 seconds. Keep it longer than the transactional deployment health gate so
+the worker can report the verified result instead of timing out mid-rollback.
 The private `~/.config/kandev/support.env` remains the service's host-local
 configuration file and is not committed to this sanitized repository.
 `systemd/kandev-support.service` reads that file and intentionally fails closed

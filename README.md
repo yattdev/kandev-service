@@ -466,7 +466,9 @@ interrupts an in-flight request. The current thread ID and creation time are
 stored atomically in mode-0600
 `~/.local/share/kandev/support-broker/thread-state.json`. The
 `KANDEV_SUPPORT_THREAD_MAX_AGE_SECS` service setting controls the limit and
-defaults to 86400. The
+defaults to 86400. `KANDEV_SUPPORT_TURN_TIMEOUT_SECS` bounds one repair turn
+and defaults to 7200 seconds, so a non-responsive turn reports failure instead
+of silently occupying the single FIFO worker indefinitely. The
 worker is approval-reviewed and receives explicit writable scope for both the
 deployment checkout and `~/Code/kandev-source`. This lets it inspect and repair
 platform source rather than incorrectly classifying a locally fixable defect as

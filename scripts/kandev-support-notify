@@ -9,7 +9,7 @@ const fs = require("node:fs");
 const crypto = require("node:crypto");
 
 const request = JSON.parse(fs.readFileSync(0, "utf8"));
-for (const field of ["token", "task_id", "session_id", "content"]) {
+for (const field of ["token", "task_id", "session_id", "session_incarnation_id", "content"]) {
   if (typeof request[field] !== "string" || request[field].length === 0) {
     process.stderr.write(`missing ${field}\n`);
     process.exit(64);
@@ -36,6 +36,7 @@ socket.addEventListener("open", () => {
   let payload = {
     task_id: request.task_id,
     session_id: request.session_id,
+    session_incarnation_id: request.session_incarnation_id,
     client_message_id: crypto.randomUUID(),
     content: request.content,
   };
@@ -44,6 +45,7 @@ socket.addEventListener("open", () => {
     payload = {
       task_id: request.task_id,
       session_id: request.session_id,
+      session_incarnation_id: request.session_incarnation_id,
       content: request.content,
     };
   } else if (mode === "send_now") {
@@ -54,6 +56,7 @@ socket.addEventListener("open", () => {
     action = "message.queue.send_now";
     payload = {
       session_id: request.session_id,
+      session_incarnation_id: request.session_incarnation_id,
       scope: "entry",
       entry_id: request.entry_id,
     };

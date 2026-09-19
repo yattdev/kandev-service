@@ -8,6 +8,7 @@ ExecStart=%h/Code/kandev/scripts/kandev-support-worker
 Restart=always
 RestartSec=3
 Environment=KANDEV_SUPPORT_THREAD_MAX_AGE_SECS=86400
+Environment=KANDEV_SUPPORT_TURN_TIMEOUT_SECS=7200
 EnvironmentFile=%h/.config/kandev/support.env
 
 [Install]

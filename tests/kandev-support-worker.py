@@ -29,6 +29,7 @@ class WorkerTest(unittest.TestCase):
         worker.QUEUE = Path(self.temporary.name)
         worker.THREAD_STATE_OVERRIDE = ""
         worker.THREAD_MAX_AGE_SECONDS = 86400
+        worker.TURN_TIMEOUT_SECONDS = 7200
         worker.SOURCE_REPOSITORY = Path("/home/test/Code/kandev-source")
         self.notify = mock.patch.object(worker, "notify_coordinator")
         self.notify_mock = self.notify.start()
@@ -101,6 +102,7 @@ class WorkerTest(unittest.TestCase):
         self.assertIn("kandev-safe-deploy", command[7])
         self.assertIn("Never call bare 'docker compose up'", command[7])
         self.assertIn("replacement must preserve all still-required fixes", command[7])
+        self.assertEqual(run.call_args.kwargs["timeout"], worker.TURN_TIMEOUT_SECONDS)
         response = json.loads((worker.QUEUE / "responses/request-success.json").read_text())
         self.assertEqual(response["returncode"], 0)
         self.assertEqual(response["resolution_status"], "resolved")
@@ -251,6 +253,30 @@ class WorkerTest(unittest.TestCase):
         )
         self.assertIn("delivered proactively", content)
         self.assertIn("run the requested acceptance check", content)
+
+    def test_coordinator_session_returns_queue_incarnation(self) -> None:
+        import sqlite3
+
+        database = Path(self.temporary.name) / "kandev.db"
+        connection = sqlite3.connect(database)
+        self.addCleanup(connection.close)
+        connection.execute(
+            "CREATE TABLE task_sessions (id TEXT, task_id TEXT, state TEXT, "
+            "queue_incarnation_id TEXT, is_primary INTEGER, updated_at TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO task_sessions VALUES (?,?,?,?,?,?)",
+            ("session", "task-id", "WAITING_FOR_INPUT", "incarnation", 1, "2026-09-19"),
+        )
+        connection.commit()
+        previous = worker.KANDEV_DB
+        worker.KANDEV_DB = database
+        self.addCleanup(setattr, worker, "KANDEV_DB", previous)
+
+        self.assertEqual(
+            worker.coordinator_session({"coordinator_task_id": "task-id"}),
+            ("session", "WAITING_FOR_INPUT", "incarnation"),
+        )
 
     def test_changed_deployment_is_not_accepted_before_http_200(self) -> None:
         self.postcondition.stop()

@@ -26,6 +26,7 @@ SOURCE_REPOSITORY = Path(
 )
 CODEX = os.environ.get("KANDEV_SUPPORT_CODEX", "codex")
 THREAD_MAX_AGE_SECONDS = int(os.environ.get("KANDEV_SUPPORT_THREAD_MAX_AGE_SECS", "86400"))
+TURN_TIMEOUT_SECONDS = int(os.environ.get("KANDEV_SUPPORT_TURN_TIMEOUT_SECS", "7200"))
 THREAD_STATE_OVERRIDE = os.environ.get("KANDEV_SUPPORT_THREAD_STATE", "")
 KANDEV_DB = Path(
     os.environ.get("KANDEV_SUPPORT_DB", Path.home() / ".local/share/kandev/data/kandev.db")
@@ -125,7 +126,7 @@ def run_support_turn(record: dict[str, object]) -> subprocess.CompletedProcess[s
         cwd=REPOSITORY,
         text=True,
         capture_output=True,
-        timeout=3600,
+        timeout=TURN_TIMEOUT_SECONDS,
         check=False,
         env={**os.environ, "KANDEV_SUPPORT_BROKER_REQUEST_ID": str(record["id"])},
     )
@@ -186,12 +187,12 @@ def temporary_operator_token():
             database.close()
 
 
-def coordinator_session(record: dict[str, str]) -> tuple[str, str]:
+def coordinator_session(record: dict[str, str]) -> tuple[str, str, str]:
     """Resolve the newest live primary session for the requesting coordinator."""
     database = sqlite3.connect(f"file:{KANDEV_DB}?mode=ro", uri=True, timeout=30)
     try:
         row = database.execute(
-            "SELECT id,state FROM task_sessions WHERE task_id=? "
+            "SELECT id,state,queue_incarnation_id FROM task_sessions WHERE task_id=? "
             "AND state IN ('RUNNING','WAITING_FOR_INPUT','STARTING') "
             "ORDER BY is_primary DESC, updated_at DESC LIMIT 1",
             (record["coordinator_task_id"],),
@@ -200,7 +201,9 @@ def coordinator_session(record: dict[str, str]) -> tuple[str, str]:
         database.close()
     if row is None:
         raise RuntimeError("requesting coordinator has no live session")
-    return str(row[0]), str(row[1])
+    if not row[2]:
+        raise RuntimeError("requesting coordinator session has no queue incarnation")
+    return str(row[0]), str(row[1]), str(row[2])
 
 
 def notification_content(record: dict[str, str], response: dict[str, object]) -> str:
@@ -250,7 +253,7 @@ def queued_notification_entry(record: dict[str, str], session_id: str) -> str:
 def notify_coordinator(record: dict[str, str], response: dict[str, object]) -> str:
     if delivered_notification_exists(record):
         return "already-delivered"
-    session_id, session_state = coordinator_session(record)
+    session_id, session_state, session_incarnation_id = coordinator_session(record)
     entry_id = queued_notification_entry(record, session_id)
     if entry_id:
         mode = "send_now"
@@ -261,6 +264,7 @@ def notify_coordinator(record: dict[str, str], response: dict[str, object]) -> s
     payload = {
         "task_id": record["coordinator_task_id"],
         "session_id": session_id,
+        "session_incarnation_id": session_incarnation_id,
         "content": notification_content(record, response),
         "mode": mode,
     }
@@ -640,6 +644,8 @@ def pending_requests() -> list[Path]:
 def main() -> int:
     if THREAD_MAX_AGE_SECONDS <= 0:
         raise SystemExit("KANDEV_SUPPORT_THREAD_MAX_AGE_SECS must be positive")
+    if TURN_TIMEOUT_SECONDS <= 0:
+        raise SystemExit("KANDEV_SUPPORT_TURN_TIMEOUT_SECS must be positive")
     for directory in ("pending", "processing", "records", "responses", "notifications"):
         (QUEUE / directory).mkdir(parents=True, mode=0o700, exist_ok=True)
     recover_interrupted()
