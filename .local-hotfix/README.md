@@ -108,7 +108,7 @@ changed state. Bounded session projection then reports the exact-profile
 launch receipt and whether the actual launched model matched; raw provider
 errors remain private. Ordinary task catalogs and unmodified task launch
 behavior are unchanged. This backend embeds a freshly generated complete web
-bundle. The active backend binary SHA-256 is:
+bundle. That backend binary SHA-256 was:
 
 - `kandev`: `585db8e18ae3e28686019b2b40a985118cdbd805f60cec4780192ac39f54a24c`
 
@@ -156,6 +156,37 @@ the preceding overlay build; the generated asset tree was copied unchanged
 into the isolated source worktree before relinking. Do not build the overlay
 with the backend-only `build-kandev` target from a clean source tree: that
 embeds the fallback HTML without JavaScript assets and produces a white page.
+
+For Support request `abecc02d-baad-4cba-8625-5c979fcca6e4`, the backend
+overlay was advanced to immutable source commit
+`1fa5ddfe84aa7e8aab94faf1fb4a61beb418fbf3` on branch
+`support/astra-handoff-global-profile-50353c07`. It is a strict child of
+`50d95d2aee679e345a4ac5d2d093e756539efc8a`, so it preserves the complete
+Coordinator selector and atomic handoff implementation described above. The
+repair admits an enabled global exact profile (`workspace_id` empty) or a
+profile scoped to the task workspace at both assignment and launch
+revalidation, while continuing to reject every foreign non-empty workspace.
+
+The complete generated frontend tree was copied unchanged from the preceding
+Support build before relinking; its 588 non-placeholder files have aggregate
+SHA-256 `429b0127de60d2df452ca0c1fb340d0c2249ac1e5bf4dffd601c48cb85104061`.
+The active backend binary SHA-256 is:
+
+- `kandev`: `3683def6173711d410205f5e01dbe45a5961ede7873fcdb932ad3a833c1ec8e8`
+
+The paired `agentctl` overlays remain byte-identical at source commit
+`7283d9f1a30d6e963f494729ceaabaa69ffab3d2` and the hashes documented above.
+The transactional deployment accepted image
+`sha256:b80bd95685ebc9a7bb914d1ec4f9f0af708ae85371244df9437cb66b16d9931e`
+(platform manifest
+`sha256:f9299bd385d908a988e59e92b9db7c5eab4ac39587851569265bf1da49aad86b`)
+after the guarded-runtime preflight and HTTP 200 readiness gate. The prior
+healthy image remains tagged `kandev-local:safe-deploy-previous` at
+`sha256:fc9e89d342a966b44cdaf9ea1dcdc9391620970cdbbdad420819ac5c5f0391e3`.
+The preceding backend binary is also retained at
+`/tmp/kandev-astra-handoff-before-abecc02d/kandev` with directory mode `0700`,
+file mode `0600`, and SHA-256
+`585db8e18ae3e28686019b2b40a985118cdbd805f60cec4780192ac39f54a24c`.
 
 `scripts/build-kandev-liveness-hotfix` remains the reproducer for the older
 single liveness patch; it is not the reproducer for this superset overlay.
