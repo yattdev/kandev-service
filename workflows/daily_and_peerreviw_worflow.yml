@@ -1,4 +1,4 @@
-version: 1
+version: 2
 type: kandev_workflow
 workflows:
     - name: Daily workflow
@@ -16,6 +16,7 @@ workflows:
           profile_session_end_policy: complete
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
+          complete_task_on_enter: false
         - name: Spec
           position: 1
           color: bg-purple-500
@@ -39,9 +40,10 @@ workflows:
             model: gpt-5.6-sol
             mode: https://agentclientprotocol.com/protocol/session-modes#plan
           profile_session_start_policy: reuse
-          profile_session_end_policy: complete
+          profile_session_end_policy: park
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
+          complete_task_on_enter: false
         - name: Todo
           position: 2
           color: bg-slate-500
@@ -57,6 +59,7 @@ workflows:
           profile_session_end_policy: complete
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
+          complete_task_on_enter: false
         - name: Work
           position: 3
           color: bg-blue-500
@@ -79,6 +82,7 @@ workflows:
           profile_session_end_policy: complete
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
+          complete_task_on_enter: false
         - name: Blocked
           position: 4
           color: bg-red-500
@@ -91,12 +95,13 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Copilot
-            model: savoirfairelinux/DeepInfra/moonshotai%2FKimi-K3
+            model: gpt-5.6-terra
             mode: https://agentclientprotocol.com/protocol/session-modes#agent
           profile_session_start_policy: reuse
-          profile_session_end_policy: complete
+          profile_session_end_policy: park
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
+          complete_task_on_enter: false
         - name: Review
           position: 5
           color: bg-yellow-500
@@ -112,12 +117,13 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Copilot
-            model: savoirfairelinux/DeepInfra/moonshotai%2FKimi-K3
-            mode: https://agentclientprotocol.com/protocol/session-modes#autopilot
+            model: gpt-5.6-terra
+            mode: https://agentclientprotocol.com/protocol/session-modes#plan
           profile_session_start_policy: reuse
           profile_session_end_policy: complete
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
+          complete_task_on_enter: false
         - name: QA
           position: 6
           color: bg-orange-500
@@ -140,6 +146,7 @@ workflows:
           profile_session_end_policy: complete
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
+          complete_task_on_enter: false
         - name: PR
           position: 7
           color: bg-indigo-500
@@ -154,12 +161,13 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Copilot
-            model: savoirfairelinux/DeepInfra/moonshotai%2FKimi-K3
+            model: savoirfairelinux/DeepInfra/zai-org%2FGLM-5.3-Flash
             mode: https://agentclientprotocol.com/protocol/session-modes#agent
           profile_session_start_policy: reuse
           profile_session_end_policy: complete
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
+          complete_task_on_enter: false
         - name: CI Fixup
           position: 8
           color: bg-amber-500
@@ -174,12 +182,13 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Copilot
-            model: savoirfairelinux/DeepInfra/moonshotai%2FKimi-K3
-            mode: https://agentclientprotocol.com/protocol/session-modes#agent
+            model: gpt-5.6-terra
+            mode: https://agentclientprotocol.com/protocol/session-modes#autopilot
           profile_session_start_policy: reuse
           profile_session_end_policy: complete
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
+          complete_task_on_enter: false
         - name: Human-QA
           position: 9
           color: bg-orange-500
@@ -195,9 +204,10 @@ workflows:
             model: gpt-5.6-terra
             mode: https://agentclientprotocol.com/protocol/session-modes#agent
           profile_session_start_policy: reuse
-          profile_session_end_policy: complete
+          profile_session_end_policy: park
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
+          complete_task_on_enter: false
         - name: ToDeploy
           position: 10
           color: bg-cyan-500
@@ -209,6 +219,7 @@ workflows:
           profile_session_end_policy: complete
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
+          complete_task_on_enter: false
         - name: Done
           position: 11
           color: bg-green-500
@@ -228,6 +239,7 @@ workflows:
           profile_session_end_policy: complete
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
+          complete_task_on_enter: true
     - name: PR Review
       steps:
         - name: Backlogs
@@ -241,6 +253,7 @@ workflows:
           profile_session_end_policy: complete
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
+          complete_task_on_enter: false
         - name: Review
           position: 1
           color: bg-yellow-500
@@ -258,9 +271,10 @@ workflows:
             model: gpt-5.3-codex
             mode: https://agentclientprotocol.com/protocol/session-modes#autopilot
           profile_session_start_policy: reuse
-          profile_session_end_policy: complete
+          profile_session_end_policy: park
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
+          complete_task_on_enter: false
         - name: QA
           position: 2
           color: bg-blue-500
@@ -278,9 +292,10 @@ workflows:
             model: gpt-5.6-sol
             mode: https://agentclientprotocol.com/protocol/session-modes#autopilot
           profile_session_start_policy: reuse
-          profile_session_end_policy: complete
+          profile_session_end_policy: park
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
+          complete_task_on_enter: false
         - name: Human-QA
           position: 3
           color: bg-cyan-500
@@ -302,9 +317,10 @@ workflows:
             model: gpt-5.6-terra
             mode: https://agentclientprotocol.com/protocol/session-modes#agent
           profile_session_start_policy: reuse
-          profile_session_end_policy: complete
+          profile_session_end_policy: park
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
+          complete_task_on_enter: false
         - name: Done
           position: 4
           color: bg-green-500
@@ -324,4 +340,5 @@ workflows:
           profile_session_end_policy: complete
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
+          complete_task_on_enter: true
 
