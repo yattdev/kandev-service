@@ -388,6 +388,8 @@ def split_compose_args(args: list[str], cwd: Path, task_root: Path) -> tuple[lis
         arg = args[index]
         if not arg.startswith("-"):
             break
+        if arg.startswith("--dry-run="):
+            raise BrokerError("guarded Compose requires the bare --dry-run flag")
         if arg in {"-p", "--project-name"} or arg.startswith("--project-name="):
             raise BrokerError("Compose project names are assigned per Kandev task")
         if arg in COMPOSE_FLAG_OPTIONS:
@@ -422,6 +424,9 @@ def split_compose_args(args: list[str], cwd: Path, task_root: Path) -> tuple[lis
     command_args = args[index + 1 :]
     if command not in MODEL_COMMANDS | SAFE_EXISTING_COMMANDS:
         raise BrokerError(f"Docker Compose subcommand is not permitted for agents: {command}")
+    for arg in command_args:
+        if arg.startswith("--dry-run") and arg != "--dry-run":
+            raise BrokerError("guarded Compose requires the bare --dry-run flag")
     if command == "run":
         for arg in command_args:
             option = arg.split("=", 1)[0]
@@ -446,6 +451,42 @@ def split_compose_args(args: list[str], cwd: Path, task_root: Path) -> tuple[lis
             if arg in {"-o", "--output"} or arg.startswith("--output="):
                 raise BrokerError("Compose config output files are not permitted")
     return global_args, command, command_args
+
+
+def compose_replay_command(
+    project: str,
+    model_file: Path,
+    global_args: list[str],
+    command: str,
+    command_args: list[str],
+) -> list[str]:
+    """Build the daemon-facing invocation for an already-sanitized model.
+
+    Most global options only influence model rendering and must not be replayed
+    against the temporary JSON file.  Profiles select sanitized services, and
+    dry-run is a daemon-execution guarantee, so both must survive replay.
+    """
+    command_line = [
+        DOCKER_BIN,
+        "compose",
+        "--project-name",
+        project,
+        "-f",
+        str(model_file),
+    ]
+    index = 0
+    while index < len(global_args):
+        argument = global_args[index]
+        if argument == "--profile":
+            command_line.extend(global_args[index : index + 2])
+            index += 2
+        elif argument.startswith("--profile=") or argument == "--dry-run":
+            command_line.append(argument)
+            index += 1
+        else:
+            index += 1
+    command_line.extend((command, *command_args))
+    return command_line
 
 
 def compose_project_directory(cwd: Path, task_root: Path, global_args: list[str]) -> Path:
@@ -2029,26 +2070,9 @@ def handle_request(
         with handle:
             json.dump(sanitized_model, handle)
         model_file = Path(handle.name)
-        command_line = [
-            DOCKER_BIN,
-            "compose",
-            "--project-name",
-            project,
-            "-f",
-            str(model_file),
-        ]
-        # Profiles affect which already-sanitized services Compose selects.
-        index = 0
-        while index < len(global_args):
-            if global_args[index] == "--profile":
-                command_line.extend(global_args[index : index + 2])
-                index += 2
-            elif global_args[index].startswith("--profile="):
-                command_line.append(global_args[index])
-                index += 1
-            else:
-                index += 1
-        command_line.extend((command, *command_args))
+        command_line = compose_replay_command(
+            project, model_file, global_args, command, command_args
+        )
         # The rendered model carries explicit ports, but Compose also resolves
         # interpolation while materializing/replaying it.  Preserve only the
         # broker's narrow allow-list for the execution phase; otherwise a

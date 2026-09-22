@@ -151,6 +151,79 @@ def main() -> None:
             "Compose image deletion was accepted",
         )
 
+        # A global dry-run flag must survive saved-model replay. Compose also
+        # accepts the same flag after `down`; retain that legal position, while
+        # rejecting value-bearing lookalikes before any daemon invocation.
+        model_file = base / "saved-model.json"
+        global_dry_run = broker.compose_replay_command(
+            project, model_file, ["--dry-run"], "down", []
+        )
+        assert global_dry_run == [
+            broker.DOCKER_BIN,
+            "compose",
+            "--project-name",
+            project,
+            "-f",
+            str(model_file),
+            "--dry-run",
+            "down",
+        ]
+        command_dry_run = broker.compose_replay_command(
+            project, model_file, [], "down", ["--dry-run"]
+        )
+        assert command_dry_run[-2:] == ["down", "--dry-run"]
+        profile_dry_run = broker.compose_replay_command(
+            project,
+            model_file,
+            ["--profile", "qa", "--dry-run", "--file", "compose.yml"],
+            "down",
+            [],
+        )
+        assert profile_dry_run[-4:] == ["--profile", "qa", "--dry-run", "down"]
+        assert "--file" not in profile_dry_run[:-1]
+        assert broker.compose_replay_command(
+            project, model_file, [], "ps", ["--all"]
+        )[-2:] == ["ps", "--all"]
+        expect_denied(
+            lambda: broker.split_compose_args(
+                ["compose", "--dry-run=true", "down"], repository, task_root
+            ),
+            "value-bearing global dry-run was accepted",
+        )
+        expect_denied(
+            lambda: broker.split_compose_args(
+                ["compose", "down", "--dry-run=false"], repository, task_root
+            ),
+            "value-bearing command dry-run was accepted",
+        )
+        daemon_calls: list[list[str]] = []
+        original_run_command = broker.run_command
+
+        def reject_daemon_call(args, *unused_args, **unused_kwargs):
+            daemon_calls.append(args)
+            raise AssertionError("malformed dry-run reached daemon execution")
+
+        broker.run_command = reject_daemon_call
+        malformed_request = {
+            "task_root": str(task_root),
+            "cwd": str(repository),
+            "token": broker.expected_token(b"dry-run-test-key", task_root),
+        }
+        try:
+            for malformed_args in (
+                ["compose", "--dry-run=false", "down"],
+                ["compose", "down", "--dry-run=nope"],
+            ):
+                expect_denied(
+                    lambda malformed_args=malformed_args: broker.handle_request(
+                        {**malformed_request, "args": malformed_args}, b"dry-run-test-key"
+                    ),
+                    "malformed dry-run reached request execution",
+                )
+        finally:
+            broker.run_command = original_run_command
+        assert daemon_calls == []
+
         assert broker.compose_environment(
             {"COMPOSE_PROJECT_NAME": "task_8402", "DB_PORT": "13306", "WEB_PORT": "18080"}
         ) == {"COMPOSE_PROJECT_NAME": "task_8402", "DB_PORT": "13306", "WEB_PORT": "18080"}
