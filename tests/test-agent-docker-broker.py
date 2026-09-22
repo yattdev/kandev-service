@@ -155,8 +155,11 @@ def main() -> None:
         # accepts the same flag after `down`; retain that legal position, while
         # rejecting value-bearing lookalikes before any daemon invocation.
         model_file = base / "saved-model.json"
+        before_globals, before_command, before_args = broker.split_compose_args(
+            ["compose", "--dry-run", "down"], repository, task_root
+        )
         global_dry_run = broker.compose_replay_command(
-            project, model_file, ["--dry-run"], "down", []
+            project, model_file, before_globals, before_command, before_args
         )
         assert global_dry_run == [
             broker.DOCKER_BIN,
@@ -168,8 +171,11 @@ def main() -> None:
             "--dry-run",
             "down",
         ]
+        after_globals, after_command, after_args = broker.split_compose_args(
+            ["compose", "down", "--dry-run"], repository, task_root
+        )
         command_dry_run = broker.compose_replay_command(
-            project, model_file, [], "down", ["--dry-run"]
+            project, model_file, after_globals, after_command, after_args
         )
         assert command_dry_run[-2:] == ["down", "--dry-run"]
         profile_dry_run = broker.compose_replay_command(
