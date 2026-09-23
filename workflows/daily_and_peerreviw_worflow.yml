@@ -140,7 +140,7 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Copilot
-            model: gpt-5.6-sol
+            model: gpt-6-sol
             mode: https://agentclientprotocol.com/protocol/session-modes#agent
           profile_session_start_policy: reuse
           profile_session_end_policy: complete
@@ -161,7 +161,7 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Copilot
-            model: savoirfairelinux/DeepInfra/zai-org%2FGLM-5.3-Flash
+            model: gpt-6-luna
             mode: https://agentclientprotocol.com/protocol/session-modes#agent
           profile_session_start_policy: reuse
           profile_session_end_policy: complete
@@ -233,7 +233,7 @@ workflows:
           auto_archive_after_hours: 72
           agent_profile:
             agent_name: Copilot
-            model: gpt-5.6-terra
+            model: gpt-6-luna
             mode: https://agentclientprotocol.com/protocol/session-modes#agent
           profile_session_start_policy: reuse
           profile_session_end_policy: complete
@@ -268,7 +268,7 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Copilot
-            model: gpt-5.3-codex
+            model: gpt-5.6-terra
             mode: https://agentclientprotocol.com/protocol/session-modes#autopilot
           profile_session_start_policy: reuse
           profile_session_end_policy: park
@@ -289,7 +289,7 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Copilot
-            model: gpt-5.6-sol
+            model: gpt-6-sol
             mode: https://agentclientprotocol.com/protocol/session-modes#autopilot
           profile_session_start_policy: reuse
           profile_session_end_policy: park
@@ -334,7 +334,7 @@ workflows:
           auto_archive_after_hours: 72
           agent_profile:
             agent_name: Copilot
-            model: gpt-5.6-terra
+            model: gpt-6-luna
             mode: https://agentclientprotocol.com/protocol/session-modes#agent
           profile_session_start_policy: reuse
           profile_session_end_policy: complete
