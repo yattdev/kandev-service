@@ -1,4 +1,4 @@
-version: 1
+version: 2
 type: kandev_workflow
 workflows:
     - name: Daily workflow
@@ -16,6 +16,7 @@ workflows:
           profile_session_end_policy: complete
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
+          complete_task_on_enter: false
         - name: Spec
           position: 1
           color: bg-purple-500
@@ -36,12 +37,13 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Codex
-            model: gpt-5.6-sol
+            model: gpt-6-sol
             mode: agent-full-access
           profile_session_start_policy: reuse
           profile_session_end_policy: park
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
+          complete_task_on_enter: false
         - name: Todo
           position: 2
           color: bg-slate-500
@@ -57,6 +59,7 @@ workflows:
           profile_session_end_policy: complete
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
+          complete_task_on_enter: false
         - name: Work
           position: 3
           color: bg-blue-500
@@ -79,6 +82,7 @@ workflows:
           profile_session_end_policy: park
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
+          complete_task_on_enter: false
         - name: Blocked
           position: 4
           color: bg-red-500
@@ -90,14 +94,14 @@ workflows:
           is_start_step: false
           show_in_command_panel: false
           allow_manual_move: true
-          agent_profile:
-            agent_name: Codex
-            model: gpt-5.6-terra
-            mode: agent-full-access
           profile_session_start_policy: reuse
           profile_session_end_policy: park
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
+          complete_task_on_enter: false
+          session_target:
+            kind: step
+            step_position: 3
         - name: Review
           position: 5
           color: bg-yellow-500
@@ -113,12 +117,13 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Codex
-            model: gpt-5.5
+            model: gpt-5.6-terra
             mode: agent-full-access
           profile_session_start_policy: new
           profile_session_end_policy: complete
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
+          complete_task_on_enter: false
         - name: QA
           position: 6
           color: bg-orange-500
@@ -133,12 +138,13 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Codex
-            model: gpt-5.6-sol
+            model: gpt-6-sol
             mode: agent-full-access
           profile_session_start_policy: new
           profile_session_end_policy: complete
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
+          complete_task_on_enter: false
         - name: PR
           position: 7
           color: bg-indigo-500
@@ -153,12 +159,13 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Codex
-            model: gpt-5.6-terra
+            model: gpt-6-luna
             mode: agent-full-access
-          profile_session_start_policy: reuse
+          profile_session_start_policy: new
           profile_session_end_policy: complete
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
+          complete_task_on_enter: false
         - name: CI Fixup
           position: 8
           color: bg-amber-500
@@ -173,12 +180,13 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Codex
-            model: gpt-5.6-luna
+            model: gpt-6-luna
             mode: agent-full-access
-          profile_session_start_policy: reuse
+          profile_session_start_policy: new
           profile_session_end_policy: complete
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
+          complete_task_on_enter: false
         - name: Human-QA
           position: 9
           color: bg-orange-500
@@ -197,6 +205,7 @@ workflows:
           profile_session_end_policy: park
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
+          complete_task_on_enter: false
         - name: ToDeploy
           position: 10
           color: bg-cyan-500
@@ -208,6 +217,7 @@ workflows:
           profile_session_end_policy: complete
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
+          complete_task_on_enter: false
         - name: Done
           position: 11
           color: bg-green-500
@@ -221,12 +231,13 @@ workflows:
           auto_archive_after_hours: 72
           agent_profile:
             agent_name: Codex
-            model: gpt-5.6-terra
+            model: gpt-6-luna
             mode: agent-full-access
           profile_session_start_policy: new
           profile_session_end_policy: complete
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
+          complete_task_on_enter: true
     - name: PR Review
       steps:
         - name: Backlogs
@@ -240,6 +251,7 @@ workflows:
           profile_session_end_policy: complete
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
+          complete_task_on_enter: false
         - name: Review
           position: 1
           color: bg-yellow-500
@@ -254,12 +266,13 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Codex
-            model: gpt-5.5
+            model: gpt-5.6-terra
             mode: agent-full-access
           profile_session_start_policy: new
           profile_session_end_policy: park
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
+          complete_task_on_enter: false
         - name: QA
           position: 2
           color: bg-blue-500
@@ -274,12 +287,13 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Codex
-            model: gpt-5.6-sol
+            model: gpt-6-sol
             mode: agent-full-access
           profile_session_start_policy: new
           profile_session_end_policy: park
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
+          complete_task_on_enter: false
         - name: Human-QA
           position: 3
           color: bg-cyan-500
@@ -304,6 +318,7 @@ workflows:
           profile_session_end_policy: park
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
+          complete_task_on_enter: false
         - name: Done
           position: 4
           color: bg-green-500
@@ -317,10 +332,11 @@ workflows:
           auto_archive_after_hours: 72
           agent_profile:
             agent_name: Codex
-            model: gpt-5.6-terra
+            model: gpt-6-luna
             mode: agent-full-access
           profile_session_start_policy: new
           profile_session_end_policy: complete
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
+          complete_task_on_enter: true
 
