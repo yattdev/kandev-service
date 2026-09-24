@@ -28,8 +28,9 @@ finishes source-step exit and skips destination session preparation. This
 preserves the existing session and completed task state. A regression test
 uses a Done step with a prompt, auto-start action and `new` profile policy;
 it verifies no added session and no REVIEW projection. The full release
-orchestrator package passed before the final narrowing to zero residual
-on-entry actions, and the focused regression passed after it. The backend
+orchestrator package passed against the exact deployed source commit after
+the final narrowing to zero residual on-entry actions. Focused canonical
+main orchestrator and task-service retention tests also passed. The backend
 was rebuilt with the complete existing generated web bundle; no frontend
 assets changed.
 
