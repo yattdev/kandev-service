@@ -274,6 +274,9 @@ trap - EXIT
     fixture_id="$(basename "$runtime_dir" | tr "[:upper:].-" "[:lower:]__")"
     scope_project="kd_guard_${fixture_id}"
     protected_project="${scope_project}-protected"
+    # Keep this disposable pair independent of Docker default pools, which can
+    # be exhausted by unrelated task-owned networks. RFC 2544 benchmark space
+    # is reserved for local tests; each project gets a separate /28 bridge.
     # Fixed host ports can belong to an active task.  Obtain two temporary
     # loopback ports for this Support-owned fixture, then assert Compose keeps
     # those exact explicit publications across an owned restart.
@@ -313,6 +316,11 @@ trap - EXIT
         "      - type: volume" \
         "        source: state" \
         "        target: /state" \
+        "networks:" \
+        "  default:" \
+        "    ipam:" \
+        "      config:" \
+        "        - subnet: 198.18.0.0/28" \
         "volumes:" \
         "  state: {}" > "$runtime_dir/docker-compose.yml"
     cd "$runtime_dir"
@@ -383,6 +391,9 @@ trap - EXIT
     test "$(cat container-write)" = container-write
     # A second synthetic project is independently model-bound.  Destroying the
     # first one must not select, stop, or remove the protected project state.
+    # The broker environment allow-list deliberately excludes arbitrary
+    # interpolation. Change only this task-owned file before binding project 2.
+    sed -i "s@198.18.0.0/28@198.18.0.16/28@" docker-compose.yml
     COMPOSE_PROJECT_NAME="$protected_project" DB_PORT="$protected_db_port" WEB_PORT="$protected_web_port" \
         docker compose up -d >/dev/null
     COMPOSE_PROJECT_NAME="$protected_project" DB_PORT="$protected_db_port" WEB_PORT="$protected_web_port" \
