@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import copy
+import ipaddress
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import json
@@ -74,6 +75,8 @@ COMPOSE_PROJECT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 STATIC_BACKUP_NAME = "last_db.sql"
 AUDIT_LOCK = threading.Lock()
 EXPORT_LOCK = threading.Lock()
+NETWORK_RESERVE_LOCK = threading.Lock()
+NETWORK_SLOT_POOL = ipaddress.IPv4Network("198.18.0.0/15")
 ACTIVE_TASK_SESSION_STATES = {"CREATED", "STARTING", "RUNNING", "WAITING_FOR_INPUT"}
 ACTIVE_TASK_ENVIRONMENT_STATES = {"creating", "ready"}
 ACTIVE_EXECUTOR_STATES = {"starting", "prepared", "running", "ready"}
@@ -317,6 +320,122 @@ def load_scoped_model(task_root: Path, cwd: Path, project: str) -> dict[str, Any
     return saved["model"]
 
 
+def host_ipv4_routes(route_file: Path = Path("/proc/net/route")) -> list[ipaddress.IPv4Network]:
+    """Read connected host routes without exposing other tasks' network data."""
+    try:
+        lines = route_file.read_text(encoding="ascii").splitlines()
+        if not lines or lines[0].split()[:2] != ["Iface", "Destination"]:
+            raise ValueError("missing route table header")
+        routes = []
+        for line in lines[1:]:
+            fields = line.split()
+            if len(fields) < 8:
+                raise ValueError("invalid route table row")
+            address = ipaddress.IPv4Address(struct.pack("<I", int(fields[1], 16)))
+            mask = ipaddress.IPv4Address(struct.pack("<I", int(fields[7], 16)))
+            route = ipaddress.IPv4Network((str(address), str(mask)), strict=False)
+            if route.prefixlen:
+                routes.append(route)
+        return routes
+    except (OSError, ValueError, IndexError) as exc:
+        raise BrokerError("host IPv4 route preflight is unavailable") from exc
+
+
+def inspect_owned_network(name: str) -> dict[str, Any] | None:
+    code, output, error = run_command([DOCKER_BIN, "network", "inspect", name], Path("/"))
+    if code != 0:
+        if "no such network" in error.lower() or "not found" in error.lower():
+            return None
+        raise BrokerError("Docker network availability check failed")
+    try:
+        networks = json.loads(output)
+    except json.JSONDecodeError as exc:
+        raise BrokerError("Docker network inspection returned invalid data") from exc
+    if not isinstance(networks, list) or len(networks) != 1 or networks[0].get("Name") != name:
+        raise BrokerError("Docker network inspection did not resolve the exact project network")
+    return networks[0]
+
+
+def owned_network_receipt(network: dict[str, Any], task_root: Path, project: str) -> dict[str, Any]:
+    name = f"{project}_default"
+    labels = network.get("Labels") or {}
+    digest = hashlib.sha256(str(task_root).encode()).hexdigest()
+    if network.get("Name") != name or any((
+        labels.get("com.docker.compose.project") != project,
+        labels.get("com.docker.compose.network") != "default",
+        labels.get("kandev.agent.task_digest") != digest,
+    )):
+        raise BrokerError("project network exists without this task's reservation ownership")
+    configs = (network.get("IPAM") or {}).get("Config") or []
+    subnets = [entry.get("Subnet") for entry in configs if isinstance(entry, dict) and entry.get("Subnet")]
+    if len(subnets) != 1:
+        raise BrokerError("reserved project network has an ambiguous subnet")
+    try:
+        subnet = ipaddress.IPv4Network(subnets[0], strict=True)
+    except (ipaddress.AddressValueError, ipaddress.NetmaskValueError) as exc:
+        raise BrokerError("reserved project network has an invalid subnet") from exc
+    if subnet.prefixlen != 24 or not subnet.subnet_of(NETWORK_SLOT_POOL):
+        raise BrokerError("reserved project network is outside the guarded slot pool")
+    if any(subnet.overlaps(route) for route in host_ipv4_routes() if route != subnet):
+        raise BrokerError("reserved project network now overlaps a host route")
+    network_id = network.get("Id")
+    if not isinstance(network_id, str) or not re.fullmatch(r"[0-9a-f]{64}", network_id):
+        raise BrokerError("reserved project network has no valid Docker identity")
+    return {"project": project, "network": name, "network_id": network_id, "subnet": str(subnet)}
+
+
+def handle_network_reserve(task_root: Path, cwd: Path, args: list[str], environment: dict[str, str]) -> dict[str, Any]:
+    if args != ["kandev", "network", "reserve"]:
+        raise BrokerError("guarded network command is: docker kandev network reserve")
+    project = scoped_project_name(task_root, environment)
+    model = load_scoped_model(task_root, cwd, project)
+    networks = model.get("networks") or {}
+    default = networks.get("default") if isinstance(networks, dict) else None
+    if set(networks) != {"default"} or not isinstance(default, dict) or default.get("name") != f"{project}_default":
+        raise BrokerError("network reservation requires one project-owned default Compose network")
+    if (set(default) - {"name", "ipam", "driver"}
+            or default.get("ipam") not in (None, {})
+            or default.get("driver") not in (None, "bridge")):
+        raise BrokerError("network reservation requires an unconfigured default bridge network")
+    name = f"{project}_default"
+    digest = hashlib.sha256(str(task_root).encode()).hexdigest()
+    audit_id = str(uuid.uuid4())
+    audit_compose(task_root, cwd, project, project, "network reserve", "allow", "preflight",
+                  audit_id=audit_id, command_class="network_reserve")
+    with NETWORK_RESERVE_LOCK:
+        existing = inspect_owned_network(name)
+        if existing is not None:
+            if existing.get("Containers"):
+                raise BrokerError("reserved project network is already in use")
+            receipt = owned_network_receipt(existing, task_root, project)
+            audit_compose(task_root, cwd, project, project, "network reserve", "allow", "existing",
+                          audit_id=audit_id, command_class="network_reserve")
+            return {"returncode": 0, "stdout": json.dumps({**receipt, "existing": True}) + "\n", "stderr": ""}
+        routes = host_ipv4_routes()
+        for subnet in NETWORK_SLOT_POOL.subnets(new_prefix=24):
+            if any(subnet.overlaps(route) for route in routes):
+                continue
+            code, _, error = run_command([
+                DOCKER_BIN, "network", "create", "--driver", "bridge", "--subnet", str(subnet),
+                "--label", f"com.docker.compose.project={project}",
+                "--label", "com.docker.compose.network=default",
+                "--label", f"kandev.agent.task_digest={digest}", name,
+            ], Path("/"))
+            if code == 0:
+                created = inspect_owned_network(name)
+                if created is None:
+                    raise BrokerError("created project network could not be verified")
+                receipt = owned_network_receipt(created, task_root, project)
+                if receipt["subnet"] != str(subnet):
+                    raise BrokerError("created project network subnet did not match reservation")
+                audit_compose(task_root, cwd, project, project, "network reserve", "allow", "created",
+                              audit_id=audit_id, command_class="network_reserve")
+                return {"returncode": 0, "stdout": json.dumps({**receipt, "existing": False}) + "\n", "stderr": ""}
+            if "overlap" not in error.lower() and "already allocated" not in error.lower():
+                raise BrokerError("Docker could not create the task-owned network slot")
+    raise BrokerError("no route-safe guarded Docker network slot is available")
+
+
 def audit_compose(
     task_root: Path,
     cwd: Path,
@@ -327,12 +446,13 @@ def audit_compose(
     result: str,
     *,
     audit_id: str,
+    command_class: str = "destructive",
 ) -> None:
     """Durably record a destructive decision without command arguments or env."""
     event = {
         "audit_id": audit_id,
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "command_class": "destructive",
+        "command_class": command_class,
         "requested_project": requested_project,
         "resolved_project": resolved_project,
         "canonical_project_directory": str(cwd),
@@ -2018,6 +2138,8 @@ def handle_request(
         return handle_coordinator_workspace(task_root, args)
     if args[:2] == ["kandev", "support"]:
         return handle_coordinator_support(task_root, args)
+    if args[:2] == ["kandev", "network"]:
+        return handle_network_reserve(task_root, cwd, args, environment_overrides)
 
     global_args, command, command_args = split_compose_args(args, cwd, task_root)
     project_directory = compose_project_directory(cwd, task_root, global_args)

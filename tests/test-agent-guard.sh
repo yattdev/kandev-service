@@ -274,9 +274,8 @@ trap - EXIT
     fixture_id="$(basename "$runtime_dir" | tr "[:upper:].-" "[:lower:]__")"
     scope_project="kd_guard_${fixture_id}"
     protected_project="${scope_project}-protected"
-    # Keep this disposable pair independent of Docker default pools, which can
-    # be exhausted by unrelated task-owned networks. RFC 2544 benchmark space
-    # is reserved for local tests; each project gets a separate /28 bridge.
+    # Each disposable project obtains its own network through the guarded
+    # capacity admission, even when Docker default pools are exhausted.
     # Fixed host ports can belong to an active task.  Obtain two temporary
     # loopback ports for this Support-owned fixture, then assert Compose keeps
     # those exact explicit publications across an owned restart.
@@ -316,11 +315,6 @@ trap - EXIT
         "      - type: volume" \
         "        source: state" \
         "        target: /state" \
-        "networks:" \
-        "  default:" \
-        "    ipam:" \
-        "      config:" \
-        "        - subnet: 198.18.0.0/28" \
         "volumes:" \
         "  state: {}" > "$runtime_dir/docker-compose.yml"
     cd "$runtime_dir"
@@ -336,6 +330,9 @@ trap - EXIT
     printf "%s\n" "$rendered" | grep -Eq "published: [\"\047]?$expected_db_port[\"\047]?"
     printf "%s\n" "$rendered" | grep -Eq "published: [\"\047]?$expected_web_port[\"\047]?"
     printf "%s\n" "$rendered" | grep -Eq "guard.compose.scope: [\"\047]?$project_name[\"\047]?"
+    scope_receipt="$(docker kandev network reserve)"
+    scope_subnet="$(printf "%s" "$scope_receipt" | python3 -c "import json,sys; r=json.load(sys.stdin); assert r[\"project\"] == \"$scope_project\" and r[\"network\"] == \"${scope_project}_default\" and not r[\"existing\"]; print(r[\"subnet\"])")"
+    printf "guard network reservation: %s\n" "$scope_receipt" >&2
     attempt=0
     until docker compose up -d --build >/dev/null; do
         attempt=$((attempt + 1))
@@ -391,9 +388,11 @@ trap - EXIT
     test "$(cat container-write)" = container-write
     # A second synthetic project is independently model-bound.  Destroying the
     # first one must not select, stop, or remove the protected project state.
-    # The broker environment allow-list deliberately excludes arbitrary
-    # interpolation. Change only this task-owned file before binding project 2.
-    sed -i "s@198.18.0.0/28@198.18.0.16/28@" docker-compose.yml
+    COMPOSE_PROJECT_NAME="$protected_project" DB_PORT="$protected_db_port" WEB_PORT="$protected_web_port" \
+        docker compose config >/dev/null
+    protected_receipt="$(COMPOSE_PROJECT_NAME="$protected_project" docker kandev network reserve)"
+    printf "%s" "$protected_receipt" | python3 -c "import json,sys; r=json.load(sys.stdin); assert r[\"project\"] == \"$protected_project\" and r[\"network\"] == \"${protected_project}_default\" and not r[\"existing\"] and r[\"subnet\"] != \"$scope_subnet\""
+    printf "guard network reservation: %s\n" "$protected_receipt" >&2
     COMPOSE_PROJECT_NAME="$protected_project" DB_PORT="$protected_db_port" WEB_PORT="$protected_web_port" \
         docker compose up -d >/dev/null
     COMPOSE_PROJECT_NAME="$protected_project" DB_PORT="$protected_db_port" WEB_PORT="$protected_web_port" \

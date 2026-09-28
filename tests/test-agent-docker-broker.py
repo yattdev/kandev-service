@@ -6,6 +6,7 @@ from __future__ import annotations
 import importlib.machinery
 import importlib.util
 import hashlib
+import ipaddress
 import json
 import os
 from contextlib import contextmanager
@@ -297,6 +298,98 @@ def main() -> None:
         assert allowed["result"] == "preflight"
         assert allowed["command_class"] == "destructive"
         assert "args" not in allowed and "environment" not in allowed
+
+        # Network admission is bound to the saved task/clone project. The
+        # broker skips a host route, creates only this project's default bridge,
+        # and returns its own verified ID on an idempotent retry.
+        reservation_model = {
+            "name": disposable_project,
+            "services": {"db": {"image": "alpine:latest"}},
+            "networks": {"default": {"name": f"{disposable_project}_default", "ipam": {}}},
+        }
+        broker.save_scoped_model(task_root, repository, disposable_project, reservation_model)
+        original_routes = broker.host_ipv4_routes
+        original_network_run = broker.run_command
+        broker.host_ipv4_routes = lambda: [ipaddress.IPv4Network("198.18.0.0/24")]
+        network_id = "a" * 64
+        network_name = f"{disposable_project}_default"
+        created = False
+        create_calls = []
+
+        def fake_network_run(args, cwd, *unused, **unused_kwargs):
+            nonlocal created
+            if args[1:3] == ["network", "inspect"]:
+                if not created:
+                    return 1, "", f"No such network: {network_name}"
+                return 0, json.dumps([{
+                    "Id": network_id, "Name": network_name,
+                    "Labels": {
+                        "com.docker.compose.project": disposable_project,
+                        "com.docker.compose.network": "default",
+                        "kandev.agent.task_digest": hashlib.sha256(str(task_root).encode()).hexdigest(),
+                    },
+                    "IPAM": {"Config": [{"Subnet": "198.18.1.0/24"}]},
+                }]), ""
+            if args[1:3] == ["network", "create"]:
+                create_calls.append(args)
+                assert args[args.index("--subnet") + 1] == "198.18.1.0/24"
+                assert args[-1] == network_name
+                created = True
+                return 0, network_id, ""
+            raise AssertionError(f"unexpected Docker command: {args}")
+
+        broker.run_command = fake_network_run
+        try:
+            first = broker.handle_network_reserve(
+                task_root, repository, ["kandev", "network", "reserve"],
+                {"COMPOSE_PROJECT_NAME": disposable_project},
+            )
+            assert first["returncode"] == 0
+            assert json.loads(first["stdout"]) == {
+                "project": disposable_project, "network": network_name,
+                "network_id": network_id, "subnet": "198.18.1.0/24", "existing": False,
+            }
+            second = broker.handle_network_reserve(
+                task_root, repository, ["kandev", "network", "reserve"],
+                {"COMPOSE_PROJECT_NAME": disposable_project},
+            )
+            assert json.loads(second["stdout"])["existing"] is True
+            assert len(create_calls) == 1
+            inspected = broker.inspect_owned_network(network_name)
+            assert inspected is not None
+            inspected["Containers"] = {"foreign-consumer": {}}
+            original_inspect_owned = broker.inspect_owned_network
+            broker.inspect_owned_network = lambda unused_name: inspected
+            try:
+                expect_denied(
+                    lambda: broker.handle_network_reserve(
+                        task_root, repository, ["kandev", "network", "reserve"],
+                        {"COMPOSE_PROJECT_NAME": disposable_project},
+                    ),
+                    "occupied network was reused by reservation",
+                )
+            finally:
+                broker.inspect_owned_network = original_inspect_owned
+            expect_denied(
+                lambda: broker.handle_network_reserve(
+                    outside, repository, ["kandev", "network", "reserve"],
+                    {"COMPOSE_PROJECT_NAME": disposable_project},
+                ),
+                "another task reserved an existing project network",
+            )
+            reservation_model["networks"]["default"]["ipam"] = {
+                "config": [{"subnet": "198.18.9.0/24"}]}
+            broker.save_scoped_model(task_root, repository, disposable_project, reservation_model)
+            expect_denied(
+                lambda: broker.handle_network_reserve(
+                    task_root, repository, ["kandev", "network", "reserve"],
+                    {"COMPOSE_PROJECT_NAME": disposable_project},
+                ),
+                "agent-selected IPAM entered guarded network reservation",
+            )
+        finally:
+            broker.host_ipv4_routes = original_routes
+            broker.run_command = original_network_run
         broker.MODEL_DIR = original_model_dir
         broker.COMPOSE_AUDIT_LOG = original_compose_audit
 
