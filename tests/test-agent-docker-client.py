@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import struct
 import threading
+import json
 
 
 CLIENT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "kandev-agent-docker-client"
@@ -125,6 +126,67 @@ def main() -> None:
     assert client.should_stream_stdin(["compose", "exec", "-T", "db", "mariadb"])
     assert not client.should_stream_stdin(["compose", "version"])
     assert not client.should_stream_stdin(["compose", "exec", "db", "mariadb"])
+
+    # If the broker rejects an upload early, preserve its structured child
+    # status and stderr instead of replacing them with a generic EPIPE.
+    class EarlyResponseSocket:
+        def __init__(self) -> None:
+            self.sent = 0
+            self.response = json.dumps({
+                "returncode": 7, "stdout": "", "stderr": "fixture reader exited 7\n"
+            }).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def connect(self, _path):
+            pass
+
+        def sendall(self, _data):
+            self.sent += 1
+            if self.sent > 1:
+                raise BrokenPipeError(errno.EPIPE, "broker closed upload")
+
+        def shutdown(self, _how):
+            raise OSError(errno.ENOTCONN, "broker already closed")
+
+        def recv(self, _size):
+            response, self.response = self.response, b""
+            return response
+
+    original_socket = client.socket.socket
+    original_write_all = client.write_all
+    original_argv = client.sys.argv
+    saved_environment = {
+        key: os.environ.get(key)
+        for key in ("KANDEV_AGENT_DOCKER_SOCKET", "KANDEV_AGENT_DOCKER_TOKEN", "KANDEV_AGENT_DOCKER_ROOT")
+    }
+    writes = []
+    try:
+        client.socket.socket = lambda *_args, **_kwargs: EarlyResponseSocket()
+        client.write_all = lambda stream, output: writes.append((stream, output))
+        client.sys.stdin = BinaryInput(b"\x00" * (2 * 1024 * 1024))
+        client.sys.argv = ["docker", "compose", "exec", "-T", "sink", "cat"]
+        os.environ.update({
+            "KANDEV_AGENT_DOCKER_SOCKET": "/tmp/proof.sock",
+            "KANDEV_AGENT_DOCKER_TOKEN": "proof",
+            "KANDEV_AGENT_DOCKER_ROOT": "/tmp/proof-task",
+        })
+        assert client.main() == 7
+        assert any("fixture reader exited 7" in output for _stream, output in writes)
+    finally:
+        client.socket.socket = original_socket
+        client.write_all = original_write_all
+        client.sys.stdin = original_stdin
+        client.sys.argv = original_argv
+        for key, value in saved_environment.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
     print("PASS: guarded Docker client drains nonblocking terminal output")
 
 

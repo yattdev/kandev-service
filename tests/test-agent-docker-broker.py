@@ -15,6 +15,7 @@ import sqlite3
 import tempfile
 import io
 import struct
+import time
 
 
 BROKER_PATH = Path(__file__).resolve().parents[1] / "scripts" / "kandev-agent-docker-broker"
@@ -444,6 +445,21 @@ def main() -> None:
             stdin_stream=broker.FramedInput(io.BytesIO(framed)),
         )
         assert code == 7, "an early input consumer exit must not become success"
+        class SlowInput(io.BytesIO):
+            def read(self, size=-1):
+                time.sleep(0.4)
+                return super().read(size)
+
+        # An early child exit used to close the broker socket after a fixed
+        # five-second feeder join, before a finite producer finished sending.
+        slow_payload = binary[:1024 * 1024]
+        slow_framed = struct.pack("!I", len(slow_payload)) + slow_payload + empty
+        code, _stdout, stderr = broker.run_command(
+            ["/bin/sh", "-c", "head -c 1 >/dev/null; echo child-exit >&2; exit 7"],
+            repository,
+            stdin_stream=broker.FramedInput(SlowInput(slow_framed)),
+        )
+        assert code == 7 and "child-exit" in stderr and "stdin transport failed" not in stderr
         code, _stdout, stderr = broker.run_command(
             ["/bin/sh", "-c", "cat"], repository,
             stdin_stream=broker.FramedInput(io.BytesIO(struct.pack("!I", 8) + b"short")),

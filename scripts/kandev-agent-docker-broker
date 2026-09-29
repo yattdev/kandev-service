@@ -854,6 +854,7 @@ def run_command(
     environment_overrides: dict[str, str] | None = None,
     stdin_stream: FramedInput | None = None,
 ) -> tuple[int, str, str]:
+    deadline = time.monotonic() + timeout
     with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
         process = subprocess.Popen(
             args,
@@ -897,14 +898,17 @@ def run_command(
             feeder = threading.Thread(target=feed_stdin, daemon=True)
             feeder.start()
         try:
-            return_code = process.wait(timeout=timeout)
+            return_code = process.wait(timeout=max(0, deadline - time.monotonic()))
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait()
             return_code = 124
             stderr_file.write(f"command timed out after {timeout} seconds\n".encode())
         if feeder is not None:
-            feeder.join(timeout=5)
+            # A command can exit after reading only a prefix. Keep draining
+            # its producer until the command deadline so the client receives
+            # the child's actual exit and stderr instead of a socket EPIPE.
+            feeder.join(timeout=max(0, deadline - time.monotonic()))
             if feeder.is_alive():
                 input_error.append(BrokerError("guarded Compose stdin stream did not finish"))
         if input_error:

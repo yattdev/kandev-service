@@ -114,14 +114,25 @@ def main() -> int:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
             connection.connect(socket_path)
             connection.sendall(json.dumps(request).encode() + b"\n")
-            send_stdin(connection, should_stream_stdin(sys.argv[1:]))
-            connection.shutdown(socket.SHUT_WR)
+            send_error: OSError | None = None
+            try:
+                send_stdin(connection, should_stream_stdin(sys.argv[1:]))
+            except (BrokenPipeError, ConnectionResetError) as exc:
+                # An early broker rejection may have already sent a useful
+                # response. Read it before reporting an opaque socket error.
+                send_error = exc
+            try:
+                connection.shutdown(socket.SHUT_WR)
+            except OSError as exc:
+                send_error = send_error or exc
             chunks: list[bytes] = []
             while True:
                 chunk = connection.recv(1024 * 1024)
                 if not chunk:
                     break
                 chunks.append(chunk)
+        if not chunks and send_error is not None:
+            raise send_error
         response = json.loads(b"".join(chunks))
     except (OSError, json.JSONDecodeError) as exc:
         print(f"docker: task-scoped broker is unavailable: {exc}", file=sys.stderr)
