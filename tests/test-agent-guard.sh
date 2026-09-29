@@ -30,6 +30,20 @@ probe="$task_root/.kandev-guard-write-probe-$$"
 (cd "$task_root" && "$GUARD" -- sh -ceu 'printf allowed > "$1"; test "$(cat "$1")" = allowed; rm -f "$1"' sh "$probe")
 [[ ! -e "$probe" ]]
 
+# A private task fixture can contain a DSN. The read-only outer root must not
+# expose another task's directory to this ordinary task.
+sibling_task_dir="$(sqlite3 -noheader /data/data/kandev.db "
+    SELECT te.task_dir_name
+    FROM task_environments te
+    JOIN tasks t ON t.id = te.task_id
+    WHERE t.archived_at IS NULL AND te.task_dir_name <> ''
+      AND te.task_dir_name <> '${task_root#/data/tasks/}'
+    ORDER BY t.updated_at DESC LIMIT 1;
+")"
+if [[ -n "$sibling_task_dir" && -d "/data/tasks/$sibling_task_dir" ]]; then
+    (cd "$task_root" && "$GUARD" -- sh -ceu 'test ! -e "$1"' sh "/data/tasks/$sibling_task_dir")
+fi
+
 if (cd "$task_root" && "$GUARD" -- sh -c 'touch /data/home/Code/.kandev-guard-escape-probe') 2>/dev/null; then
     echo "ERROR: guarded process wrote to the Code root" >&2
     exit 1

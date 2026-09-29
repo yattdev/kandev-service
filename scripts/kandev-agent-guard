@@ -180,6 +180,8 @@ bwrap_args=(
     --unshare-uts
     --ro-bind / /
     --dev /dev
+    # Hide sibling task roots before rebinding the exact caller root below.
+    --tmpfs /data/tasks
     --tmpfs /tmp
     --tmpfs /run
     --bind "$writable_root" "$writable_root"
