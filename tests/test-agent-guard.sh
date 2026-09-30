@@ -304,6 +304,7 @@ trap - EXIT
             docker compose down -v --remove-orphans >/dev/null 2>&1 || true
         (cd "$runtime_dir" && docker compose down -v --remove-orphans >/dev/null 2>&1) || true
         rm -f "$runtime_dir/Containerfile.test" "$runtime_dir/docker-compose.yml" \
+            "$runtime_dir/overlay.yml" \
             "$runtime_dir/outside.yml" "$runtime_dir/container-write"
         rmdir "$runtime_dir/.kandev-runtime" 2>/dev/null || true
         rmdir "$runtime_dir" 2>/dev/null || true
@@ -392,12 +393,37 @@ trap - EXIT
     docker compose restart probe >/dev/null
     case "$(docker compose port probe 3306)" in *:"${DB_PORT}") ;; *) echo "ERROR: restart lost db port" >&2; exit 1;; esac
     case "$(docker compose port probe 8080)" in *:"${WEB_PORT}") ;; *) echo "ERROR: restart lost web port" >&2; exit 1;; esac
-    # Match the affected task path: service-specific force recreation must use
-    # the already-saved model and retain its explicit publications.
+    # A service-specific recreate retains its explicit publications.
     mkdir "$runtime_dir/.kandev-runtime"
     (cd "$runtime_dir/.kandev-runtime" && docker compose -f ../docker-compose.yml up -d --force-recreate probe >/dev/null)
     case "$(cd "$runtime_dir/.kandev-runtime" && docker compose -f ../docker-compose.yml port probe 3306)" in *:"${DB_PORT}") ;; *) echo "ERROR: runtime-wrapper force recreate lost db port" >&2; exit 1;; esac
     case "$(cd "$runtime_dir/.kandev-runtime" && docker compose -f ../docker-compose.yml port probe 8080)" in *:"${WEB_PORT}") ;; *) echo "ERROR: runtime-wrapper force recreate lost web port" >&2; exit 1;; esac
+    # A stale base-only saved model must not replace the two-file overlay on a
+    # service-only recreate. The dependency must keep the same container ID.
+    cat > "$runtime_dir/overlay.yml" <<EOF
+services:
+  sidecar:
+    image: alpine:latest
+    command: [sh, -c, "echo overlay >/state/overlay; sleep 300"]
+    depends_on:
+      probe:
+        condition: service_started
+    volumes:
+      - type: volume
+        source: state
+        target: /state
+EOF
+    docker compose -f docker-compose.yml -f overlay.yml up -d sidecar >/dev/null
+    probe_before="$(docker compose -f docker-compose.yml -f overlay.yml ps -q probe)"
+    test -n "$probe_before"
+    docker compose -f docker-compose.yml config >/dev/null
+    if docker compose -f docker-compose.yml -f overlay.yml up -d --force-recreate sidecar >/dev/null 2>&1; then
+        echo "ERROR: dependent service recreation without --no-deps was accepted" >&2
+        exit 1
+    fi
+    docker compose -f docker-compose.yml -f overlay.yml up -d --no-deps --force-recreate sidecar >/dev/null
+    test "$(docker compose -f docker-compose.yml -f overlay.yml ps -q probe)" = "$probe_before"
+    docker compose -f docker-compose.yml -f overlay.yml exec -T sidecar test -f /state/overlay </dev/null
     docker compose exec -T probe sh -c "echo container-write >/workspace/container-write" </dev/null
     test "$(cat container-write)" = container-write
     # A second synthetic project is independently model-bound.  Destroying the

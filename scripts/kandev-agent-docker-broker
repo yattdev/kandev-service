@@ -72,6 +72,7 @@ TASK_ID_RE = re.compile(
 TASK_DIR_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 COMPOSE_ENV_KEYS = {"COMPOSE_PROJECT_NAME", "DB_PORT", "WEB_PORT"}
 COMPOSE_PROJECT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+IMAGE_TAG_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$")
 STATIC_BACKUP_NAME = "last_db.sql"
 AUDIT_LOCK = threading.Lock()
 EXPORT_LOCK = threading.Lock()
@@ -709,9 +710,10 @@ def validate_model(
             raise BrokerError(f"Compose service {service_name} overrides reserved ownership labels")
 
         build = service.get("build")
+        requested_image = service.get("image")
         if isinstance(build, str):
             service["build"] = str(scoped_path_to_host(build, cwd, task_root, host_root))
-            service["image"] = f"{project}_{service_name}:latest"
+            service["image"] = scoped_build_image(requested_image, project, service_name)
         elif isinstance(build, dict):
             context = build.get("context")
             remote_context = context and str(context).startswith(
@@ -749,7 +751,7 @@ def validate_model(
                     raise BrokerError(f"Compose build for {service_name} uses forbidden setting: {key}")
             # Never overwrite a host image tag that may belong to another task
             # or a production Compose project.
-            service["image"] = f"{project}_{service_name}:latest"
+            service["image"] = scoped_build_image(requested_image, project, service_name)
 
         for mount in service.get("volumes") or []:
             if not isinstance(mount, dict):
@@ -774,6 +776,28 @@ def validate_model(
                     scoped_path_to_host(str(config["file"]), cwd, task_root, host_root)
                 )
     return sanitized
+
+
+def scoped_build_image(requested: Any, project: str, service: str) -> str:
+    """Keep an explicit task image tag without allowing a shared image overwrite."""
+    prefix = f"{project}_{service}:"
+    if isinstance(requested, str) and requested.startswith(prefix):
+        tag = requested[len(prefix):]
+        if IMAGE_TAG_RE.fullmatch(tag):
+            return requested
+    return f"{project}_{service}:latest"
+
+
+def require_isolated_recreate(model: dict[str, Any], command: str, args: list[str]) -> None:
+    """A selected dependent service must not recreate its dependencies."""
+    if command != "up" or "--force-recreate" not in args or "--no-deps" in args:
+        return
+    services = model.get("services") or {}
+    for name, service in services.items():
+        if name in args and service.get("depends_on"):
+            raise BrokerError(
+                "recreating a selected service with dependencies requires --no-deps"
+            )
 
 
 def compose_environment(raw: Any) -> dict[str, str]:
@@ -2114,6 +2138,19 @@ def compose_config(
         raise BrokerError("Docker Compose returned an invalid configuration model") from exc
 
 
+def render_model_for_command(
+    task_root: Path, cwd: Path, project_directory: Path, host_root: Path,
+    project: str, global_args: list[str], command: str, command_args: list[str],
+    environment: dict[str, str],
+) -> dict[str, Any]:
+    """Authorize the model named by this invocation, then save it for existing commands."""
+    initial = compose_config(cwd, project, global_args, environment)
+    model = validate_model(initial, cwd, task_root, host_root, project)
+    require_isolated_recreate(model, command, command_args)
+    save_scoped_model(task_root, project_directory, project, model)
+    return model
+
+
 def handle_request(
     request: dict[str, Any], key: bytes, stdin_stream: FramedInput | None = None
 ) -> dict[str, Any]:
@@ -2177,16 +2214,13 @@ def handle_request(
         # ownership record.  A sibling clone can only operate its own prior
         # model, not the registered main clone's project.
         sanitized_model = load_scoped_model(task_root, project_directory, project)
-    elif command == "up" and "--force-recreate" in command_args and model_path(task_root, project).exists():
-        # Recreating selected services must use the exact model already
-        # authorized for this task/clone.  Re-rendering here was observably
-        # lossy for declared published ports on an existing project even when
-        # `compose config` displayed them correctly.
-        sanitized_model = load_scoped_model(task_root, project_directory, project)
     else:
-        initial_model = compose_config(cwd, project, global_args, environment_overrides)
-        sanitized_model = validate_model(initial_model, cwd, task_root, host_root, project)
-        save_scoped_model(task_root, project_directory, project, sanitized_model)
+        # A prior config, build, or up may have saved a different model for the
+        # project. Never substitute that model for this invocation's files.
+        sanitized_model = render_model_for_command(
+            task_root, cwd, project_directory, host_root, project, global_args,
+            command, command_args, environment_overrides,
+        )
 
     model_file: Path | None = None
     try:

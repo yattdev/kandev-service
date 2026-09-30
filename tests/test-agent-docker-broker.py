@@ -92,6 +92,15 @@ def main() -> None:
         assert sanitized_build["services"]["app"]["image"] == f"{project}_app:latest"
         assert sanitized_build["services"]["app"]["build"]["context"] == str(repository)
         assert sanitized_build["services"]["app"]["build"]["dockerfile"] == str(dockerfile)
+        build_model["services"]["app"]["image"] = f"{project}_app:qa-8bf9"
+        pinned_build = broker.validate_model(
+            build_model, repository, task_root, task_root, project
+        )
+        assert pinned_build["services"]["app"]["image"] == f"{project}_app:qa-8bf9"
+        build_model["services"]["app"]["image"] = f"{project}_app:bad/tag"
+        assert broker.validate_model(
+            build_model, repository, task_root, task_root, project
+        )["services"]["app"]["image"] == f"{project}_app:latest"
 
         config_file = repository / "app.conf"
         config_file.touch()
@@ -472,8 +481,8 @@ def main() -> None:
             {"target": 8080, "published": "60003", "host_ip": "0.0.0.0"},
         ]
         assert broker.validate_model(ports_model, repository, task_root, task_root, project)["services"]["app"]["ports"] == ports_model["services"]["app"]["ports"]
-        # Service-specific force recreation must reuse an existing immutable
-        # model instead of re-rendering a potentially lossy port projection.
+        # A service-only recreate must use its explicit overlay even when an
+        # earlier command saved a different model for the same project.
         original_model_dir = broker.MODEL_DIR
         broker.MODEL_DIR = base / "force-recreate-models"
         try:
@@ -498,6 +507,45 @@ def main() -> None:
                 lambda: broker.load_scoped_model(task_root, sibling, project),
                 "a sibling clone reused the persisted project model",
             )
+
+            overlay_model = {
+                "services": {
+                    "db": {"image": "mariadb:12.3.3"},
+                    "web": {
+                        "image": "alpine:latest",
+                        "command": ["sh", "-c", "echo overlay"],
+                        "depends_on": {"db": {"condition": "service_started"}},
+                    },
+                },
+            }
+            original_compose_config = broker.compose_config
+            calls: list[list[str]] = []
+
+            def overlay_config(_cwd, _project, global_args, _environment):
+                calls.append(global_args)
+                return overlay_model
+
+            broker.compose_config = overlay_config
+            files = ["-f", str(compose_file), "-f", str(repository / "overlay.yml")]
+            try:
+                expect_denied(
+                    lambda: broker.render_model_for_command(
+                        task_root, repository, repository, task_root, project,
+                        files, "up", ["-d", "--force-recreate", "web"], {},
+                    ),
+                    "dependent service recreation without --no-deps was accepted",
+                )
+                assert broker.load_scoped_model(task_root, repository, project) == ports_model
+                rendered = broker.render_model_for_command(
+                    task_root, repository, repository, task_root, project,
+                    files, "up", ["-d", "--no-deps", "--force-recreate", "web"], {},
+                )
+                assert rendered["services"]["db"]["image"] == "mariadb:12.3.3"
+                assert rendered["services"]["web"]["command"] == ["sh", "-c", "echo overlay"]
+                assert broker.load_scoped_model(task_root, repository, project) == rendered
+                assert calls == [files, files]
+            finally:
+                broker.compose_config = original_compose_config
         finally:
             broker.MODEL_DIR = original_model_dir
 
