@@ -44,6 +44,19 @@ if [[ -n "$sibling_task_dir" && -d "/data/tasks/$sibling_task_dir" ]]; then
     (cd "$task_root" && "$GUARD" -- sh -ceu 'test ! -e "$1"' sh "/data/tasks/$sibling_task_dir")
 fi
 
+# The v0.96 managed npm launcher prepares this directory outside the guard.
+# The guard's private /tmp must recreate it so npx can use --prefix, without
+# making the host directory or any other /tmp content visible to the agent.
+managed_npm_hash="$(printf '%s' "$(id -u)" | sha256sum | cut -c1-16)"
+managed_npm_prefix="/tmp/kandev-managed-npm-runtime-$managed_npm_hash"
+(cd "$task_root" && "$GUARD" -- sh -ceu '
+    test -d "$2"
+    test -w "$2"
+    test "$(stat -c %a "$2")" = 700
+    test "$(findmnt -T "$2" -n -o FSTYPE)" = tmpfs
+' sh --prefix "$managed_npm_prefix")
+(cd "$task_root" && "$GUARD" -- sh -ceu 'test ! -e "$1"' sh "$managed_npm_prefix")
+
 if (cd "$task_root" && "$GUARD" -- sh -c 'touch /data/home/Code/.kandev-guard-escape-probe') 2>/dev/null; then
     echo "ERROR: guarded process wrote to the Code root" >&2
     exit 1
@@ -494,6 +507,11 @@ done < <(sqlite3 /data/data/kandev.db "
           WHERE tr.task_id = t.id AND r.workspace_id = t.workspace_id
             AND r.local_path = '/data/home/Code/coordinator'
             AND r.deleted_at IS NULL
+      )
+      AND EXISTS (
+          SELECT 1 FROM task_sessions ts
+          WHERE ts.task_id = t.id
+            AND ts.state IN ('CREATED', 'STARTING', 'RUNNING', 'WAITING_FOR_INPUT')
       )
     ORDER BY t.updated_at DESC;
 ")

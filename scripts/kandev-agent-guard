@@ -187,6 +187,21 @@ bwrap_args=(
     --bind "$writable_root" "$writable_root"
 )
 
+# Kandev v0.96 prepares a per-user managed npm project under the host /tmp
+# before launching npx. The private /tmp below deliberately hides that host
+# directory, so recreate only the recognized project root inside this agent's
+# namespace. Do not bind the host directory: that would share writable npm
+# project state across otherwise isolated agents.
+agent_args=("$@")
+for ((arg_index = 0; arg_index + 1 < ${#agent_args[@]}; arg_index++)); do
+    if [[ "${agent_args[$arg_index]}" == "--prefix" \
+          && "${agent_args[$((arg_index + 1))]}" =~ ^/tmp/kandev-managed-npm-runtime-[0-9a-f]{16}$ ]]; then
+        managed_npm_prefix="${agent_args[$((arg_index + 1))]}"
+        bwrap_args+=(--dir "$managed_npm_prefix" --chmod 0700 "$managed_npm_prefix")
+        break
+    fi
+done
+
 # Fetch can invoke `git maintenance run --auto`, which scans every linked
 # worktree and locks each worktree HEAD/reflog. Sibling administration
 # directories are deliberately read-only in this namespace, so automatic

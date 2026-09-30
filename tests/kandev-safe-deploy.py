@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import hashlib
 from pathlib import Path
 import subprocess
 import tempfile
@@ -62,7 +63,12 @@ elif args and args[0] == "compose":
         if os.environ.get("KANDEV_DEPLOY_TEST_UP_FAIL") == "candidate" and count == 1:
             raise SystemExit(17)
 elif args and args[0] == "run":
-    if os.environ.get("KANDEV_DEPLOY_TEST_PREFLIGHT_FAIL") == "1":
+    if "--entrypoint" in args and "sha256sum" in args:
+        digest = os.environ["KANDEV_DEPLOY_TEST_GUARD_SHA"]
+        if os.environ.get("KANDEV_DEPLOY_TEST_GUARD_MISMATCH") == "1":
+            digest = "0" * 64
+        print(f"{digest}  /usr/local/bin/kandev-agent-guard")
+    elif os.environ.get("KANDEV_DEPLOY_TEST_PREFLIGHT_FAIL") == "1":
         raise SystemExit(78)
 elif args and args[0] == "logs":
     print("fake logs")
@@ -86,7 +92,8 @@ else:
 
 class SafeDeployTest(unittest.TestCase):
     def run_deploy(
-        self, ready: str, *, up_failure: str = "", preflight_failure: bool = False
+        self, ready: str, *, up_failure: str = "", preflight_failure: bool = False,
+        guard_mismatch: bool = False
     ) -> tuple[subprocess.CompletedProcess[str], Path, Path]:
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -110,6 +117,10 @@ class SafeDeployTest(unittest.TestCase):
             "KANDEV_DEPLOY_TEST_READY": ready,
             "KANDEV_DEPLOY_TEST_UP_FAIL": up_failure,
             "KANDEV_DEPLOY_TEST_PREFLIGHT_FAIL": "1" if preflight_failure else "0",
+            "KANDEV_DEPLOY_TEST_GUARD_MISMATCH": "1" if guard_mismatch else "0",
+            "KANDEV_DEPLOY_TEST_GUARD_SHA": hashlib.sha256(
+                (REPOSITORY / "scripts/kandev-agent-guard").read_bytes()
+            ).hexdigest(),
             "KANDEV_DEPLOY_HEALTH_TIMEOUT_SECS": "1",
             "KANDEV_DEPLOY_HEALTH_INTERVAL_SECS": "0.05",
             "KANDEV_DEPLOY_LOG": str(log),
@@ -158,6 +169,13 @@ class SafeDeployTest(unittest.TestCase):
         self.assertEqual((state / "current-image").read_text(), "sha256:old")
         self.assertFalse((state / "up-count").exists())
         self.assertIn("guarded runtime preflight failed", log.read_text())
+
+    def test_guard_drift_preserves_running_image(self) -> None:
+        completed, state, log = self.run_deploy("always", guard_mismatch=True)
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertEqual((state / "current-image").read_text(), "sha256:old")
+        self.assertFalse((state / "up-count").exists())
+        self.assertIn("candidate agent guard differs", log.read_text())
 
 
 if __name__ == "__main__":

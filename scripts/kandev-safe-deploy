@@ -155,6 +155,22 @@ if [[ -z "$KANDEV_DEPLOY_CANDIDATE_ID" ]]; then
     exit 1
 fi
 
+# HTTP readiness cannot detect an agent guard omitted from the build context.
+# The board can serve HTTP 200 while every guarded agent fails to bootstrap.
+KANDEV_DEPLOY_GUARD_SOURCE_SHA="$(sha256sum "$KANDEV_DEPLOY_DIR/scripts/kandev-agent-guard")"
+KANDEV_DEPLOY_GUARD_SOURCE_SHA="${KANDEV_DEPLOY_GUARD_SOURCE_SHA%% *}"
+if ! KANDEV_DEPLOY_GUARD_IMAGE_SHA="$(docker run --rm --entrypoint sha256sum \
+    "$KANDEV_DEPLOY_CANDIDATE_ID" /usr/local/bin/kandev-agent-guard 2>/dev/null)"; then
+    deploy_log "CRITICAL: cannot verify candidate agent guard; running Kandev was preserved."
+    exit 1
+fi
+KANDEV_DEPLOY_GUARD_IMAGE_SHA="${KANDEV_DEPLOY_GUARD_IMAGE_SHA%% *}"
+if [[ "$KANDEV_DEPLOY_GUARD_IMAGE_SHA" != "$KANDEV_DEPLOY_GUARD_SOURCE_SHA" ]]; then
+    deploy_log "CRITICAL: candidate agent guard differs from the main checkout; running Kandev was preserved."
+    exit 1
+fi
+deploy_log "Candidate agent guard matches the main checkout."
+
 # Exercise the candidate's exact nested-userns and private-procfs path under
 # the currently loaded host security profiles before touching the live
 # container. This catches image/AppArmor drift without granting privileges or
