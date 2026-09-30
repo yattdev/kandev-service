@@ -371,7 +371,7 @@ trap - EXIT
     case "$run_output" in *oneoff-start*oneoff-end*) ;; *) echo "ERROR: guarded one-off lost child output" >&2; exit 1;; esac
     oneoff_id="$(docker compose run -d --no-deps probe sh -c "sleep 300")"
     test -n "$oneoff_id"
-    oneoff_name="$(docker compose ps --all --format json | python3 -c "import json,sys; rows=json.loads(sys.stdin.read()); rows=[rows] if isinstance(rows,dict) else rows; print(next(row[\"Name\"] for row in rows if row[\"ID\"].startswith(sys.argv[1])))" "$oneoff_id")"
+    oneoff_name="$(docker compose ps --all --format json | python3 -c "import json,sys; values=[json.loads(line) for line in sys.stdin if line.strip()]; rows=[item for value in values for item in (value if isinstance(value,list) else [value])]; print(next(row[\"Name\"] for row in rows if row[\"ID\"].startswith(sys.argv[1])))" "$oneoff_id")"
     oneoff_state="$(docker kandev oneoff inspect "$oneoff_name")"
     printf "%s" "$oneoff_state" | python3 -c "import json,sys; r=json.load(sys.stdin); assert r[\"status\"] == \"running\" and r[\"name\"] == \"$oneoff_name\""
     docker kandev oneoff remove "$oneoff_name" >/dev/null
