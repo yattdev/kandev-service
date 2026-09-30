@@ -59,6 +59,7 @@ SUPPORT_QUEUE = Path(os.environ.get("KANDEV_SUPPORT_QUEUE", "/data/support-broke
 MAX_REQUEST = 1024 * 1024
 MAX_OUTPUT = 16 * 1024 * 1024
 COMMAND_TIMEOUT = 30 * 60
+ONEOFF_RUN_TIMEOUT = 10 * 60
 MAX_EXPORT = int(os.environ.get("KANDEV_COORDINATOR_MAX_EXPORT_BYTES", str(4 * 1024**3)))
 MAX_STATIC_BACKUP = int(os.environ.get("KANDEV_COORDINATOR_MAX_STATIC_BACKUP_BYTES", str(4 * 1024**3)))
 MAX_LOG_LINES = 1000
@@ -947,6 +948,70 @@ def run_command(
     if len(stderr) > MAX_OUTPUT:
         stderr = stderr[:MAX_OUTPUT] + b"\n[broker error output truncated]\n"
     return return_code, stdout.decode(errors="replace"), stderr.decode(errors="replace")
+
+
+def handle_oneoff(
+    task_root: Path, cwd: Path, args: list[str], environment: dict[str, str]
+) -> dict[str, Any]:
+    """Inspect or remove one exact Compose one-off owned by this task and clone."""
+    if len(args) != 4 or args[2] not in {"inspect", "remove"}:
+        raise BrokerError("oneoff usage: docker kandev oneoff inspect|remove <exact-name>")
+    project = scoped_project_name(task_root, environment)
+    model = load_scoped_model(task_root, cwd, project)
+    name = args[3]
+    services = model.get("services") or {}
+    service = next(
+        (s for s in services if re.fullmatch(
+            re.escape(project) + "-" + re.escape(s) + r"-run-[a-z0-9]{8,32}", name
+        )), None
+    )
+    if service is None:
+        raise BrokerError("oneoff name is outside the saved task project services")
+    code, stdout, stderr = run_command([DOCKER_BIN, "inspect", "--type", "container", name], cwd)
+    if code != 0:
+        if not any(marker in stderr for marker in ("No such object", "No such container")):
+            raise BrokerError("oneoff Docker identity could not be inspected")
+        return {"returncode": 0, "stdout": json.dumps({
+            "project": project, "name": name, "status": "absent"
+        }) + "\n", "stderr": ""}
+    try:
+        containers = json.loads(stdout)
+        info = containers[0]
+        labels = info["Config"]["Labels"]
+    except (ValueError, IndexError, KeyError, TypeError) as exc:
+        raise BrokerError("oneoff Docker identity is unreadable") from exc
+    if (
+        len(containers) != 1
+        or info.get("Name") != "/" + name
+        or not re.fullmatch(r"[0-9a-f]{64}", str(info.get("Id", "")))
+        or labels.get("com.docker.compose.project") != project
+        or labels.get("com.docker.compose.service") != service
+        or str(labels.get("com.docker.compose.oneoff", "")).lower() != "true"
+    ):
+        raise BrokerError("oneoff Docker labels do not match the saved task project")
+    container_id = info["Id"]
+    status = str((info.get("State") or {}).get("Status") or "unknown")
+    if args[2] == "remove":
+        audit_id = str(uuid.uuid4())
+        audit_compose(task_root, cwd, project, project, "oneoff remove",
+                      "allow", "preflight", audit_id=audit_id)
+        code, _, stderr = run_command(
+            [DOCKER_BIN, "container", "rm", "--force", container_id], cwd
+        )
+        if code != 0:
+            audit_compose(task_root, cwd, project, project, "oneoff remove",
+                          "allow", "error", audit_id=audit_id)
+            raise BrokerError(f"exact oneoff removal failed: {stderr.strip()}")
+        audit_compose(task_root, cwd, project, project, "oneoff remove",
+                      "allow", "ok", audit_id=audit_id)
+        status = "removed"
+    response = {"returncode": 0, "stdout": json.dumps({
+        "project": project, "name": name, "container_id": container_id,
+        "service": service, "status": status,
+    }) + "\n", "stderr": ""}
+    if args[2] == "remove":
+        response.update({"audit_id": audit_id, "resolved_project": project})
+    return response
 
 
 def kandev_db() -> sqlite3.Connection:
@@ -2181,6 +2246,8 @@ def handle_request(
         return handle_coordinator_support(task_root, args)
     if args[:2] == ["kandev", "network"]:
         return handle_network_reserve(task_root, cwd, args, environment_overrides)
+    if args[:2] == ["kandev", "oneoff"]:
+        return handle_oneoff(task_root, cwd, args, environment_overrides)
 
     global_args, command, command_args = split_compose_args(args, cwd, task_root)
     project_directory = compose_project_directory(cwd, task_root, global_args)
@@ -2241,6 +2308,7 @@ def handle_request(
         code, stdout, stderr = run_command(
             command_line, cwd, environment_overrides=environment_overrides,
             stdin_stream=stdin_stream,
+            timeout=ONEOFF_RUN_TIMEOUT if command == "run" else COMMAND_TIMEOUT,
         )
         if command in DESTRUCTIVE_COMPOSE_COMMANDS:
             audit_compose(

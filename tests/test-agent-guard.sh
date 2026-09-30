@@ -364,6 +364,19 @@ trap - EXIT
         printf "%s\n" "$run_output" >&2
         exit 1
     fi
+    if run_output="$(docker compose run -T --rm --no-deps probe sh -ceu "printf oneoff-start; sleep 1; printf oneoff-end; exit 7" 2>&1)"; then
+        echo "ERROR: guarded one-off hid its child failure" >&2
+        exit 1
+    fi
+    case "$run_output" in *oneoff-start*oneoff-end*) ;; *) echo "ERROR: guarded one-off lost child output" >&2; exit 1;; esac
+    oneoff_id="$(docker compose run -d --no-deps probe sh -c "sleep 300")"
+    test -n "$oneoff_id"
+    oneoff_name="$(docker compose ps --all --format json | python3 -c "import json,sys; rows=json.loads(sys.stdin.read()); rows=[rows] if isinstance(rows,dict) else rows; print(next(row[\"Name\"] for row in rows if row[\"ID\"].startswith(sys.argv[1])))" "$oneoff_id")"
+    oneoff_state="$(docker kandev oneoff inspect "$oneoff_name")"
+    printf "%s" "$oneoff_state" | python3 -c "import json,sys; r=json.load(sys.stdin); assert r[\"status\"] == \"running\" and r[\"name\"] == \"$oneoff_name\""
+    docker kandev oneoff remove "$oneoff_name" >/dev/null
+    oneoff_state="$(docker kandev oneoff inspect "$oneoff_name")"
+    printf "%s" "$oneoff_state" | python3 -c "import json,sys; assert json.load(sys.stdin)[\"status\"] == \"absent\""
     docker compose exec -T probe test -f /state/ready </dev/null
     # Redirected exec input must be streamed byte-for-byte through the guarded
     # broker; binary data and a multi-megabyte producer exercise backpressure.

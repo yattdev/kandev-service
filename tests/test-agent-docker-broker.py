@@ -309,6 +309,67 @@ def main() -> None:
         assert allowed["command_class"] == "destructive"
         assert "args" not in allowed and "environment" not in allowed
 
+        # A one-off may be removed only by its exact name after both the saved
+        # clone claim and Docker's immutable container labels have been checked.
+        oneoff_name = f"{disposable_project}-probe-run-deadbeef1234"
+        oneoff_id = "b" * 64
+        oneoff_info = {
+            "Id": oneoff_id, "Name": "/" + oneoff_name,
+            "State": {"Status": "running"},
+            "Config": {"Labels": {
+                "com.docker.compose.project": disposable_project,
+                "com.docker.compose.service": "probe",
+                "com.docker.compose.oneoff": "True",
+                "com.docker.compose.project.working_dir": str(repository),
+            }},
+        }
+        oneoff_calls = []
+        original_oneoff_run = broker.run_command
+        original_translate = broker.translate_to_host
+        broker.translate_to_host = lambda path: path
+
+        def fake_oneoff_run(args, cwd, *unused, **unused_kwargs):
+            oneoff_calls.append(args)
+            if args[1:3] == ["inspect", "--type"]:
+                return 0, json.dumps([oneoff_info]), ""
+            if args[1:4] == ["container", "rm", "--force"]:
+                return 0, oneoff_id + "\n", ""
+            raise AssertionError(f"unexpected oneoff command: {args}")
+
+        broker.run_command = fake_oneoff_run
+        oneoff_args = ["kandev", "oneoff", "inspect", oneoff_name]
+        oneoff_env = {"COMPOSE_PROJECT_NAME": disposable_project}
+        try:
+            inspected = broker.handle_oneoff(task_root, repository, oneoff_args, oneoff_env)
+            assert json.loads(inspected["stdout"])["status"] == "running"
+            assert len(oneoff_calls) == 1
+            expect_denied(
+                lambda: broker.handle_oneoff(task_root, sibling_clone, oneoff_args, oneoff_env),
+                "sibling clone inspected another clone's oneoff",
+            )
+            expect_denied(
+                lambda: broker.handle_oneoff(outside, repository, oneoff_args, oneoff_env),
+                "different task inspected another task's oneoff",
+            )
+            oneoff_info["Config"]["Labels"]["com.docker.compose.oneoff"] = "False"
+            expect_denied(
+                lambda: broker.handle_oneoff(task_root, repository,
+                    ["kandev", "oneoff", "remove", oneoff_name], oneoff_env),
+                "ordinary service was removed as a oneoff",
+            )
+            oneoff_info["Config"]["Labels"]["com.docker.compose.oneoff"] = "True"
+            removed = broker.handle_oneoff(task_root, repository,
+                ["kandev", "oneoff", "remove", oneoff_name], oneoff_env)
+            assert json.loads(removed["stdout"])["status"] == "removed"
+            assert oneoff_calls[-1] == [broker.DOCKER_BIN, "container", "rm", "--force", oneoff_id]
+            assert removed["audit_id"]
+            removal_events = [json.loads(line) for line in broker.COMPOSE_AUDIT_LOG.read_text().splitlines()
+                              if "oneoff remove" in line]
+            assert [event["result"] for event in removal_events] == ["preflight", "ok"]
+        finally:
+            broker.run_command = original_oneoff_run
+            broker.translate_to_host = original_translate
+
         # Network admission is bound to the saved task/clone project. The
         # broker skips a host route, creates only this project's default bridge,
         # and returns its own verified ID on an idempotent retry.
