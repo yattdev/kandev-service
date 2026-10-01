@@ -66,6 +66,7 @@ fi
 (cd "$task_root" && "$GUARD" -- sh -ceu '
     test ! -e /run/docker.sock
     test ! -S /var/run/docker.sock
+    test ! -e /run/kandev-agent-docker/scout-auth
     test -S "${KANDEV_AGENT_DOCKER_SOCKET:?}"
     docker compose version >/dev/null
     if docker kandev source list >/dev/null 2>&1; then

@@ -1131,6 +1131,69 @@ def main() -> None:
         assert checksum == broker.hashlib.sha256(b"SELECT 1;\n").hexdigest()
         assert exported.read_bytes() == b"SELECT 1;\n"
 
+        # Scout may inspect only the image registered by the approved built
+        # service, from the same task clone that saved the Compose model.
+        original_model_dir = broker.MODEL_DIR
+        original_audit_log = broker.COMPOSE_AUDIT_LOG
+        original_scout_services = broker.SCOUT_TASK_SERVICES
+        original_run_command = broker.run_command
+        broker.MODEL_DIR = base / "scout-models"
+        broker.COMPOSE_AUDIT_LOG = base / "scout-audit.jsonl"
+        broker.SCOUT_TASK_SERVICES = {str(task_root): "backend-stripe"}
+        scout_image = f"{project}_backend-stripe:latest"
+        scout_model = {"services": {"backend-stripe": {
+            "build": {"context": str(repository)}, "image": scout_image,
+        }}}
+        broker.save_scoped_model(task_root, repository, project, scout_model)
+        image_id = "sha256:" + "a" * 64
+        digest = "sha256:" + "b" * 64
+        scout_calls = []
+
+        def fake_scout_command(args, cwd, **kwargs):
+            scout_calls.append((args, kwargs))
+            if args[1:3] == ["image", "inspect"]:
+                return 0, json.dumps([{"Id": image_id, "Descriptor": {"digest": digest}}]), ""
+            assert args[1:] == ["scout", "cves", "--only-severity", "critical",
+                                f"local://{scout_image}"]
+            assert kwargs["environment_overrides"] == {
+                "DOCKER_CONFIG": broker.SCOUT_DOCKER_CONFIG
+            }
+            return 0, "critical CVE report\n", ""
+
+        broker.run_command = fake_scout_command
+        try:
+            scout_args = ["scout", "cves", "--only-severity", "critical", scout_image]
+            result = broker.handle_scout_cves(task_root, repository, scout_args, {})
+            assert result["returncode"] == 0
+            assert f"manifest_digest={digest}" in result["stdout"]
+            assert "critical CVE report" in result["stdout"]
+            assert len(scout_calls) == 3
+            scout_calls.clear()
+            for denied_args in (
+                ["scout", "cves", "--only-severity", "high", scout_image],
+                ["scout", "cves", "--only-severity", "critical", "alpine:latest"],
+                ["scout", "cves", "--only-severity", "critical", f"local://{scout_image}"],
+            ):
+                expect_denied(
+                    lambda denied_args=denied_args: broker.handle_scout_cves(
+                        task_root, repository, denied_args, {}
+                    ), "Scout accepted an unapproved scan"
+                )
+            expect_denied(
+                lambda: broker.handle_scout_cves(outside, repository, scout_args, {}),
+                "another task received Scout access",
+            )
+            expect_denied(
+                lambda: broker.handle_scout_cves(task_root, sibling_clone, scout_args, {}),
+                "sibling clone reused Scout model",
+            )
+            assert scout_calls == []
+        finally:
+            broker.run_command = original_run_command
+            broker.SCOUT_TASK_SERVICES = original_scout_services
+            broker.MODEL_DIR = original_model_dir
+            broker.COMPOSE_AUDIT_LOG = original_audit_log
+
     print("PASS: task Docker broker policy tests")
 
 

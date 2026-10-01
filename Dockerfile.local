@@ -76,6 +76,21 @@ RUN curl -fsSL https://download.docker.com/linux/debian/gpg \
         docker-buildx-plugin \
     && rm -rf /var/lib/apt/lists/*
 
+# Scout runs only in the trusted broker. Guarded agents reach its CVE command
+# through the task-scoped Docker client; they never receive the daemon socket.
+ARG TARGETARCH
+RUN case "$TARGETARCH" in \
+      amd64) scout_sha=f4e2814bd61040365153d5b964b144cb2dc6ee536a68b5bac4cadf00fc0ec34b ;; \
+      arm64) scout_sha=8b21594c72d4d9403a82a49e9dbdfc04c27c6a21933906f1eefbb0beabe22d58 ;; \
+      *) echo "unsupported Docker Scout architecture: $TARGETARCH" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSL "https://github.com/docker/scout-cli/releases/download/v1.24.0/docker-scout_1.24.0_linux_${TARGETARCH}.tar.gz" -o /tmp/docker-scout.tar.gz \
+    && echo "$scout_sha  /tmp/docker-scout.tar.gz" | sha256sum -c - \
+    && mkdir -p /usr/libexec/docker/cli-plugins \
+    && tar -xzf /tmp/docker-scout.tar.gz -C /usr/libexec/docker/cli-plugins docker-scout \
+    && chmod 0755 /usr/libexec/docker/cli-plugins/docker-scout \
+    && rm /tmp/docker-scout.tar.gz
+
 # ── Python 3 ──────────────────────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \

@@ -77,6 +77,12 @@ for bin in mariadb-dump pg_dump kandev-agent-docker-broker kandev-agent-docker-c
   fi
 done
 
+if docker run --rm --entrypoint /usr/bin/docker kandev-local:latest scout version &>/dev/null; then
+  ok "Docker Scout plugin is present in the rebuilt image"
+else
+  fail "Docker Scout plugin is missing from the rebuilt image"
+fi
+
 # git system safe.directory must be '*'
 SAFE=$(docker run --rm kandev-local:latest git config --system safe.directory 2>/dev/null || echo "")
 if [[ "$SAFE" == "*" ]]; then
@@ -958,6 +964,15 @@ if [[ "$BROKER_STATE" == "ready" ]]; then
   ok "task-scoped Docker broker is running"
 else
   fail "task-scoped Docker broker is not running"
+fi
+
+if docker exec -u kandev kandev sh -c '
+  test -w /run/kandev-agent-docker/scout-auth &&
+  findmnt -M /run/kandev-agent-docker/scout-auth >/dev/null
+' >/dev/null 2>&1; then
+  ok "broker-only Scout Docker login persists in a writable volume"
+else
+  fail "broker-only Scout Docker login volume is missing"
 fi
 
 # Stream the test into the running container so this also works from an

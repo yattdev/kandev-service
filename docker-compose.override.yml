@@ -114,6 +114,10 @@ services:
       #   DOCKER_GID=<gid> docker compose up -d
       - /var/run/docker.sock:/var/run/docker.sock
 
+      # Operator-managed Docker login for the broker's Scout scan only. The
+      # agent guard replaces /run with a private tmpfs, so tasks cannot read it.
+      - kandev-scout-auth:/run/kandev-agent-docker/scout-auth
+
       # ── Android UI QA ───────────────────────────────────────────────────────
       # Keep the large SDK and the host AVD catalogue outside the image and
       # immutable to agents. AVD launches use read-only ephemeral overlays.
@@ -142,3 +146,6 @@ services:
     group_add:
       - "${DOCKER_GID:-984}"
       - "${KVM_GID:-993}"
+
+volumes:
+  kandev-scout-auth:

@@ -12,6 +12,7 @@ start_agent_docker_broker() {
         return 0
     fi
     install -d -m 0700 -o kandev -g kandev /run/kandev-agent-docker
+    install -d -m 0700 -o kandev -g kandev /run/kandev-agent-docker/scout-auth
     gosu kandev sh -c '
         while :; do
             /usr/local/bin/kandev-agent-docker-broker

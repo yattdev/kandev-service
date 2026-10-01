@@ -58,6 +58,7 @@ COMPOSE_AUDIT_LOG = Path(
 SUPPORT_QUEUE = Path(os.environ.get("KANDEV_SUPPORT_QUEUE", "/data/support-broker"))
 MAX_REQUEST = 1024 * 1024
 MAX_OUTPUT = 16 * 1024 * 1024
+MAX_SCOUT_OUTPUT = 64 * 1024 * 1024
 COMMAND_TIMEOUT = 30 * 60
 ONEOFF_RUN_TIMEOUT = 10 * 60
 MAX_EXPORT = int(os.environ.get("KANDEV_COORDINATOR_MAX_EXPORT_BYTES", str(4 * 1024**3)))
@@ -74,6 +75,12 @@ TASK_DIR_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 COMPOSE_ENV_KEYS = {"COMPOSE_PROJECT_NAME", "DB_PORT", "WEB_PORT"}
 COMPOSE_PROJECT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 IMAGE_TAG_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$")
+# Owner-approved CVE scans for these two exact task checkouts and build services.
+SCOUT_TASK_SERVICES = {
+    "/data/tasks/task-8476-fix-vulner_4xmsmdbv": "backend-stripe",  # 2999fa68-f6cc-4b96-8300-de99ef7e0a62
+    "/data/tasks/task-8476-fix-vulner_0cn6qbsh": "prerender-backend",  # e6c2c75c-a261-465e-bf48-8af7d735668c
+}
+SCOUT_DOCKER_CONFIG = "/run/kandev-agent-docker/scout-auth"
 STATIC_BACKUP_NAME = "last_db.sql"
 AUDIT_LOCK = threading.Lock()
 EXPORT_LOCK = threading.Lock()
@@ -878,6 +885,7 @@ def run_command(
     args: list[str], cwd: Path, timeout: int = COMMAND_TIMEOUT,
     environment_overrides: dict[str, str] | None = None,
     stdin_stream: FramedInput | None = None,
+    max_output: int = MAX_OUTPUT,
 ) -> tuple[int, str, str]:
     deadline = time.monotonic() + timeout
     with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
@@ -941,13 +949,75 @@ def run_command(
             stderr_file.write(f"guarded Compose stdin transport failed: {input_error[0]}\n".encode())
         stdout_file.seek(0)
         stderr_file.seek(0)
-        stdout = stdout_file.read(MAX_OUTPUT + 1)
-        stderr = stderr_file.read(MAX_OUTPUT + 1)
-    if len(stdout) > MAX_OUTPUT:
-        stdout = stdout[:MAX_OUTPUT] + b"\n[broker output truncated]\n"
-    if len(stderr) > MAX_OUTPUT:
-        stderr = stderr[:MAX_OUTPUT] + b"\n[broker error output truncated]\n"
+        stdout = stdout_file.read(max_output + 1)
+        stderr = stderr_file.read(max_output + 1)
+    if len(stdout) > max_output:
+        stdout = stdout[:max_output] + b"\n[broker output truncated]\n"
+    if len(stderr) > max_output:
+        stderr = stderr[:max_output] + b"\n[broker error output truncated]\n"
     return return_code, stdout.decode(errors="replace"), stderr.decode(errors="replace")
+
+
+def handle_scout_cves(
+    task_root: Path, cwd: Path, args: list[str], environment: dict[str, str]
+) -> dict[str, Any]:
+    """Scan only an existing local image built by the approved task service."""
+    service_name = SCOUT_TASK_SERVICES.get(str(task_root))
+    if service_name is None:
+        raise BrokerError("Docker Scout is not enabled for this task")
+    if len(args) != 5 or args[:4] != ["scout", "cves", "--only-severity", "critical"]:
+        raise BrokerError("supported Scout usage: docker scout cves --only-severity critical <task image>")
+    image = args[4]
+    project = scoped_project_name(task_root, environment)
+    project_directory = compose_project_directory(cwd, task_root, [])
+    model = load_scoped_model(task_root, project_directory, project)
+    service = (model.get("services") or {}).get(service_name)
+    if not isinstance(service, dict) or not service.get("build") or service.get("image") != image:
+        raise BrokerError("Scout image is not the approved built service in this task's saved Compose model")
+    if image != scoped_build_image(image, project, service_name):
+        raise BrokerError("Scout image tag is outside this task project")
+
+    code, stdout, stderr = run_command([DOCKER_BIN, "image", "inspect", image], cwd)
+    if code != 0:
+        raise BrokerError(f"task image has not been built locally: {image}")
+    try:
+        inspected = json.loads(stdout)
+        info = inspected[0]
+        image_id = info["Id"]
+        digest = (info.get("Descriptor") or {}).get("digest") or "unavailable"
+        if not isinstance(image_id, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id):
+            raise ValueError("invalid image ID")
+        if digest != "unavailable" and not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+            raise ValueError("invalid image digest")
+    except (IndexError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise BrokerError("Docker returned invalid task image metadata") from exc
+
+    audit_id = str(uuid.uuid4())
+    audit_compose(task_root, project_directory, project, project, "scout cves", "allow",
+                  "preflight", audit_id=audit_id, command_class="read-only")
+    code, report, errors = run_command(
+        [DOCKER_BIN, "scout", "cves", "--only-severity", "critical", f"local://{image}"],
+        cwd, timeout=COMMAND_TIMEOUT, max_output=MAX_SCOUT_OUTPUT,
+        environment_overrides={"DOCKER_CONFIG": SCOUT_DOCKER_CONFIG},
+    )
+    # An image tag may be rebuilt while Scout runs. Do not label a report with
+    # the prior digest if the tag no longer resolves to the same local image.
+    check_code, check_stdout, _ = run_command([DOCKER_BIN, "image", "inspect", image], cwd)
+    try:
+        stable = check_code == 0 and json.loads(check_stdout)[0]["Id"] == image_id
+    except (IndexError, KeyError, TypeError, json.JSONDecodeError):
+        stable = False
+    if not stable:
+        code = 70
+        errors += "\ntask image changed during Scout scan; rebuild and rescan\n"
+    if "[broker output truncated]" in report or "[broker error output truncated]" in errors:
+        code = 70
+        errors += "\nScout output exceeded the broker limit; full report was not returned\n"
+    audit_compose(task_root, project_directory, project, project, "scout cves", "allow",
+                  "ok" if code == 0 else "error", audit_id=audit_id, command_class="read-only")
+    header = f"task_image={image}\nimage_id={image_id}\nmanifest_digest={digest}\n"
+    return {"returncode": code, "stdout": header + report, "stderr": errors,
+            "project": project, "audit_id": audit_id, "resolved_project": project}
 
 
 def handle_oneoff(
@@ -2248,6 +2318,8 @@ def handle_request(
         return handle_network_reserve(task_root, cwd, args, environment_overrides)
     if args[:2] == ["kandev", "oneoff"]:
         return handle_oneoff(task_root, cwd, args, environment_overrides)
+    if args[:1] == ["scout"]:
+        return handle_scout_cves(task_root, cwd, args, environment_overrides)
 
     global_args, command, command_args = split_compose_args(args, cwd, task_root)
     project_directory = compose_project_directory(cwd, task_root, global_args)
