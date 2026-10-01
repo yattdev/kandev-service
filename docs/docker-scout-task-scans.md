@@ -8,6 +8,7 @@ following exact task root and built Compose service pairs:
 | --- | --- | --- |
 | `2999fa68-f6cc-4b96-8300-de99ef7e0a62` | `/data/tasks/task-8476-fix-vulner_4xmsmdbv` | `backend-stripe` |
 | `e6c2c75c-a261-465e-bf48-8af7d735668c` | `/data/tasks/task-8476-fix-vulner_0cn6qbsh` | `prerender-backend` |
+| `7e784eba-c2c3-4507-96ba-6cf02f869cf3` | `/data/tasks/task-8476-fix-vulner_gnic8lsd` | `prerender-backend` |
 
 The broker requires a saved Compose model owned by the same task and checkout,
 checks that the service has a local build, and matches the exact scoped image
@@ -16,6 +17,8 @@ image. The response starts with the local image ID and manifest digest, then
 the complete critical CVE report (up to 64 MiB). An oversized report is
 explicitly marked failed rather than reported as complete. The image tag is
 checked again after the scan to detect a concurrent rebuild.
+The command may name either the scoped image or `<service>:latest`; the latter
+is resolved to the exact saved task image and never scans a shared host tag.
 
 ## Operator login
 
@@ -54,6 +57,16 @@ services:
     build: .
 ```
 
+The `gnic8lsd` task has the Pre-render source below its `jami` checkout. Its
+existing Compose file builds `backend-stripe`, so create a separate
+`scout.compose.yml` in `jami` for this scan:
+
+```yaml
+services:
+  prerender-backend:
+    build: ./jami-backend-prerender
+```
+
 From the corresponding checkout, use the guarded client:
 
 ```sh
@@ -61,6 +74,10 @@ docker compose -f scout.compose.yml build <service>
 image=$(docker compose -f scout.compose.yml config --images)
 docker scout cves --only-severity critical "$image" > scout-critical.txt 2>&1
 ```
+
+The equivalent scan command for either Pre-render task is
+`docker scout cves --only-severity critical prerender-backend:latest`; the broker
+resolves this alias to the saved task image.
 
 `scout-critical.txt` contains the digest and full scan output. The file remains
 inside the task checkout. The `image_id` is the local image identity; the

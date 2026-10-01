@@ -75,10 +75,11 @@ TASK_DIR_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 COMPOSE_ENV_KEYS = {"COMPOSE_PROJECT_NAME", "DB_PORT", "WEB_PORT"}
 COMPOSE_PROJECT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 IMAGE_TAG_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$")
-# Owner-approved CVE scans for these two exact task checkouts and build services.
+# Owner-approved CVE scans for these exact task checkouts and build services.
 SCOUT_TASK_SERVICES = {
     "/data/tasks/task-8476-fix-vulner_4xmsmdbv": "backend-stripe",  # 2999fa68-f6cc-4b96-8300-de99ef7e0a62
     "/data/tasks/task-8476-fix-vulner_0cn6qbsh": "prerender-backend",  # e6c2c75c-a261-465e-bf48-8af7d735668c
+    "/data/tasks/task-8476-fix-vulner_gnic8lsd": "prerender-backend",  # 7e784eba-c2c3-4507-96ba-6cf02f869cf3
 }
 SCOUT_DOCKER_CONFIG = "/run/kandev-agent-docker/scout-auth"
 STATIC_BACKUP_NAME = "last_db.sql"
@@ -967,12 +968,17 @@ def handle_scout_cves(
         raise BrokerError("Docker Scout is not enabled for this task")
     if len(args) != 5 or args[:4] != ["scout", "cves", "--only-severity", "critical"]:
         raise BrokerError("supported Scout usage: docker scout cves --only-severity critical <task image>")
-    image = args[4]
+    requested_image = args[4]
     project = scoped_project_name(task_root, environment)
     project_directory = compose_project_directory(cwd, task_root, [])
     model = load_scoped_model(task_root, project_directory, project)
     service = (model.get("services") or {}).get(service_name)
-    if not isinstance(service, dict) or not service.get("build") or service.get("image") != image:
+    if not isinstance(service, dict) or not service.get("build"):
+        raise BrokerError("Scout image is not the approved built service in this task's saved Compose model")
+    image = service.get("image")
+    # Compose rewrites unscoped image names to the task project. Accept the
+    # familiar service:latest spelling only as an alias for that exact saved tag.
+    if requested_image not in {image, f"{service_name}:latest"}:
         raise BrokerError("Scout image is not the approved built service in this task's saved Compose model")
     if image != scoped_build_image(image, project, service_name):
         raise BrokerError("Scout image tag is outside this task project")

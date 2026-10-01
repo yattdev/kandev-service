@@ -1169,6 +1169,13 @@ def main() -> None:
             assert "critical CVE report" in result["stdout"]
             assert len(scout_calls) == 3
             scout_calls.clear()
+            alias_args = ["scout", "cves", "--only-severity", "critical",
+                          "backend-stripe:latest"]
+            alias_result = broker.handle_scout_cves(task_root, repository, alias_args, {})
+            assert alias_result["returncode"] == 0
+            assert f"task_image={scout_image}" in alias_result["stdout"]
+            assert scout_calls[1][0][-1] == f"local://{scout_image}"
+            scout_calls.clear()
             for denied_args in (
                 ["scout", "cves", "--only-severity", "high", scout_image],
                 ["scout", "cves", "--only-severity", "critical", "alpine:latest"],
