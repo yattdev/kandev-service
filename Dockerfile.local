@@ -369,14 +369,16 @@ COPY docker-entrypoint-local.sh /usr/local/bin/docker-entrypoint.sh
 COPY scripts/codex-sandbox-preflight.sh /usr/local/bin/codex-sandbox-preflight
 COPY scripts/kandev-agent-guard /usr/local/bin/kandev-agent-guard
 COPY scripts/kandev-agent-docker-broker /usr/local/bin/kandev-agent-docker-broker
+COPY scripts/kandev-agent-docker-operations.py /usr/local/bin/kandev-agent-docker-operations.py
 COPY scripts/kandev-agent-docker-client /usr/local/bin/kandev-agent-docker-client
 COPY scripts/kandev-agent-docker-token /usr/local/bin/kandev-agent-docker-token
+COPY scripts/kandev-agent-git /usr/local/bin/git
 COPY scripts/kandev-agent-emulator /usr/local/bin/emulator
 COPY scripts/kandev-agent-adb /usr/local/bin/adb
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh /usr/local/bin/codex-sandbox-preflight \
     /usr/local/bin/kandev-agent-guard /usr/local/bin/kandev-agent-docker-broker \
     /usr/local/bin/kandev-agent-docker-client /usr/local/bin/kandev-agent-docker-token \
-    /usr/local/bin/emulator /usr/local/bin/adb
+    /usr/local/bin/emulator /usr/local/bin/adb /usr/local/bin/git
 
 # Optional tested binary overlays while local source fixes are waiting for an
 # upstream image release. The agentctl binaries are required as a pair: the

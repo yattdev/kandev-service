@@ -126,6 +126,13 @@ def main() -> None:
     assert client.should_stream_stdin(["compose", "exec", "-T", "db", "mariadb"])
     assert not client.should_stream_stdin(["compose", "version"])
     assert not client.should_stream_stdin(["compose", "exec", "db", "mariadb"])
+    assert client.should_stream_stdin(["compose", "-p", "qa", "exec", "-T", "db", "mariadb"])
+    assert client.should_stream_stdin(["exec", "-i", "db", "mariadb"])
+    assert not client.should_stream_stdin(["exec", "db", "cat", "-i"])
+    assert client.should_stream_stdin(["kandev", "git", "apply", "-"])
+    assert client.should_stream_stdin(["kandev", "git", "-C", "/task", "credential", "fill"])
+    assert not client.should_stream_stdin(["kandev", "git", "status"])
+    assert not client.should_stream_stdin(["kandev", "git", "status", "--", "credential"])
 
     # If the broker rejects an upload early, preserve its structured child
     # status and stderr instead of replacing them with a generic EPIPE.

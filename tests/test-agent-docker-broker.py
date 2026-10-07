@@ -143,12 +143,14 @@ def main() -> None:
             "external volume was accepted",
         )
 
-        expect_denied(
-            lambda: broker.split_compose_args(
-                ["compose", "--project-name", "escape", "up"], repository, task_root
-            ),
-            "agent-selected project name was accepted",
+        named_globals, named_command, _ = broker.split_compose_args(
+            ["compose", "--project-name", "escape", "up"], repository, task_root
         )
+        _, named_environment = broker.compose_project_options(named_globals, {})
+        assert named_command == "up"
+        assert named_environment == {"COMPOSE_PROJECT_NAME": "escape"}
+        assert broker.scoped_project_name(task_root, named_environment, repository).startswith("kd_")
+        assert broker.scoped_project_name(task_root, named_environment, repository) != "escape"
         expect_denied(
             lambda: broker.split_compose_args(
                 ["compose", "run", "-v/tmp:/host", "app"], repository, task_root
@@ -265,10 +267,9 @@ def main() -> None:
         assert broker.scoped_project_name(
             task_root, {"COMPOSE_PROJECT_NAME": disposable_project}
         ) == disposable_project
-        expect_denied(
-            lambda: broker.scoped_project_name(task_root, {"COMPOSE_PROJECT_NAME": "performcoop"}),
-            "non-guarded explicit project name was accepted",
-        )
+        alias = {"COMPOSE_PROJECT_NAME": "performcoop"}
+        assert broker.scoped_project_name(task_root, alias, repository) != "performcoop"
+        assert broker.scoped_project_name(task_root, alias, repository) != broker.scoped_project_name(outside, alias, outside)
         owned_model = {"name": disposable_project, "services": {"probe": {"image": "alpine"}}}
         broker.save_scoped_model(task_root, repository, disposable_project, owned_model)
         assert broker.load_scoped_model(task_root, repository, disposable_project) == owned_model
@@ -278,6 +279,11 @@ def main() -> None:
         )
         sibling_clone = task_root / "qa-clean"
         sibling_clone.mkdir()
+        assert broker.scoped_project_name(task_root, {}, repository) != broker.scoped_project_name(task_root, {}, sibling_clone)
+        legacy_model = {"services": {"probe": {"image": "alpine"}}}
+        broker.save_scoped_model(task_root, repository, project, legacy_model)
+        assert broker.scoped_project_name(task_root, {}, repository) == project
+        assert broker.scoped_project_name(task_root, {}, sibling_clone) != project
         try:
             broker.destructive_model_preflight(
                 task_root, sibling_clone, disposable_project, disposable_project, "down"
@@ -483,7 +489,7 @@ def main() -> None:
         finally:
             broker.run_command = original_run_command
         assert observed_environment == {
-            "COMPOSE_PROJECT_NAME": "task_8402",
+            "COMPOSE_PROJECT_NAME": project,
             "DB_PORT": "13306",
             "WEB_PORT": "18080",
         }
@@ -1135,11 +1141,9 @@ def main() -> None:
         # service, from the same task clone that saved the Compose model.
         original_model_dir = broker.MODEL_DIR
         original_audit_log = broker.COMPOSE_AUDIT_LOG
-        original_scout_services = broker.SCOUT_TASK_SERVICES
         original_run_command = broker.run_command
         broker.MODEL_DIR = base / "scout-models"
         broker.COMPOSE_AUDIT_LOG = base / "scout-audit.jsonl"
-        broker.SCOUT_TASK_SERVICES = {str(task_root): "backend-stripe"}
         scout_image = f"{project}_backend-stripe:latest"
         scout_model = {"services": {"backend-stripe": {
             "build": {"context": str(repository)}, "image": scout_image,
@@ -1153,8 +1157,8 @@ def main() -> None:
             scout_calls.append((args, kwargs))
             if args[1:3] == ["image", "inspect"]:
                 return 0, json.dumps([{"Id": image_id, "Descriptor": {"digest": digest}}]), ""
-            assert args[1:] == ["scout", "cves", "--only-severity", "critical",
-                                f"local://{scout_image}"]
+            assert args[1:4] == ["scout", "cves", "--only-severity"]
+            assert args[4] in {"critical", "high"} and args[-1] == f"local://{scout_image}"
             assert kwargs["environment_overrides"] == {
                 "DOCKER_CONFIG": broker.SCOUT_DOCKER_CONFIG
             }
@@ -1176,10 +1180,15 @@ def main() -> None:
             assert f"task_image={scout_image}" in alias_result["stdout"]
             assert scout_calls[1][0][-1] == f"local://{scout_image}"
             scout_calls.clear()
+            local_args = ["scout", "cves", "--only-severity", "critical", f"local://{scout_image}"]
+            assert broker.handle_scout_cves(task_root, repository, local_args, {})["returncode"] == 0
+            scout_calls.clear()
+            high_args = ["scout", "cves", "--only-severity", "high", scout_image]
+            assert broker.handle_scout_cves(task_root, repository, high_args, {})["returncode"] == 0
+            scout_calls.clear()
             for denied_args in (
-                ["scout", "cves", "--only-severity", "high", scout_image],
+                ["scout", "cves", "--output", str(outside / "report"), scout_image],
                 ["scout", "cves", "--only-severity", "critical", "alpine:latest"],
-                ["scout", "cves", "--only-severity", "critical", f"local://{scout_image}"],
             ):
                 expect_denied(
                     lambda denied_args=denied_args: broker.handle_scout_cves(
@@ -1197,7 +1206,6 @@ def main() -> None:
             assert scout_calls == []
         finally:
             broker.run_command = original_run_command
-            broker.SCOUT_TASK_SERVICES = original_scout_services
             broker.MODEL_DIR = original_model_dir
             broker.COMPOSE_AUDIT_LOG = original_audit_log
 

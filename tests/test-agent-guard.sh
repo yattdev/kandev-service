@@ -266,6 +266,49 @@ if (cd "$managed_root" && "$GUARD" -- sh -c 'touch "$1"' sh "$managed_source_pro
 fi
 [[ ! -e "$managed_source_probe" ]]
 
+# Reproduce a repository attached AFTER the provider guard was constructed.
+# Its metadata must be read-only in the old namespace, while the Git wrapper
+# obtains a fresh, backlink-validated task scope without restarting the agent.
+late_root="$(mktemp -d "$(dirname "$managed_root")/kandev-late-git.XXXXXX")"
+late_control="$(mktemp -d "$managed_root/.kandev-late-control.XXXXXX")"
+late_pid=""
+cleanup_late_git() {
+    [[ -z "$late_pid" ]] || kill "$late_pid" 2>/dev/null || true
+    git -C "$managed_source" worktree remove --force "$late_root" >/dev/null 2>&1 || true
+    rmdir "$late_root" 2>/dev/null || true
+    rm -rf -- "$late_control"
+}
+trap cleanup_late_git EXIT
+(cd "$managed_root" && "$GUARD" -- bash -ceu '
+    control="$1"; worktree="$2"
+    touch "$control/ready"
+    for ((i=0; i<100; i++)); do
+        [[ ! -f "$control/go" ]] || break
+        sleep 0.1
+    done
+    test -f "$control/go"
+    metadata=$(sed -n "s/^gitdir: //p" "$worktree/.git")
+    case ",$(findmnt -T "$metadata" -n -o OPTIONS)," in *,ro,*) ;; *) exit 1;; esac
+    printf "disposable fixture\n" > "$worktree/_kandev_mount_probe"
+    cd "$worktree"
+    git add _kandev_mount_probe
+    test "$(git diff --cached --name-only)" = _kandev_mount_probe
+    touch "$control/passed"
+' sh "$late_control" "$late_root") >"$late_control/output" 2>&1 &
+late_pid=$!
+for ((late_i=0; late_i<100; late_i++)); do
+    [[ ! -f "$late_control/ready" ]] || break
+    sleep 0.1
+done
+test -f "$late_control/ready"
+git -C "$managed_source" worktree add --detach "$late_root" HEAD >/dev/null 2>&1
+touch "$late_control/go"
+wait "$late_pid" || { cat "$late_control/output" >&2; exit 1; }
+late_pid=""
+test -f "$late_control/passed"
+cleanup_late_git
+trap - EXIT
+
 # Modern Codex exposes task-visible execution handles through unified exec.
 # The guard must preserve the provider configuration instead of reviving the
 # legacy synchronous execution path, which cannot be waited on or cancelled

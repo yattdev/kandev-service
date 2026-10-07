@@ -18,6 +18,7 @@ import json
 import os
 from pathlib import Path
 import re
+import runpy
 import secrets
 import selectors
 import stat
@@ -29,6 +30,7 @@ import sys
 import tempfile
 import threading
 import time
+from types import SimpleNamespace
 from typing import Any
 import urllib.error
 import urllib.request
@@ -75,13 +77,12 @@ TASK_DIR_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 COMPOSE_ENV_KEYS = {"COMPOSE_PROJECT_NAME", "DB_PORT", "WEB_PORT"}
 COMPOSE_PROJECT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 IMAGE_TAG_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$")
-# Owner-approved CVE scans for these exact task checkouts and build services.
-SCOUT_TASK_SERVICES = {
-    "/data/tasks/task-8476-fix-vulner_4xmsmdbv": "backend-stripe",  # 2999fa68-f6cc-4b96-8300-de99ef7e0a62
-    "/data/tasks/task-8476-fix-vulner_0cn6qbsh": "prerender-backend",  # e6c2c75c-a261-465e-bf48-8af7d735668c
-    "/data/tasks/task-8476-fix-vulner_gnic8lsd": "prerender-backend",  # 7e784eba-c2c3-4507-96ba-6cf02f869cf3
-}
 SCOUT_DOCKER_CONFIG = "/run/kandev-agent-docker/scout-auth"
+GIT_ENV_KEYS = {
+    "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_AUTHOR_DATE",
+    "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "GIT_COMMITTER_DATE",
+    "GIT_ASKPASS", "SSH_ASKPASS", "GIT_SSH", "GIT_SSH_COMMAND", "GIT_TERMINAL_PROMPT",
+}
 STATIC_BACKUP_NAME = "last_db.sql"
 AUDIT_LOCK = threading.Lock()
 EXPORT_LOCK = threading.Lock()
@@ -98,6 +99,8 @@ RUNTIME_IDENTITY_LABELS = {
 }
 
 COMPOSE_VALUE_OPTIONS = {
+    "-p",
+    "--project-name",
     "-f",
     "--file",
     "--profile",
@@ -230,18 +233,26 @@ def project_name(task_root: Path) -> str:
     return f"kd_{digest}"
 
 
-def scoped_project_name(task_root: Path, environment: dict[str, str]) -> str:
-    """Select a project without allowing a task to address a shared project.
-
-    A task may opt into a distinct disposable project through the narrow
-    COMPOSE_PROJECT_NAME transport.  Only broker-looking ``kd_`` names are
-    accepted; ownership is then established by a saved model scoped to the
-    exact task root and working clone below.
-    """
-    selected = environment.get("COMPOSE_PROJECT_NAME", project_name(task_root))
-    if selected != project_name(task_root) and not selected.startswith("kd_"):
-        raise BrokerError("explicit Compose project names must use the guarded kd_ prefix")
-    return selected
+def scoped_project_name(
+    task_root: Path, environment: dict[str, str], cwd: Path | None = None
+) -> str:
+    """Automatically isolate projects by task and clone, retaining existing owners."""
+    selected = environment.get("COMPOSE_PROJECT_NAME")
+    if selected and selected.startswith("kd_"):
+        return selected  # Existing explicitly scoped projects keep their identity.
+    if selected and not COMPOSE_PROJECT_NAME_RE.fullmatch(selected):
+        raise BrokerError("invalid Compose project name")
+    cwd = cwd or task_root
+    legacy = project_name(task_root)
+    if selected is None:
+        try:
+            owner = json.loads(project_claim_path(legacy).read_text())
+        except (FileNotFoundError, json.JSONDecodeError):
+            owner = None
+        if owner == project_owner(task_root, cwd, legacy) or cwd == task_root:
+            return legacy
+    digest = hashlib.sha256(f"{task_root}\0{cwd}\0{selected or ''}".encode()).hexdigest()[:24]
+    return f"kd_{digest}"
 
 
 def model_path(task_root: Path, project: str) -> Path:
@@ -397,7 +408,7 @@ def owned_network_receipt(network: dict[str, Any], task_root: Path, project: str
 def handle_network_reserve(task_root: Path, cwd: Path, args: list[str], environment: dict[str, str]) -> dict[str, Any]:
     if args != ["kandev", "network", "reserve"]:
         raise BrokerError("guarded network command is: docker kandev network reserve")
-    project = scoped_project_name(task_root, environment)
+    project = scoped_project_name(task_root, environment, cwd)
     model = load_scoped_model(task_root, cwd, project)
     networks = model.get("networks") or {}
     default = networks.get("default") if isinstance(networks, dict) else None
@@ -520,8 +531,6 @@ def split_compose_args(args: list[str], cwd: Path, task_root: Path) -> tuple[lis
             break
         if arg.startswith("--dry-run="):
             raise BrokerError("guarded Compose requires the bare --dry-run flag")
-        if arg in {"-p", "--project-name"} or arg.startswith("--project-name="):
-            raise BrokerError("Compose project names are assigned per Kandev task")
         if arg in COMPOSE_FLAG_OPTIONS:
             global_args.append(arg)
             index += 1
@@ -671,9 +680,7 @@ def validate_named_resources(model: dict[str, Any], project: str) -> None:
                 raise BrokerError(f"external Compose {section} are not permitted: {logical_name}")
             actual_name = config.get("name")
             if actual_name and not str(actual_name).startswith(f"{project}_"):
-                raise BrokerError(
-                    f"explicit Compose {section} name escapes the task project: {actual_name}"
-                )
+                config["name"] = f"{project}_{logical_name}"
 
 
 def validate_model(
@@ -689,6 +696,9 @@ def validate_model(
     for service_name, service in services.items():
         if not isinstance(service, dict):
             raise BrokerError(f"invalid Compose service: {service_name}")
+        if service.get("container_name"):
+            service["x-kandev-container-alias"] = service["container_name"]
+            service["container_name"] = f"{project}-{service_name}-1"
         for key in (
             "privileged",
             "cap_add",
@@ -720,6 +730,8 @@ def validate_model(
 
         build = service.get("build")
         requested_image = service.get("image")
+        if service.get("build") and requested_image:
+            service["x-kandev-image-alias"] = requested_image
         if isinstance(build, str):
             service["build"] = str(scoped_path_to_host(build, cwd, task_root, host_root))
             service["image"] = scoped_build_image(requested_image, project, service_name)
@@ -959,29 +971,79 @@ def run_command(
     return return_code, stdout.decode(errors="replace"), stderr.decode(errors="replace")
 
 
+def owned_models(task_root: Path) -> list[tuple[Path, str, dict[str, Any]]]:
+    """Return only models whose immutable task/clone claim still agrees."""
+    directory = MODEL_DIR / hashlib.sha256(str(task_root).encode()).hexdigest()
+    models = []
+    for path in sorted(directory.glob("*.json")):
+        try:
+            record = json.loads(path.read_text())
+            cwd = Path(record["cwd"]).resolve(strict=True)
+            project = record["project"]
+            if not is_within(cwd, task_root) or not isinstance(project, str):
+                continue
+            model = load_scoped_model(task_root, cwd, project)
+        except (BrokerError, OSError, ValueError, KeyError, TypeError):
+            continue
+        models.append((cwd, project, model))
+    return models
+
+
+def owned_build_image(task_root: Path, cwd: Path, requested: str) -> tuple[Path, str, str]:
+    matches = []
+    requested = requested.removeprefix("local://")
+    for directory, project, model in owned_models(task_root):
+        if not (is_within(directory, cwd) or is_within(cwd, directory)):
+            continue
+        for name, service in (model.get("services") or {}).items():
+            image = service.get("image")
+            if not service.get("build") or not isinstance(image, str):
+                continue
+            if image != scoped_build_image(image, project, name):
+                continue
+            aliases = {image, f"{name}:latest", service.get("x-kandev-image-alias")}
+            aliases.update(service.get("x-kandev-image-aliases") or [])
+            if requested in aliases:
+                matches.append((directory, project, image))
+    unique = list(dict.fromkeys(matches))
+    if len(unique) != 1:
+        raise BrokerError("image must identify one image built by this task checkout; use its scoped tag")
+    return unique[0]
+
+
 def handle_scout_cves(
     task_root: Path, cwd: Path, args: list[str], environment: dict[str, str]
 ) -> dict[str, Any]:
-    """Scan only an existing local image built by the approved task service."""
-    service_name = SCOUT_TASK_SERVICES.get(str(task_root))
-    if service_name is None:
-        raise BrokerError("Docker Scout is not enabled for this task")
-    if len(args) != 5 or args[:4] != ["scout", "cves", "--only-severity", "critical"]:
-        raise BrokerError("supported Scout usage: docker scout cves --only-severity critical <task image>")
-    requested_image = args[4]
-    project = scoped_project_name(task_root, environment)
-    project_directory = compose_project_directory(cwd, task_root, [])
-    model = load_scoped_model(task_root, project_directory, project)
-    service = (model.get("services") or {}).get(service_name)
-    if not isinstance(service, dict) or not service.get("build"):
-        raise BrokerError("Scout image is not the approved built service in this task's saved Compose model")
-    image = service.get("image")
-    # Compose rewrites unscoped image names to the task project. Accept the
-    # familiar service:latest spelling only as an alias for that exact saved tag.
-    if requested_image not in {image, f"{service_name}:latest"}:
-        raise BrokerError("Scout image is not the approved built service in this task's saved Compose model")
-    if image != scoped_build_image(image, project, service_name):
-        raise BrokerError("Scout image tag is outside this task project")
+    """Every task may scan its own built images, without a per-task grant."""
+    if args in (["scout", "--help"], ["scout", "cves", "--help"]):
+        code, stdout, stderr = run_command([DOCKER_BIN, *args], cwd)
+        return {"returncode": code, "stdout": stdout, "stderr": stderr}
+    if args[:2] != ["scout", "cves"] or len(args) < 3:
+        raise BrokerError("supported Scout usage: docker scout cves [--only-severity critical,high,...] <task image>")
+    scan_options = []
+    index = 2
+    value_options = {"--only-severity", "--only-package", "--only-package-type", "--only-cve-id", "--format", "--platform"}
+    flag_options = {"--only-fixed", "--only-unfixed", "--ignore-base", "--ignore-suppressed", "--locations", "--epss"}
+    while index < len(args) - 1:
+        option, separator, value = args[index].partition("=")
+        if option in flag_options and not separator:
+            scan_options.append(option)
+        elif option in value_options:
+            if not separator:
+                index += 1
+                if index >= len(args) - 1:
+                    raise BrokerError("missing Scout filter value or task image")
+                value = args[index]
+            if not value or value.startswith("-"):
+                raise BrokerError("invalid Scout filter value")
+            if option == "--only-severity" and not set(value.split(",")) <= {"critical", "high", "medium", "low", "unspecified"}:
+                raise BrokerError("invalid Scout severity")
+            scan_options.extend((option, value))
+        else:
+            raise BrokerError("unsupported read-only Scout option; redirect output into the task workspace")
+        index += 1
+    requested_image = args[-1]
+    project_directory, project, image = owned_build_image(task_root, cwd, requested_image)
 
     code, stdout, stderr = run_command([DOCKER_BIN, "image", "inspect", image], cwd)
     if code != 0:
@@ -1002,7 +1064,7 @@ def handle_scout_cves(
     audit_compose(task_root, project_directory, project, project, "scout cves", "allow",
                   "preflight", audit_id=audit_id, command_class="read-only")
     code, report, errors = run_command(
-        [DOCKER_BIN, "scout", "cves", "--only-severity", "critical", f"local://{image}"],
+        [DOCKER_BIN, "scout", "cves", *scan_options, f"local://{image}"],
         cwd, timeout=COMMAND_TIMEOUT, max_output=MAX_SCOUT_OUTPUT,
         environment_overrides={"DOCKER_CONFIG": SCOUT_DOCKER_CONFIG},
     )
@@ -1032,7 +1094,7 @@ def handle_oneoff(
     """Inspect or remove one exact Compose one-off owned by this task and clone."""
     if len(args) != 4 or args[2] not in {"inspect", "remove"}:
         raise BrokerError("oneoff usage: docker kandev oneoff inspect|remove <exact-name>")
-    project = scoped_project_name(task_root, environment)
+    project = scoped_project_name(task_root, environment, cwd)
     model = load_scoped_model(task_root, cwd, project)
     name = args[3]
     services = model.get("services") or {}
@@ -2259,6 +2321,10 @@ def compose_config(
 ) -> dict[str, Any]:
     # Parse all agent-controlled Compose files inside the same Bubblewrap scope
     # as the agent. The broker never opens env/config/include files on the host.
+    global_args, environment_overrides = compose_project_options(global_args, environment_overrides)
+    # The requested name has already been mapped to this task/clone. Do not
+    # let an ordinary project alias override that daemon-facing name.
+    environment_overrides = {**environment_overrides, "COMPOSE_PROJECT_NAME": project}
     args = [
         GUARD_BIN,
         "--",
@@ -2292,6 +2358,82 @@ def render_model_for_command(
     return model
 
 
+def compose_project_options(
+    args: list[str], environment: dict[str, str]
+) -> tuple[list[str], dict[str, str]]:
+    filtered = []
+    environment = dict(environment)
+    index = 0
+    while index < len(args):
+        option, separator, value = args[index].partition("=")
+        if option in {"-p", "--project-name"}:
+            if not separator:
+                index += 1
+                value = args[index]
+            environment["COMPOSE_PROJECT_NAME"] = value
+        elif option in COMPOSE_VALUE_OPTIONS and not separator:
+            filtered.extend(args[index:index + 2])
+            index += 1
+        else:
+            filtered.append(args[index])
+        index += 1
+    return filtered, compose_environment(environment)
+
+
+def handle_git(
+    task_root: Path, cwd: Path, args: list[str], request: dict[str, Any],
+    stdin_stream: FramedInput | None,
+) -> dict[str, Any]:
+    """Run Git in a fresh task guard, picking up newly attached backlinks.
+
+    Arbitrary Git flags, hooks and helpers execute inside Bubblewrap, never in
+    the broker's trusted namespace. The guard validates every Git backlink and
+    overlays sibling administration directories read-only on each invocation.
+    """
+    environment = request.get("git_environment", {})
+    if not isinstance(environment, dict) or set(environment) - GIT_ENV_KEYS:
+        raise BrokerError("invalid Git environment")
+    if any(not isinstance(v, str) or len(v) > 65536 for v in environment.values()):
+        raise BrokerError("invalid Git environment value")
+    # Git may change its worktree with global flags. Validate them before
+    # creating a fresh scope; a task must not nominate a source/sibling checkout.
+    target = cwd
+    index = 0
+    while index < len(args) and args[index].startswith("-"):
+        option, separator, value = args[index].partition("=")
+        if option in {"-C", "--work-tree", "--git-dir"}:
+            if not separator:
+                index += 1
+                if index >= len(args):
+                    raise BrokerError("missing Git path option value")
+                value = args[index]
+            if option == "--git-dir":
+                candidate = Path(value) if Path(value).is_absolute() else target / value
+                candidate = candidate.resolve(strict=True)
+                if not is_within(candidate, task_root):
+                    backlink = candidate / "gitdir"
+                    if not backlink.is_file():
+                        raise BrokerError("Git metadata is outside this task")
+                    marker = Path(backlink.read_text().strip())
+                    if not marker.is_absolute():
+                        marker = candidate / marker
+                    marker = resolve_inside(str(marker), target, task_root)
+                    if not marker.is_file() or marker.read_text().strip() != f"gitdir: {candidate}":
+                        raise BrokerError("Git metadata backlink does not match this task")
+            else:
+                resolved = resolve_inside(value, target, task_root)
+                if option == "-C":
+                    target = resolved
+        elif option in {"-c", "--config-env", "--namespace"} and not separator:
+            index += 1
+        index += 1
+    code, stdout, stderr = run_command(
+        [GUARD_BIN, "--", "/usr/bin/git", *args], cwd,
+        environment_overrides=environment, stdin_stream=stdin_stream,
+    )
+    return {"returncode": code, "stdout": stdout, "stderr": stderr}
+
+
 def handle_request(
     request: dict[str, Any], key: bytes, stdin_stream: FramedInput | None = None
 ) -> dict[str, Any]:
@@ -2314,6 +2456,9 @@ def handle_request(
     if not hmac.compare_digest(token, expected_token(key, task_root)):
         raise BrokerError("invalid task-scoped Docker token")
 
+    if args[:2] == ["kandev", "git"]:
+        return handle_git(task_root, cwd, args[2:], request, stdin_stream)
+
     if args[:2] == ["kandev", "source"]:
         return handle_coordinator_source(task_root, args)
     if args[:2] == ["kandev", "workspace"]:
@@ -2326,13 +2471,17 @@ def handle_request(
         return handle_oneoff(task_root, cwd, args, environment_overrides)
     if args[:1] == ["scout"]:
         return handle_scout_cves(task_root, cwd, args, environment_overrides)
+    if args[:1] != ["compose"]:
+        operations = runpy.run_path(str(Path(__file__).with_name("kandev-agent-docker-operations.py")))
+        return operations["handle"](SimpleNamespace(**globals()), task_root, cwd, args, stdin_stream)
 
     global_args, command, command_args = split_compose_args(args, cwd, task_root)
+    global_args, environment_overrides = compose_project_options(global_args, environment_overrides)
     project_directory = compose_project_directory(cwd, task_root, global_args)
     host_root = translate_to_host(task_root)
     requested_project = environment_overrides.get("COMPOSE_PROJECT_NAME", project_name(task_root))
     try:
-        project = scoped_project_name(task_root, environment_overrides)
+        project = scoped_project_name(task_root, environment_overrides, project_directory)
     except BrokerError as exc:
         if command not in DESTRUCTIVE_COMPOSE_COMMANDS:
             raise

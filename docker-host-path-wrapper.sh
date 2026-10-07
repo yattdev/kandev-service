@@ -52,9 +52,10 @@ set -uo pipefail
 REAL_DOCKER=/usr/bin/docker
 
 # A filesystem-guarded agent never receives the host daemon socket. Route its
-# Docker-compatible commands through the task-scoped Compose broker instead.
-# The broker validates the resolved Compose model and forces every host bind
-# read-only before it talks to the host daemon. Calling /usr/bin/docker directly
+# Docker-compatible commands through the task-scoped broker instead. Compose,
+# build/run, and operations on a task's own containers need no per-task grant.
+# The broker validates ownership and permits writable binds only inside the
+# caller's task before it talks to the daemon. Calling /usr/bin/docker directly
 # from the agent still cannot bypass this because no Docker socket is mounted.
 if [[ "${KANDEV_AGENT_GUARD_ACTIVE:-0}" == "1" ]]; then
   exec /usr/local/bin/kandev-agent-docker-client "$@"

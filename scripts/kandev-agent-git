@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Refresh task-owned Git metadata access when an attachment outlives its mounts.
+# The broker runs real Git in a fresh guard; hooks never run on the host.
+set -euo pipefail
+if [[ "${KANDEV_AGENT_GUARD_ACTIVE:-0}" == 1 \
+      && "${KANDEV_AGENT_GUARD_SCOPE:-}" == project \
+      && -n "${KANDEV_AGENT_DOCKER_TOKEN:-}" ]]; then
+    args=("$@")
+    global_args=()
+    index=0
+    while (( index < ${#args[@]} )); do
+        case "${args[$index]}" in
+            -C|-c|--git-dir|--work-tree|--namespace|--config-env)
+                (( index + 1 < ${#args[@]} )) || break
+                global_args+=("${args[$index]}" "${args[$((index + 1))]}")
+                index=$((index + 2))
+                ;;
+            --git-dir=*|--work-tree=*|--namespace=*|--config-env=*|--no-pager|--paginate|-p|--bare|--no-optional-locks)
+                global_args+=("${args[$index]}")
+                index=$((index + 1))
+                ;;
+            *) break ;;
+        esac
+    done
+    if metadata=$(/usr/bin/git "${global_args[@]}" rev-parse --absolute-git-dir 2>/dev/null) \
+          && [[ ! -w "$metadata" ]]; then
+        exec /usr/local/bin/kandev-agent-docker-client kandev git "$@"
+    fi
+fi
+exec /usr/bin/git "$@"

@@ -1,0 +1,75 @@
+#!/usr/bin/python3
+"""Host Git adapter for Kandev worktrees with container-absolute .git markers."""
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+
+def map_metadata(path, mounts):
+    for mount in sorted(mounts, key=lambda m: len(m.get('Destination', '')), reverse=True):
+        target = Path(mount['Destination'])
+        try:
+            relative = path.relative_to(target)
+        except ValueError:
+            continue
+        if mount.get('Type') == 'bind':
+            return Path(mount['Source']) / relative
+    raise ValueError('Git metadata has no host bind mapping in the Kandev container')
+
+
+def host_args(args, cwd, mounts):
+    target = cwd
+    index = 0
+    while index < len(args) and args[index].startswith('-'):
+        option, equal, value = args[index].partition('=')
+        if option in {'--git-dir', '--work-tree'}:
+            return args  # Respect an explicit caller-selected Git context.
+        if option in {'-C', '-c', '--config-env', '--namespace'} and not equal:
+            index += 1
+            if index >= len(args):
+                return args
+            if option == '-C':
+                target = (target / args[index]).resolve()
+        index += 1
+    if os.environ.get('GIT_DIR'):
+        return args
+    for root in (target, *target.parents):
+        marker = root / '.git'
+        if marker.is_dir():
+            return args
+        if not marker.is_file():
+            continue
+        line = marker.read_text().strip()
+        if not line.startswith('gitdir: /data/'):
+            return args
+        metadata = map_metadata(Path(line[8:]), mounts)
+        if not metadata.is_dir():
+            raise ValueError('Mapped Kandev Git metadata is unavailable on the host')
+        if index < len(args) and args[index] == 'worktree':
+            raise ValueError('Run Kandev worktree administration inside the container, where its registry paths are valid')
+        return ['--git-dir=' + str(metadata), '--work-tree=' + str(root), *args]
+    return args
+
+
+def main():
+    args = sys.argv[1:]
+    cwd = Path.cwd()
+    # Ordinary host repositories never require Docker. Resolve mount metadata
+    # only when a linked Kandev worktree actually contains a /data Git pointer.
+    try:
+        result = host_args(args, cwd, [])
+    except ValueError:
+        container = os.environ.get('KANDEV_GIT_CONTAINER', 'kandev')
+        try:
+            output = subprocess.check_output(['docker', 'inspect', '--type', 'container', '--format', '{{json .Mounts}}', container], text=True, stderr=subprocess.DEVNULL)
+            result = host_args(args, cwd, json.loads(output))
+        except (OSError, subprocess.CalledProcessError, ValueError) as exc:
+            print('kandev-git: ' + str(exc), file=sys.stderr)
+            return 78
+    os.execv('/usr/bin/git', ['git', *result])
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

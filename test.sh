@@ -939,6 +939,12 @@ fi
 # ── 15. Per-agent filesystem boundary ────────────────────────────────────────────────
 section "15. Per-agent filesystem boundary"
 
+if PYTHONDONTWRITEBYTECODE=1 python3 "$COMPOSE_DIR/tests/test-task-access.py" >/dev/null 2>&1; then
+  ok "automatic task Docker/Git access retains ownership boundaries"
+else
+  fail "tests/test-task-access.py failed"
+fi
+
 if PYTHONDONTWRITEBYTECODE=1 python3 "$COMPOSE_DIR/tests/test-agent-docker-broker.py" >/dev/null 2>&1; then
   ok "task-scoped Docker broker policy unit tests pass"
 else
