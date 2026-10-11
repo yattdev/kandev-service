@@ -37,7 +37,7 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Codex
-            model: gpt-6-sol
+            model: gpt-6.1-sol
             mode: agent-full-access
           profile_session_start_policy: reuse
           profile_session_end_policy: park
@@ -60,10 +60,10 @@ workflows:
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
           complete_task_on_enter: false
-        - name: Work
+        - name: Work-review-qa
           position: 3
           color: bg-blue-500
-          prompt: '@codex-dw-work'
+          prompt: '@codex-dw-wip'
           events:
             on_enter:
                 - type: auto_start_agent
@@ -76,7 +76,7 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Codex
-            model: gpt-5.6-terra
+            model: gpt-6.1-sol
             mode: agent-full-access
           profile_session_start_policy: reuse
           profile_session_end_policy: park
@@ -102,74 +102,10 @@ workflows:
           session_target:
             kind: step
             step_position: 3
-        - name: Review
+        - name: Pr-CI-fixup
           position: 5
-          color: bg-yellow-500
-          prompt: '@codex-dw-review'
-          events:
-            on_enter:
-                - type: reset_agent_context
-                - type: auto_start_agent
-            on_turn_complete:
-                - type: move_to_next
-          is_start_step: false
-          show_in_command_panel: true
-          allow_manual_move: true
-          agent_profile:
-            agent_name: Codex
-            model: gpt-5.6-terra
-            mode: agent-full-access
-          profile_session_start_policy: new
-          profile_session_end_policy: complete
-          auto_advance_requires_signal: true
-          cancel_triggers_turn_complete: false
-          complete_task_on_enter: false
-        - name: QA
-          position: 6
-          color: bg-orange-500
-          prompt: '@codex-dw-qa'
-          events:
-            on_enter:
-                - type: auto_start_agent
-            on_turn_complete:
-                - type: move_to_next
-          is_start_step: false
-          show_in_command_panel: true
-          allow_manual_move: true
-          agent_profile:
-            agent_name: Codex
-            model: gpt-6-sol
-            mode: agent-full-access
-          profile_session_start_policy: new
-          profile_session_end_policy: complete
-          auto_advance_requires_signal: true
-          cancel_triggers_turn_complete: false
-          complete_task_on_enter: false
-        - name: PR
-          position: 7
           color: bg-indigo-500
-          prompt: '@codex-dw-pr'
-          events:
-            on_enter:
-                - type: auto_start_agent
-            on_turn_complete:
-                - type: move_to_next
-          is_start_step: false
-          show_in_command_panel: true
-          allow_manual_move: true
-          agent_profile:
-            agent_name: Codex
-            model: gpt-6-luna
-            mode: agent-full-access
-          profile_session_start_policy: new
-          profile_session_end_policy: complete
-          auto_advance_requires_signal: true
-          cancel_triggers_turn_complete: false
-          complete_task_on_enter: false
-        - name: CI Fixup
-          position: 8
-          color: bg-amber-500
-          prompt: '@codex-ci-fixup'
+          prompt: '@codex-dw-pr-cifixup'
           events:
             on_enter:
                 - type: auto_start_agent
@@ -188,7 +124,7 @@ workflows:
           cancel_triggers_turn_complete: false
           complete_task_on_enter: false
         - name: Human-QA
-          position: 9
+          position: 6
           color: bg-orange-500
           prompt: '@codex-dw-human-qa-review'
           events:
@@ -199,7 +135,7 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Codex
-            model: gpt-5.6-terra
+            model: gpt-6.1-sol
             mode: agent-full-access
           profile_session_start_policy: reuse
           profile_session_end_policy: park
@@ -207,7 +143,7 @@ workflows:
           cancel_triggers_turn_complete: false
           complete_task_on_enter: false
         - name: ToDeploy
-          position: 10
+          position: 7
           color: bg-cyan-500
           events: {}
           is_start_step: false
@@ -219,7 +155,7 @@ workflows:
           cancel_triggers_turn_complete: false
           complete_task_on_enter: false
         - name: Done
-          position: 11
+          position: 8
           color: bg-green-500
           prompt: '@codex-dw-done'
           events:
@@ -287,7 +223,7 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Codex
-            model: gpt-6-sol
+            model: gpt-6.1-sol
             mode: agent-full-access
           profile_session_start_policy: new
           profile_session_end_policy: park
@@ -312,7 +248,7 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Codex
-            model: gpt-5.6-terra
+            model: gpt-6.1-sol
             mode: agent-full-access
           profile_session_start_policy: reuse
           profile_session_end_policy: park
