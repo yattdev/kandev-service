@@ -242,4 +242,11 @@ and key backup is at
 
 The backend overlay was subsequently updated for independent task checkout
 adoption. See [the patch and build record](../patches/kandev-v096-workspace-adoption.md)
-for its current binary hash and the operator attestation requirement.
+for its binary hash and the operator attestation requirement.
+
+The backend overlay was then updated for Support request
+`7effc837-ea2e-4e6c-98a7-21bfaff702e8` to allow verified merged canonical PR URL
+links. It preserves that adoption patch and the entire preceding backend lineage;
+the agentctl pair and frontend assets are unchanged. See
+[the source patch and deployment record](../patches/kandev-v096-merged-pr-url-link.md)
+for the current build provenance and acceptance results.

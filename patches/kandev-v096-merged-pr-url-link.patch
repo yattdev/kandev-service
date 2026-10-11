@@ -1,0 +1,244 @@
+diff --git a/apps/backend/internal/github/service_pr_link_validation.go b/apps/backend/internal/github/service_pr_link_validation.go
+new file mode 100644
+index 0000000000..22bf61a777
+--- /dev/null
++++ b/apps/backend/internal/github/service_pr_link_validation.go
+@@ -0,0 +1,31 @@
++package github
++
++import (
++	"errors"
++	"fmt"
++	"strings"
++)
++
++// Linking records a deliverable; it does not grant permission to edit its branch.
++// Keep contribution creation's open-only policy separate from link eligibility.
++func validateGitHubPRLink(owner, repo string, number int, pr *PR) error {
++	if err := validateGitHubPRIdentityAndRefs(owner, repo, number, pr); err != nil {
++		return err
++	}
++	switch pr.State {
++	case defaultPRState, prStateMerged:
++		return nil
++	default:
++		return fmt.Errorf("GitHub pull request #%d is neither open nor merged", number)
++	}
++}
++
++func validateExistingGitHubPRLink(existing *TaskPR, pr *PR, prURL string) error {
++	if existing != nil && !strings.EqualFold(strings.TrimSuffix(existing.PRURL, "/"), strings.TrimSuffix(prURL, "/")) {
++		return errors.New("a different canonical PR already uses this task repository and number")
++	}
++	if existing != nil && existing.DetachedAt == nil && existing.HeadSHA != pr.HeadSHA {
++		return errors.New("existing PR link has a stale head SHA")
++	}
++	return nil
++}
+diff --git a/apps/backend/internal/github/service_pr_link_validation_test.go b/apps/backend/internal/github/service_pr_link_validation_test.go
+new file mode 100644
+index 0000000000..4e5366e637
+--- /dev/null
++++ b/apps/backend/internal/github/service_pr_link_validation_test.go
+@@ -0,0 +1,143 @@
++package github
++
++import (
++	"context"
++	"strings"
++	"testing"
++	"time"
++
++	taskmodels "github.com/kandev/kandev/internal/task/models"
++)
++
++const verifiedLinkURL = "https://github.com/acme/widget/pull/7"
++
++func verifiedLinkPR() *PR {
++	mergedAt := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
++	return &PR{
++		Number: 7, State: "merged", HTMLURL: verifiedLinkURL,
++		RepoOwner: "acme", RepoName: "widget", BaseRepoOwner: "acme", BaseRepoName: "widget",
++		HeadRepoOwner: "contributor", HeadRepoName: "widget-fork",
++		HeadBranch: "feature/deliverable", BaseBranch: "main", HeadSHA: strings.Repeat("a", 40),
++		CreatedAt: mergedAt.Add(-time.Hour), MergedAt: &mergedAt,
++	}
++}
++
++func setupVerifiedLink(t *testing.T, pr *PR) (*Service, *Store) {
++	t.Helper()
++	_, svc, client, store := setupPollerTest(t)
++	client.AddRepos("acme", []GitHubRepo{{Owner: "acme", Name: "widget", FullName: "acme/widget"}})
++	svc.SetTaskIssueStore(&fakeTaskIssueStore{
++		task:  &taskmodels.Task{ID: "child", WorkspaceID: testWorkspaceID},
++		repos: []*taskmodels.TaskRepository{{ID: "attachment", RepositoryID: "fork-repo"}},
++	})
++	// Key the mock by the requested URL even when testing a mismatched response.
++	client.reviewWatch.details[prKey{"acme", "widget", 7}] = mockPRDetailResult{pr: pr}
++	return svc, store
++}
++
++func linkVerifiedPR(svc *Service) (*TaskPR, error) {
++	return svc.AssociateVerifiedSourcePRByURLForWorkspace(context.Background(), testWorkspaceID,
++		"test-user", "child", "fork-repo", verifiedLinkURL, "contributor", "widget-fork")
++}
++
++func TestVerifiedPRLinkMergedDeliveryAndRetry(t *testing.T) {
++	pr := verifiedLinkPR()
++	svc, store := setupVerifiedLink(t, pr)
++	for range 2 {
++		got, err := linkVerifiedPR(svc)
++		if err != nil {
++			t.Fatal(err)
++		}
++		if got.TaskID != "child" || got.RepositoryID != "fork-repo" || got.PRURL != verifiedLinkURL ||
++			got.HeadSHA != pr.HeadSHA || got.State != "merged" || got.MergedAt == nil || !got.MergedAt.Equal(*pr.MergedAt) {
++			t.Fatalf("wrong association: %+v", got)
++		}
++	}
++	rows, err := store.ListTaskPRsByTask(context.Background(), "child")
++	if err != nil || len(rows) != 1 || rows[0].DetachedAt != nil {
++		t.Fatalf("retry must leave exactly one active link: %+v, %v", rows, err)
++	}
++	watches, err := store.ListPRWatchesByTask(context.Background(), "child")
++	if err != nil || len(watches) != 0 {
++		t.Fatalf("unexpected watches: %+v, %v", watches, err)
++	}
++}
++
++func TestVerifiedPRLinkRejectsUnsafeMergedResponses(t *testing.T) {
++	cases := []struct {
++		name   string
++		mutate func(*PR)
++	}{
++		{"wrong number", func(p *PR) { p.Number++ }},
++		{"wrong owner", func(p *PR) { p.RepoOwner = "other" }},
++		{"wrong base", func(p *PR) { p.BaseRepoName = "other" }},
++		{"wrong URL", func(p *PR) { p.HTMLURL = "https://github.com/other/widget/pull/7" }},
++		{"wrong source owner", func(p *PR) { p.HeadRepoOwner = "other" }},
++		{"wrong source name", func(p *PR) { p.HeadRepoName = "other" }},
++		{"missing source", func(p *PR) { p.HeadRepoOwner = "" }},
++		{"unsafe head", func(p *PR) { p.HeadBranch = "--upload-pack=evil" }},
++		{"unsafe base", func(p *PR) { p.BaseBranch = "../main" }},
++		{"missing SHA", func(p *PR) { p.HeadSHA = "" }},
++		{"closed unmerged", func(p *PR) { p.State = "closed"; p.MergedAt = nil }},
++		{"unknown state", func(p *PR) { p.State = "unknown" }},
++	}
++	for _, tc := range cases {
++		t.Run(tc.name, func(t *testing.T) {
++			pr := verifiedLinkPR()
++			tc.mutate(pr)
++			svc, store := setupVerifiedLink(t, pr)
++			if _, err := linkVerifiedPR(svc); err == nil {
++				t.Fatal("unsafe link accepted")
++			}
++			rows, err := store.ListTaskPRsByTask(context.Background(), "child")
++			if err != nil || len(rows) != 0 {
++				t.Fatalf("rejected request wrote links: %+v, %v", rows, err)
++			}
++		})
++	}
++}
++
++func TestVerifiedPRLinkPreservesCollisionAndStaleGuards(t *testing.T) {
++	for _, mode := range []string{"collision", "stale", "detached collision"} {
++		t.Run(mode, func(t *testing.T) {
++			pr := verifiedLinkPR()
++			svc, store := setupVerifiedLink(t, pr)
++			existing := &TaskPR{TaskID: "child", RepositoryID: "fork-repo", PRNumber: 7,
++				PRURL: verifiedLinkURL, HeadSHA: pr.HeadSHA, CreatedAt: pr.CreatedAt}
++			if mode == "stale" {
++				existing.HeadSHA = strings.Repeat("b", 40)
++			} else {
++				existing.PRURL = "https://github.com/contributor/widget-fork/pull/7"
++			}
++			if err := store.CreateTaskPR(context.Background(), existing); err != nil {
++				t.Fatal(err)
++			}
++			if mode == "detached collision" {
++				if _, _, err := store.DetachTaskPR(context.Background(), existing.ID); err != nil {
++					t.Fatal(err)
++				}
++			}
++			if _, err := linkVerifiedPR(svc); err == nil {
++				t.Fatal("conflicting link accepted")
++			}
++			got, err := store.GetTaskPRByRepoAndNumberIncludingDetached(context.Background(), "child", "fork-repo", 7)
++			if err != nil || got.PRURL != existing.PRURL || got.HeadSHA != existing.HeadSHA {
++				t.Fatalf("existing association changed: %+v, %v", got, err)
++			}
++		})
++	}
++}
++
++func TestVerifiedPRLinkDoesNotAdmitMergedContributionEditing(t *testing.T) {
++	pr := verifiedLinkPR()
++	pr.MaintainerCanModify = true
++	if _, err := buildGitHubRemoteContribution(verifiedLinkURL, "acme", "widget", 7, pr); err == nil {
++		t.Fatal("merged PR admitted as editable contribution")
++	}
++	pr.State = "open"
++	pr.MergedAt = nil
++	svc, _ := setupVerifiedLink(t, pr)
++	if _, err := linkVerifiedPR(svc); err != nil {
++		t.Fatalf("open linking regressed: %v", err)
++	}
++}
+diff --git a/apps/backend/internal/github/service_pr_watch.go b/apps/backend/internal/github/service_pr_watch.go
+index 118186b020..49ecad6121 100644
+--- a/apps/backend/internal/github/service_pr_watch.go
++++ b/apps/backend/internal/github/service_pr_watch.go
+@@ -752,7 +752,7 @@ func (s *Service) AssociateVerifiedSourcePRByURLForWorkspace(
+ 	if err != nil {
+ 		return nil, fmt.Errorf("fetch PR: %w", err)
+ 	}
+-	if err := validateGitHubContributionPR(owner, repo, number, pr); err != nil {
++	if err := validateGitHubPRLink(owner, repo, number, pr); err != nil {
+ 		return nil, err
+ 	}
+ 	if !strings.EqualFold(strings.TrimSuffix(pr.HTMLURL, "/"), strings.TrimSuffix(prURL, "/")) {
+@@ -765,11 +765,8 @@ func (s *Service) AssociateVerifiedSourcePRByURLForWorkspace(
+ 	if err != nil {
+ 		return nil, fmt.Errorf("inspect existing task PR links: %w", err)
+ 	}
+-	if existing != nil && !strings.EqualFold(strings.TrimSuffix(existing.PRURL, "/"), strings.TrimSuffix(prURL, "/")) {
+-		return nil, errors.New("a different canonical PR already uses this task repository and number")
+-	}
+-	if existing != nil && existing.DetachedAt == nil && existing.HeadSHA != pr.HeadSHA {
+-		return nil, errors.New("existing PR link has a stale head SHA")
++	if err := validateExistingGitHubPRLink(existing, pr, prURL); err != nil {
++		return nil, err
+ 	}
+ 	tp, err := s.associatePRWithTask(ctx, workspaceID, taskID, repositoryID, pr, true, true, TaskPRSourceURLLink)
+ 	if err != nil {
+diff --git a/apps/backend/internal/github/service_remote_contribution.go b/apps/backend/internal/github/service_remote_contribution.go
+index a86b27d6e2..f543f15aa4 100644
+--- a/apps/backend/internal/github/service_remote_contribution.go
++++ b/apps/backend/internal/github/service_remote_contribution.go
+@@ -108,6 +108,16 @@ func buildGitHubRemoteContribution(rawURL, owner, repo string, number int, pr *P
+ }
+ 
+ func validateGitHubContributionPR(owner, repo string, number int, pr *PR) error {
++	if err := validateGitHubPRIdentityAndRefs(owner, repo, number, pr); err != nil {
++		return err
++	}
++	if strings.ToLower(strings.TrimSpace(pr.State)) != taskmodels.RemoteContributionStateOpen {
++		return fmt.Errorf("GitHub pull request #%d is not open", number)
++	}
++	return nil
++}
++
++func validateGitHubPRIdentityAndRefs(owner, repo string, number int, pr *PR) error {
+ 	if pr == nil {
+ 		return errors.New("GitHub pull request response is empty")
+ 	}
+@@ -116,9 +126,6 @@ func validateGitHubContributionPR(owner, repo string, number int, pr *PR) error
+ 		!strings.EqualFold(pr.BaseRepoOwner, owner) || !strings.EqualFold(pr.BaseRepoName, repo) {
+ 		return errors.New("GitHub pull request identity changed during resolution")
+ 	}
+-	if strings.ToLower(strings.TrimSpace(pr.State)) != taskmodels.RemoteContributionStateOpen {
+-		return fmt.Errorf("GitHub pull request #%d is not open", number)
+-	}
+ 	if !securityutil.IsValidBranchName(pr.HeadBranch) || !securityutil.IsValidBaseBranchRef(pr.BaseBranch) ||
+ 		!securityutil.LooksLikeCommitSHA(pr.HeadSHA) {
+ 		return errors.New("GitHub pull request has unsafe or incomplete refs")
