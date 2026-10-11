@@ -17,3 +17,6 @@ __pycache__/
 
 # ── Local scratch / notes (not for the public repo) ───────────────────────────
 file.txt
+
+# Private, operator-reviewed project artifact identity/metadata registration.
+.local-project-artifacts/registry.json

@@ -369,6 +369,13 @@ qualifies only when its single registered repository is
 ambiguous shared main checkout. Requests are audited in
 `/data/logs/coordinator-source-audit.jsonl`.
 
+Project artifact v1 adds Coordinator-only discovery and exact task-inbox delivery
+by registered repository UUID and artifact key, using an operator-reviewed,
+root-owned image registry. Ordinary tasks can acknowledge only their own
+verified deliveries. No live inputs are registered by default; Human-owned
+ToDeploy and Feature 8241 remain protected. See **[PROJECT-ARTIFACTS.md](PROJECT-ARTIFACTS.md)**
+for the command/schema contract, source ownership, and synthetic acceptance.
+
 The same broker exposes `docker kandev workspace probe <task-uuid>` to a
 validated Coordinator. It resolves a same-workspace target from Kandev metadata
 and runs a fresh guard-rooted mount/write/`git add --dry-run` check, avoiding the

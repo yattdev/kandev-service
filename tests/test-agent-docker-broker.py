@@ -1214,3 +1214,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+    import runpy
+    runpy.run_path(str(Path(__file__).with_name('test-project-artifacts.py')), run_name='__main__')

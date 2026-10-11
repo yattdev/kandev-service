@@ -1601,6 +1601,376 @@ def target_task_inbox(target_task_id: str, workspace_id: str, output_name: str) 
     return destination, container_destination
 
 
+# Project artifact v1: operator registration, content-free discovery, exact inbox delivery.
+ARTIFACT_REGISTRY = Path('/etc/kandev/project-artifacts.json')
+ARTIFACT_REGISTRY_UID = 0
+ARTIFACT_ROOT_UID = 0
+ARTIFACT_RECEIPTS = Path('/data/project-artifact-receipts')
+MAX_PROJECT_ARTIFACT = 64 * 1024 * 1024
+
+
+@contextmanager
+def artifact_directory(path: Path, owner_uid: int):
+    """Pin each component without resolving links, including trusted DB paths."""
+    if not path.is_absolute() or any(p in {'.', '..'} for p in path.parts):
+        raise BrokerError('invalid registered directory')
+    descriptor = os.open('/', os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for component in path.parts[1:]:
+            child = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                            dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = child
+            info = os.fstat(descriptor)
+            if info.st_uid not in {ARTIFACT_ROOT_UID, owner_uid} or (
+                info.st_mode & 0o022 and not (info.st_uid == ARTIFACT_ROOT_UID and info.st_mode & stat.S_ISVTX)
+            ):
+                raise BrokerError('unsafe registered directory ownership or permissions')
+        yield descriptor
+    finally:
+        os.close(descriptor)
+
+
+def artifact_signature(info):
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns,
+            info.st_ctime_ns, info.st_uid, info.st_mode, info.st_nlink)
+
+
+def artifact_regular(info, owner_uid, limit, readonly=True):
+    if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+            or info.st_uid != owner_uid or info.st_size > limit
+            or info.st_mode & (0o222 if readonly else 0o022)):
+        raise BrokerError('unsafe artifact type, ownership, links, permissions or size')
+
+
+def artifact_read(directory, name, owner_uid, limit, readonly=True):
+    fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+    try:
+        before = os.fstat(fd)
+        artifact_regular(before, owner_uid, limit, readonly)
+        chunks = []
+        size = 0
+        while True:
+            chunk = os.read(fd, min(1024 * 1024, limit + 1 - size))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            size += len(chunk)
+            if size > limit:
+                raise BrokerError('artifact exceeds size limit')
+        after = os.fstat(fd)
+        named = os.stat(name, dir_fd=directory, follow_symlinks=False)
+        if artifact_signature(before) != artifact_signature(after) or (
+                artifact_signature(before) != artifact_signature(named)):
+            raise BrokerError('artifact source changed')
+        return b''.join(chunks), artifact_signature(after)
+    finally:
+        os.close(fd)
+
+
+def artifact_registry():
+    try:
+        with artifact_directory(ARTIFACT_REGISTRY.parent, ARTIFACT_REGISTRY_UID) as directory:
+            if os.fstat(directory).st_uid != ARTIFACT_REGISTRY_UID:
+                raise BrokerError('artifact registration directory is not operator-owned')
+            raw, _ = artifact_read(directory, ARTIFACT_REGISTRY.name,
+                                   ARTIFACT_REGISTRY_UID, 128 * 1024)
+        registry = json.loads(raw)
+        if registry.get('version') != 1 or not isinstance(registry.get('projects'), dict):
+            raise ValueError()
+        return registry, hashlib.sha256(raw).hexdigest()
+    except (OSError, ValueError, TypeError, AttributeError) as exc:
+        raise BrokerError('operator artifact registration unavailable or invalid') from exc
+
+
+def artifact_project(workspace_id, project_id, artifact_name):
+    if not TASK_ID_RE.fullmatch(project_id) or not SAFE_OUTPUT_NAME_RE.fullmatch(artifact_name):
+        raise BrokerError('artifact requests require an exact repository UUID and artifact key')
+    with kandev_db() as database:
+        row = database.execute('''SELECT id, local_path FROM repositories
+            WHERE id=? AND workspace_id=? AND deleted_at IS NULL''',
+            (project_id, workspace_id)).fetchone()
+    if row is None:
+        raise BrokerError('unknown project in coordinator workspace')
+    registry, registry_hash = artifact_registry()
+    entry = registry['projects'].get(project_id)
+    if not isinstance(entry, dict) or entry.get('workspace_id') != workspace_id:
+        raise BrokerError('project artifact owner is not registered')
+    if entry.get('owner') != 'Human' or type(entry.get('owner_uid')) is not int or entry['owner_uid'] < 0:
+        raise BrokerError('unknown project artifact owner')
+    root = container_path_for_host(str(row['local_path']))
+    # A UUID must never be repointed underneath an existing operator grant.
+    if root is None or str(root) != entry.get('repository_path') or root.parent != Path('/data/home/Code'):
+        raise BrokerError('registered project identity changed or is outside the project root')
+    directory_name = entry.get('directory')
+    if (not isinstance(directory_name, str) or not SAFE_OUTPUT_NAME_RE.fullmatch(directory_name)
+            or directory_name in {'.', '..', '.git'}):
+        raise BrokerError('invalid owner-selected artifact directory')
+    artifacts = entry.get('artifacts')
+    if not isinstance(artifacts, dict):
+        raise BrokerError('invalid registered artifact catalog')
+    spec = artifacts.get(artifact_name)
+    if not isinstance(spec, dict):
+        raise BrokerError('unknown registered artifact')
+    filename = spec.get('file')
+    if (not isinstance(filename, str) or not SAFE_OUTPUT_NAME_RE.fullmatch(filename)
+            or filename in {'.', '..', 'recipe.json', 'receipt.json'}):
+        raise BrokerError('invalid registered artifact filename')
+    if (type(spec.get('bytes')) is not int or not 0 <= spec['bytes'] <= MAX_PROJECT_ARTIFACT
+            or not re.fullmatch('[0-9a-f]{64}', str(spec.get('sha256', '')))
+            or type(spec.get('compatible')) is not bool):
+        raise BrokerError('invalid registered artifact integrity or compatibility')
+    recipe = spec.get('recipe')
+    if (not isinstance(recipe, dict) or set(recipe) != {'id', 'instructions', 'assertions'}
+            or not isinstance(recipe['id'], str) or not recipe['id']
+            or not isinstance(recipe['instructions'], str) or not recipe['instructions']
+            or not isinstance(recipe['assertions'], list)
+            or not all(isinstance(s, str) for s in recipe['assertions'])
+            or len(json.dumps(recipe).encode()) > 32 * 1024):
+        raise BrokerError('artifact requires an inert operator-reviewed recipe')
+    for key in ('purpose', 'format', 'version', 'provenance', 'refresh_rule'):
+        if not isinstance(spec.get(key), str) or not spec[key] or len(spec[key]) > 1024:
+            raise BrokerError('invalid registered artifact metadata')
+    return entry, spec, translate_to_host_lexical(root / directory_name), registry_hash
+
+
+def artifact_discovery(context, project_id, artifact_name, include_bytes=False):
+    metadata = {'project_id': project_id, 'artifact': artifact_name}
+    try:
+        entry, spec, directory_path, registration_hash = artifact_project(
+            context['workspace_id'], project_id, artifact_name)
+        metadata.update({key: spec[key] for key in
+                         ('purpose', 'format', 'version', 'provenance', 'refresh_rule', 'bytes', 'sha256')})
+        metadata.update(owner='Human', registration_sha256=registration_hash,
+                        recipe_id=spec['recipe']['id'])
+        with artifact_directory(directory_path, entry['owner_uid']) as directory:
+            info = os.fstat(directory)
+            if info.st_uid != entry['owner_uid'] or info.st_mode & 0o222:
+                raise BrokerError('artifact directory must be Human-owned and read-only')
+            raw, signature = artifact_read(directory, spec['file'], entry['owner_uid'], MAX_PROJECT_ARTIFACT)
+            directory_identity = (info.st_dev, info.st_ino)
+        if not spec['compatible'] or len(raw) != spec['bytes'] or hashlib.sha256(raw).hexdigest() != spec['sha256']:
+            metadata.update(status='STALE_OR_INCOMPATIBLE', reason='integrity_or_compatibility')
+        else:
+            metadata.update(status='AVAILABLE', reason='verified')
+        if include_bytes and metadata['status'] == 'AVAILABLE':
+            return metadata, (entry, spec, directory_path, directory_identity, signature, raw)
+    except FileNotFoundError:
+        metadata.update(status='ABSENT', reason='owner_selected_source_missing')
+    except (BrokerError, OSError):
+        metadata.update(status='INACCESSIBLE', reason='registration_or_source_denied')
+    return metadata, None
+
+
+def artifact_task(workspace_id, task_id, project_id=None):
+    if not TASK_ID_RE.fullmatch(task_id):
+        raise BrokerError('artifact target requires an exact task UUID')
+    with kandev_db() as database:
+        rows = database.execute('''SELECT te.id AS environment_id, te.task_dir_name,
+                te.ownership_generation, t.workflow_step_id, t.state, t.title, t.metadata,
+                ws.name AS lane
+            FROM tasks t JOIN task_environments te ON te.task_id=t.id
+            JOIN workflow_steps ws ON ws.id=t.workflow_step_id
+            WHERE t.id=? AND t.workspace_id=? AND t.archived_at IS NULL
+              AND te.status='ready' AND te.task_dir_name<>''
+              AND EXISTS (SELECT 1 FROM task_sessions s WHERE s.task_id=t.id
+                AND s.task_environment_id=te.id AND s.completed_at IS NULL
+                AND s.state IN ('CREATED','STARTING','RUNNING','WAITING_FOR_INPUT'))''',
+            (task_id, workspace_id)).fetchall()
+        if len(rows) != 1:
+            raise BrokerError('artifact target has no unique active platform environment')
+        row = rows[0]
+        ancestry = database.execute('''WITH RECURSIVE ancestors(id, parent_id, title, metadata) AS (
+                SELECT id, parent_id, title, metadata FROM tasks WHERE id=? AND workspace_id=?
+                UNION SELECT t.id, t.parent_id, t.title, t.metadata FROM tasks t
+                JOIN ancestors a ON t.id=a.parent_id WHERE t.workspace_id=?
+            ) SELECT title, metadata FROM ancestors''', (task_id, workspace_id, workspace_id)).fetchall()
+        if any(re.search(r'(?<!\d)8241(?!\d)', str(a['title']) + str(a['metadata'])) for a in ancestry):
+            raise BrokerError('artifact target belongs to protected Feature 8241')
+        # Enforce protected lanes before accessing a task's files.
+        if (str(row['lane']).lower().replace(' ', '').replace('-', '') == 'todeploy'
+                or row['state'] in {'DONE', 'COMPLETED', 'CANCELLED', 'FAILED'}
+                or re.search(r'(?<!\d)8241(?!\d)', str(row['title']) + str(row['metadata']))):
+            raise BrokerError('artifact target is protected or terminal')
+        if project_id and database.execute('''SELECT 1 FROM task_repositories
+                WHERE task_id=? AND repository_id=?''', (task_id, project_id)).fetchone() is None:
+            raise BrokerError('artifact project is not attached to target task')
+    name = str(row['task_dir_name'])
+    if not TASK_DIR_RE.fullmatch(name):
+        raise BrokerError('invalid artifact target directory')
+    return dict(row), Path('/data/tasks') / name
+
+
+def artifact_remove_owned(directory, name, identity):
+    try:
+        info = os.stat(name, dir_fd=directory, follow_symlinks=False)
+        if (info.st_dev, info.st_ino) == identity:
+            os.unlink(name, dir_fd=directory)
+    except FileNotFoundError:
+        pass
+
+
+def artifact_write(directory, name, raw):
+    fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                 0o600, dir_fd=directory)
+    info = os.fstat(fd)
+    identity = (info.st_dev, info.st_ino)
+    try:
+        with os.fdopen(fd, 'wb') as stream:
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+    except Exception:
+        artifact_remove_owned(directory, name, identity)
+        raise
+    return identity
+
+
+def artifact_json(value):
+    return (json.dumps(value, sort_keys=True) + '\n').encode()
+
+
+def artifact_delivery(context, project_id, artifact_name, target_id):
+    with EXPORT_LOCK:
+        binding, container_root = artifact_task(context['workspace_id'], target_id, project_id)
+        metadata, source = artifact_discovery(context, project_id, artifact_name, True)
+        if source is None:
+            raise BrokerError('artifact delivery requires AVAILABLE discovery')
+        entry, spec, source_path, source_identity, signature, raw = source
+        host_root = translate_to_host_lexical(container_root)
+        delivery_id = str(uuid.uuid4())
+        receipt = dict(metadata, delivery_id=delivery_id, workspace_id=context['workspace_id'],
+                       coordinator_task_id=context['task_id'], target_task_id=target_id,
+                       environment_id=binding['environment_id'],
+                       ownership_generation=binding['ownership_generation'],
+                       state='DELIVERED', file=spec['file'],
+                       recipe_sha256=hashlib.sha256(artifact_json(spec['recipe'])).hexdigest())
+        with artifact_directory(host_root, os.getuid()) as root:
+            root_signature = (os.fstat(root).st_dev, os.fstat(root).st_ino)
+            try:
+                os.mkdir('.kandev-coordinator-inbox', 0o700, dir_fd=root)
+            except FileExistsError:
+                pass
+            inbox = os.open('.kandev-coordinator-inbox', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=root)
+            try:
+                info = os.fstat(inbox)
+                if info.st_uid != os.getuid() or info.st_mode & 0o077:
+                    raise BrokerError('unsafe target artifact inbox')
+                os.mkdir(delivery_id, 0o700, dir_fd=inbox)  # Never replace a collision.
+                bundle = os.open(delivery_id, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=inbox)
+                created = {}
+                server_record_identity = None
+                try:
+                    created[spec['file']] = artifact_write(bundle, spec['file'], raw)
+                    created['recipe.json'] = artifact_write(bundle, 'recipe.json', artifact_json(spec['recipe']))
+                    # Recheck source identity, registration, and platform binding before publishing.
+                    with artifact_directory(source_path, entry['owner_uid']) as directory:
+                        if (os.fstat(directory).st_dev, os.fstat(directory).st_ino) != source_identity:
+                            raise BrokerError('artifact source directory changed')
+                        current = os.stat(spec['file'], dir_fd=directory, follow_symlinks=False)
+                        if artifact_signature(current) != signature:
+                            raise BrokerError('artifact source changed before delivery')
+                    if artifact_registry()[1] != metadata['registration_sha256']:
+                        raise BrokerError('artifact registration changed before delivery')
+                    if (coordinator_context(Path('/data/tasks') / artifact_task(
+                            context['workspace_id'], context['task_id'])[0]['task_dir_name']) != context):
+                        raise BrokerError('artifact Coordinator changed before delivery')
+                    if artifact_task(context['workspace_id'], target_id, project_id)[0] != binding:
+                        raise BrokerError('artifact target changed before delivery')
+                    with artifact_directory(host_root, os.getuid()) as current_root:
+                        if (os.fstat(current_root).st_dev, os.fstat(current_root).st_ino) != root_signature:
+                            raise BrokerError('artifact target root changed')
+                    with artifact_directory(host_root / '.kandev-coordinator-inbox', os.getuid()) as current_inbox:
+                        if (os.fstat(current_inbox).st_dev, os.fstat(current_inbox).st_ino) != (info.st_dev, info.st_ino):
+                            raise BrokerError('artifact inbox changed')
+                        named = os.stat(delivery_id, dir_fd=current_inbox, follow_symlinks=False)
+                        if (named.st_dev, named.st_ino) != (os.fstat(bundle).st_dev, os.fstat(bundle).st_ino):
+                            raise BrokerError('artifact bundle changed')
+                    # Server receipt is outside agent writable scope; it contains no source bytes.
+                    ARTIFACT_RECEIPTS.mkdir(mode=0o700, exist_ok=True)
+                    with artifact_directory(ARTIFACT_RECEIPTS, os.getuid()) as records:
+                        server_record_identity = artifact_write(records, delivery_id + '.json', artifact_json(receipt))
+                    created['receipt.json'] = artifact_write(bundle, 'receipt.json', artifact_json(receipt))
+                    os.fsync(bundle)
+                except Exception:
+                    for name, identity in created.items():
+                        artifact_remove_owned(bundle, name, identity)
+                    if server_record_identity is not None:
+                        with artifact_directory(ARTIFACT_RECEIPTS, os.getuid()) as records:
+                            artifact_remove_owned(records, delivery_id + '.json', server_record_identity)
+                    named = os.stat(delivery_id, dir_fd=inbox, follow_symlinks=False)
+                    if (named.st_dev, named.st_ino) == (os.fstat(bundle).st_dev, os.fstat(bundle).st_ino):
+                        try:
+                            os.rmdir(delivery_id, dir_fd=inbox)
+                        except OSError:
+                            pass  # Preserve any file inserted by the target.
+                    raise
+                finally:
+                    os.close(bundle)
+            finally:
+                os.close(inbox)
+        audit_source(context, 'artifact-deliver', result='ok', **receipt)
+        return dict(receipt, path=str(container_root / '.kandev-coordinator-inbox' / delivery_id))
+
+
+def artifact_receipt(task_root, delivery_id, status=None, checksum=None, context=None):
+    with EXPORT_LOCK:
+        return artifact_receipt_locked(task_root, delivery_id, status, checksum, context)
+
+
+def artifact_receipt_locked(task_root, delivery_id, status=None, checksum=None, context=None):
+    if not TASK_ID_RE.fullmatch(delivery_id):
+        raise BrokerError('invalid artifact delivery UUID')
+    with artifact_directory(ARTIFACT_RECEIPTS, os.getuid()) as records:
+        raw, _ = artifact_read(records, delivery_id + '.json', os.getuid(), 128 * 1024, False)
+        receipt = json.loads(raw)
+        if context is not None:
+            if (receipt['workspace_id'] != context['workspace_id']
+                    or receipt['coordinator_task_id'] != context['task_id']):
+                raise BrokerError('artifact receipt is outside this Coordinator grant')
+        else:
+            binding, container_root = artifact_task(receipt['workspace_id'], receipt['target_task_id'], receipt['project_id'])
+            if (task_root != container_root or status not in {'RECEIVED', 'CONSUMED', 'FAILED'}
+                    or checksum != receipt['sha256']
+                    or binding['environment_id'] != receipt['environment_id']
+                    or binding['ownership_generation'] != receipt['ownership_generation']):
+                raise BrokerError('artifact acknowledgement identity or hash mismatch')
+            with artifact_directory(translate_to_host_lexical(container_root) / '.kandev-coordinator-inbox' / delivery_id,
+                                    os.getuid()) as bundle:
+                data, _ = artifact_read(bundle, receipt['file'], os.getuid(), MAX_PROJECT_ARTIFACT, False)
+                recipe, _ = artifact_read(bundle, 'recipe.json', os.getuid(), 32 * 1024, False)
+                if (hashlib.sha256(data).hexdigest() != checksum
+                        or len(data) != receipt['bytes']
+                        or hashlib.sha256(recipe).hexdigest() != receipt['recipe_sha256']):
+                    raise BrokerError('delivered artifact or recipe changed')
+            acknowledgement = {'delivery_id': delivery_id, 'target_task_id': receipt['target_task_id'],
+                               'sha256': checksum, 'state': status}
+            for terminal in ('CONSUMED', 'FAILED'):
+                try:
+                    prior, _ = artifact_read(records, delivery_id + '.' + terminal + '.json', os.getuid(), 4096, False)
+                except FileNotFoundError:
+                    continue
+                if json.loads(prior) != acknowledgement:
+                    raise BrokerError('artifact acknowledgement is already terminal')
+            try:
+                artifact_write(records, delivery_id + '.' + status + '.json', artifact_json(acknowledgement))
+            except FileExistsError:
+                prior, _ = artifact_read(records, delivery_id + '.' + status + '.json', os.getuid(), 4096, False)
+                if json.loads(prior) != acknowledgement:
+                    raise BrokerError('artifact acknowledgement collision')
+            audit_source({'task_id': receipt['target_task_id'], 'workspace_id': receipt['workspace_id'],
+                          'workspace_name': ''}, 'artifact-ack', result='ok', **acknowledgement)
+        receipt['target_receipt'] = None
+        for state in ('CONSUMED', 'FAILED', 'RECEIVED'):
+            try:
+                ack, _ = artifact_read(records, delivery_id + '.' + state + '.json', os.getuid(), 4096, False)
+                receipt['target_receipt'] = json.loads(ack)
+                break
+            except FileNotFoundError:
+                pass
+    return receipt
+
+
 def registered_static_backup(source_path: str, workspace_id: str) -> tuple[Path, str]:
     """Return one approved logical backup from a registered source root.
 
@@ -1830,6 +2200,10 @@ def run_bounded_export(
 def source_help() -> str:
     return (
         "Coordinator source commands:\n"
+        "  docker kandev source artifact-discover <repository-UUID> <artifact-key>\n"
+        "  docker kandev source artifact-deliver <repository-UUID> <artifact-key> --target-task <UUID>\n"
+        "  docker kandev source artifact-receipt <delivery-UUID>\n"
+        "  docker kandev artifact-ack <delivery-UUID> RECEIVED|CONSUMED|FAILED <sha256>\n"
         "  docker kandev source list\n"
         "  docker kandev source inspect <container>\n"
         "  docker kandev source logs <container> [--tail N] [--since 30m]\n"
@@ -2130,13 +2504,31 @@ def handle_coordinator_source(
 ) -> dict[str, Any]:
     context = coordinator_context(task_root)
     operation_args = args[2:]
-    if not operation_args or operation_args == ["help"]:
+    if not operation_args or operation_args in (["help"], ["--help"]):
         audit_source(context, "help", result="ok")
         return {"returncode": 0, "stdout": source_help(), "stderr": ""}
     operation = operation_args[0]
     # The attempt record survives validation/runtime failures; successful
     # operations append a result record with only non-secret metadata.
     audit_source(context, operation, result="attempt")
+
+    if operation in {'artifact-discover', 'artifact-deliver', 'artifact-receipt'}:
+        # Reuse the live platform eligibility checks without creating any task files.
+        _, caller_root = artifact_task(context['workspace_id'], context['task_id'])
+        if caller_root != task_root:
+            raise BrokerError('artifact Coordinator binding is stale')
+        if operation == 'artifact-discover' and len(operation_args) == 3:
+            result, _ = artifact_discovery(context, operation_args[1], operation_args[2])
+            audit_source(context, operation, result=result['status'], project_id=result['project_id'],
+                         artifact=result['artifact'])
+        elif (operation == 'artifact-deliver' and len(operation_args) == 5
+              and operation_args[3] == '--target-task'):
+            result = artifact_delivery(context, operation_args[1], operation_args[2], operation_args[4])
+        elif operation == 'artifact-receipt' and len(operation_args) == 2:
+            result = artifact_receipt(task_root, operation_args[1], context=context)
+        else:
+            raise BrokerError('invalid project artifact command contract')
+        return {'returncode': 0, 'stdout': json.dumps(result, indent=2) + '\n', 'stderr': ''}
 
     if operation == "list" and len(operation_args) == 1:
         containers = list_workspace_containers(context["workspace_id"])
@@ -2459,6 +2851,11 @@ def handle_request(
     if args[:2] == ["kandev", "git"]:
         return handle_git(task_root, cwd, args[2:], request, stdin_stream)
 
+    if args[:2] == ['kandev', 'artifact-ack']:
+        if len(args) != 5:
+            raise BrokerError('artifact-ack requires delivery UUID, state, and SHA-256')
+        result = artifact_receipt(task_root, args[2], args[3], args[4])
+        return {'returncode': 0, 'stdout': json.dumps(result) + '\n', 'stderr': ''}
     if args[:2] == ["kandev", "source"]:
         return handle_coordinator_source(task_root, args)
     if args[:2] == ["kandev", "workspace"]:
