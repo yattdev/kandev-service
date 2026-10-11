@@ -94,3 +94,10 @@ The rate-limited REST response reported `X-Ratelimit-Remaining: 0` and
 endpoint gave inconsistent quota information; use the actual repository/PR
 response when checking recovery. Do not bypass workspace/provider access checks
 to work around rate exhaustion.
+
+At 21:42:55 UTC, read-only REST requests for `kdlbs/kandev` and PR #3988 both
+succeeded after the quota reset. The PR response confirmed `merged: true`,
+`merged_at: 2026-10-09T12:56:37Z`, canonical URL, source `yattdev/kandev`, base
+`kdlbs/kandev`, and the expected head SHA above. Provider conversion maps this
+closed-with-merge-timestamp REST response to internal `merged` state. Workspace
+connection metadata was active for `yattdev`, with repository scope `all`.
