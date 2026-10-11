@@ -58,3 +58,47 @@ pruning. Registry/Scout login, application dependencies, genuine port conflicts,
 and invalid Docker flags remain ordinary setup/runtime errors rather than
 per-task permission requests. Docker/Scout binaries and this policy are installed
 by `Dockerfile.local`, so they persist across image builds and service starts.
+
+## Operator repair of a stale materialized binding
+
+From the host deployment checkout on `main`, preview an in-place adoption:
+
+```bash
+scripts/kandev-workspace-repair \
+  --task <existing-task-uuid> --session <existing-idle-session-uuid> \
+  --retire /data/tasks/<task-root>/<broken-checkout> \
+  --checkout /data/tasks/<task-root>/<existing-independent-clone>
+```
+
+Add `--apply` after reviewing the preview. This command is an operator-only
+configuration repair: it validates the unchanged task root, same-repository
+origin, existing branch selection, idle live sessions and exact environment
+ownership. It updates the existing materialized binding and makes it primary;
+it creates no checkout, worktree or session and writes no checkout files.
+Other bindings retain their identity and receive subsequent display positions.
+
+Before mutation it makes a mode-0600 hot SQLite backup with its master key in a
+private directory beneath `/data/backups/workspace-repair/`. The transaction
+records prior rows and the exact obsolete `.git` marker hash in
+`kandev_workspace_repairs`. The guard reads only the canonical live database,
+verifies that retirement against the current replacement binding, and grants no
+Git metadata access for the preserved obsolete artifact. Changed markers,
+restored metadata, changed ownership and unregistered broken markers fail closed.
+Task agents cannot invoke the operator repair or write its trusted registry.
+
+The session's task root and provider conversation are retained. Agents should
+run project commands from the adopted checkout; the existing root can still
+contain other registered repositories and preserved artifacts. A UI reload
+reads the updated materialized binding. This operation does not call workspace
+rebind or create a provider conversation.
+
+To reverse this exact metadata repair, while the session remains idle:
+
+```bash
+scripts/kandev-workspace-repair rollback --repair-id <repair-uuid>
+```
+
+Rollback restores only this repair's binding/order and refuses changed
+attachments. It keeps an audit record and the backup. It also restores the
+original guard failure if the obsolete checkout still has missing metadata;
+it never replaces the entire live database with the backup.

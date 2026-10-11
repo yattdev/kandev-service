@@ -203,3 +203,43 @@ then removes all three overlay binaries, updates the base image, deploys through
 `scripts/kandev-safe-deploy --build`, and verifies HTTP readiness, security
 profiles, the effective tool catalog, and the full local test suite before
 discarding the rollback image.
+
+## Upgrade record: upstream v0.96.0 plus local fixes (2026-09-26)
+
+The upgrade used upstream `ghcr.io/kdlbs/kandev:0.96.0` / `:latest` image
+`sha256:33c9211aea048af542fb68da80088dc28ab3ed947378dd12f97d98e7d2d2bf93`
+and locally built binaries from `v0.96.0-10-g91787c6e6`. The source was
+reconstructed from upstream tag commit `f099a46dc7aab16f6ff5806cd29b2b480296303f`
+plus local hotfix commits `db8a88b63`, `71eb54d24`, `599658501`, `717367b94`,
+`ebaadc302`, `360ea9139`, `4f96b6576`, `c687232d2`, `75efb8ec3`, and
+`144d1ec19`. The first cherry-pick required combining upstream metadata
+protection with local terminal-retention protection. The full frontend was
+rebuilt and embedded before the backend was linked.
+
+Overlay SHA-256 values at the upgrade:
+
+- `kandev`: `f836375117ef94c84b7b051365fbbf590c7dac00bd24fbe2ed19c08dce536fc6`
+- `agentctl`: `93e685d616449911b1b36666563a82a7f17fbfb319b547aa3bc984a8214a270e`
+- `agentctl-linux-amd64`: `eb63600bab383827c4891f1874809d9b8d1ed22c611d3039de3cd9ea80735cda`
+
+The first v0.96 candidate exposed a local integration issue: v0.96 creates a
+managed npm prefix under host `/tmp`, while `kandev-agent-guard` replaces `/tmp`
+with a private tmpfs. The guard now creates only that recognized prefix inside
+the agent namespace (mode `0700`), without binding host `/tmp`. The regression
+is covered by `tests/test-agent-guard.sh`.
+
+The corrected image at the upgrade was
+`sha256:e8f4826b3856ae69bd01cad0c286b0b47f3fd5e2ddf75703c44b4b8870f1793b`.
+It passed the safe-deploy HTTP 200 gate and all 125 local tests. The immediately
+preceding v0.96 image was tagged `kandev-local:safe-deploy-previous` at
+`sha256:7f089d2fb8fd49663b0a76e55c6886bc75c2778a4164bf2a2b30540377929b57`;
+the pre-upgrade v0.95 image had ID
+`sha256:54bbf395c83caaca89a54690cf36e42b08d7b7fe519aed011fea113b7650d5f1`.
+The previous binary overlays are backed up at
+`/tmp/kandev-v096-previous-overlay.vbta5f/`. A consistent pre-upgrade database
+and key backup is at
+`~/.local/share/kandev/data/backups/pre-v0.96.0-upgrade-20260926T0024Z/`.
+
+The backend overlay was subsequently updated for independent task checkout
+adoption. See [the patch and build record](../patches/kandev-v096-workspace-adoption.md)
+for its current binary hash and the operator attestation requirement.

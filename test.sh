@@ -939,6 +939,12 @@ fi
 # ── 15. Per-agent filesystem boundary ────────────────────────────────────────────────
 section "15. Per-agent filesystem boundary"
 
+if PYTHONDONTWRITEBYTECODE=1 python3 "$COMPOSE_DIR/tests/test-workspace-registration.py" >/dev/null 2>&1; then
+  ok "in-place workspace repair preserves identities and fails closed"
+else
+  fail "tests/test-workspace-registration.py failed"
+fi
+
 if PYTHONDONTWRITEBYTECODE=1 python3 "$COMPOSE_DIR/tests/test-task-access.py" >/dev/null 2>&1; then
   ok "automatic task Docker/Git access retains ownership boundaries"
 else

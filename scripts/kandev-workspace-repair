@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Host operator entry point; preview by default, --apply performs the repair.
+set -euo pipefail
+[[ "${KANDEV_AGENT_GUARD_ACTIVE:-0}" != 1 ]] || { echo "workspace repair is operator-only" >&2; exit 78; }
+script_dir="$(cd -- "$(dirname -- "$0")" && pwd)"
+operation=adopt
+if [[ "${1:-}" == rollback ]]; then operation=rollback; shift; fi
+exec docker exec -i -u kandev kandev /usr/bin/python3 - "$operation" "$@" < "$script_dir/kandev-workspace-registration.py"

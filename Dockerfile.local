@@ -368,6 +368,7 @@ RUN chmod +x /usr/local/bin/docker
 COPY docker-entrypoint-local.sh /usr/local/bin/docker-entrypoint.sh
 COPY scripts/codex-sandbox-preflight.sh /usr/local/bin/codex-sandbox-preflight
 COPY scripts/kandev-agent-guard /usr/local/bin/kandev-agent-guard
+COPY scripts/kandev-workspace-registration.py /usr/local/bin/kandev-workspace-registration
 COPY scripts/kandev-agent-docker-broker /usr/local/bin/kandev-agent-docker-broker
 # Optional Human-selected registrations; agents cannot write this image-owned policy.
 COPY .local-project-artifacts/ /tmp/kandev-project-artifacts/
@@ -384,6 +385,7 @@ COPY scripts/kandev-agent-git /usr/local/bin/git
 COPY scripts/kandev-agent-emulator /usr/local/bin/emulator
 COPY scripts/kandev-agent-adb /usr/local/bin/adb
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh /usr/local/bin/codex-sandbox-preflight \
+    /usr/local/bin/kandev-workspace-registration \
     /usr/local/bin/kandev-agent-guard /usr/local/bin/kandev-agent-docker-broker \
     /usr/local/bin/kandev-agent-docker-client /usr/local/bin/kandev-agent-docker-token \
     /usr/local/bin/emulator /usr/local/bin/adb /usr/local/bin/git

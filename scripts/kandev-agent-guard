@@ -494,6 +494,17 @@ done < <(find "$writable_root" -mindepth 2 -maxdepth 2 -name .git -print0 2>/dev
 
 for marker in "${git_markers[@]}"; do
     [[ -f "$marker" && ! -L "$marker" ]] || continue
+    # Only an operator-recorded obsolete binding may remain as an artifact.
+    # Validate its exact bytes against live task/environment ownership; no
+    # writable Git metadata is granted for this retired checkout.
+    if [[ -x /usr/local/bin/kandev-workspace-registration && -f /data/data/kandev.db ]]; then
+        if /usr/local/bin/kandev-workspace-registration --db /data/data/kandev.db check-retired "$writable_root" "$marker"; then
+            continue
+        else
+            retirement_status=$?
+            [[ "$retirement_status" == 1 ]] || deny "invalid operator workspace retirement for $marker"
+        fi
+    fi
     gitdir_line="$(sed -n 's/^gitdir: //p' "$marker" | head -n 1)"
     [[ -n "$gitdir_line" ]] || deny "invalid Git worktree marker: $marker"
     if [[ "$gitdir_line" != /* ]]; then

@@ -1,0 +1,141 @@
+diff --git a/apps/backend/internal/worktree/manager_state.go b/apps/backend/internal/worktree/manager_state.go
+index 5311009..c5b83b8 100644
+--- a/apps/backend/internal/worktree/manager_state.go
++++ b/apps/backend/internal/worktree/manager_state.go
+@@ -283,6 +283,9 @@ func inspectLinkedWorktree(path string) linkedWorktreeInspection {
+ 
+ 	gitFile := filepath.Join(path, ".git")
+ 	gitInfo, err := os.Lstat(gitFile)
++	if err == nil && gitInfo.IsDir() {
++		return inspectAdoptedCheckout(path, gitInfo, verifyOperatorAdoption)
++	}
+ 	if err != nil || !gitInfo.Mode().IsRegular() {
+ 		return linkedWorktreeInspection{class: linkedWorktreeAmbiguous, reason: "checkout git pointer is not a regular file"}
+ 	}
+diff --git a/apps/backend/internal/worktree/manager_lifecycle.go b/apps/backend/internal/worktree/manager_lifecycle.go
+index 0f63131..1a44270 100644
+--- a/apps/backend/internal/worktree/manager_lifecycle.go
++++ b/apps/backend/internal/worktree/manager_lifecycle.go
+@@ -516,7 +516,7 @@ func (m *Manager) openReusableWorktreePath(worktreePath string, wt *Worktree) (s
+ 		}
+ 		return nil, false, err
+ 	}
+-	if handle == nil || !handle.IsValidWorktree() {
++	if handle == nil || (!handle.IsValidWorktree() && !m.IsValid(worktreePath)) {
+ 		if handle != nil {
+ 			_ = handle.Close()
+ 		}
+diff --git a/apps/backend/internal/worktree/operator_adoption.go b/apps/backend/internal/worktree/operator_adoption.go
+new file mode 100644
+--- /dev/null
++++ b/apps/backend/internal/worktree/operator_adoption.go
+@@ -0,0 +1,29 @@
++package worktree
++
++import (
++	"context"
++	"os"
++	"os/exec"
++	"path/filepath"
++	"time"
++)
++
++// Independent clones are accepted only through the operator registration
++// installed by this deployment. Ordinary .git directories remain ambiguous.
++// The verifier attests the exact live task/environment binding, unchanged
++// retirement artifact, independent metadata, origin and selected branch.
++func inspectAdoptedCheckout(path string, info os.FileInfo, verify func(string) error) linkedWorktreeInspection {
++	if info == nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
++		return linkedWorktreeInspection{class: linkedWorktreeAmbiguous, reason: "adopted checkout Git metadata is not an independent directory"}
++	}
++	if err := verify(path); err != nil {
++		return linkedWorktreeInspection{class: linkedWorktreeAmbiguous, reason: "independent checkout has no valid operator adoption"}
++	}
++	return linkedWorktreeInspection{class: linkedWorktreeHealthy, adminPath: filepath.Join(path, ".git")}
++}
++
++func verifyOperatorAdoption(path string) error {
++	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
++	defer cancel()
++	return exec.CommandContext(ctx, "/usr/local/bin/kandev-workspace-registration", "check-adopted", path).Run()
++}
+diff --git a/apps/backend/internal/worktree/operator_adoption_test.go b/apps/backend/internal/worktree/operator_adoption_test.go
+new file mode 100644
+--- /dev/null
++++ b/apps/backend/internal/worktree/operator_adoption_test.go
+@@ -0,0 +1,75 @@
++package worktree
++
++import (
++	"errors"
++	"os"
++	"path/filepath"
++	"testing"
++)
++
++func TestOperatorAdoptionRequiresIndependentMetadataAndAttestation(t *testing.T) {
++	root := t.TempDir()
++	metadata := filepath.Join(root, ".git")
++	if err := os.Mkdir(metadata, 0700); err != nil {
++		t.Fatal(err)
++	}
++	info, err := os.Lstat(metadata)
++	if err != nil {
++		t.Fatal(err)
++	}
++	denied := func(string) error { return errors.New("unregistered clone") }
++	if result := inspectAdoptedCheckout(root, info, denied); result.class != linkedWorktreeAmbiguous {
++		t.Fatal("unregistered independent clone was accepted")
++	}
++	called := false
++	verified := func(path string) error {
++		called = true
++		if path != root {
++			t.Fatal("wrong checkout attested")
++		}
++		return nil
++	}
++	if result := inspectAdoptedCheckout(root, info, verified); result.class != linkedWorktreeHealthy || result.adminPath != metadata || !called {
++		t.Fatal("attested clone was rejected")
++	}
++	called = false
++	if result := inspectAdoptedCheckout(root, nil, verified); result.class != linkedWorktreeAmbiguous || called {
++		t.Fatal("missing metadata was attested")
++	}
++	link := filepath.Join(root, "link")
++	if err := os.Symlink(metadata, link); err != nil {
++		t.Skip(err)
++	}
++	linkInfo, err := os.Lstat(link)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if result := inspectAdoptedCheckout(root, linkInfo, verified); result.class != linkedWorktreeAmbiguous || called {
++		t.Fatal("symlink metadata was attested")
++	}
++}
++
++// Opt-in read-only verification against a live operator-repaired task. It
++// opens the existing directory handle and performs no Git or DB writes.
++func TestOperatorAdoptionLiveReuse(t *testing.T) {
++	path := os.Getenv("KANDEV_TEST_ADOPTED_CHECKOUT")
++	if path == "" {
++		t.Skip("live repaired checkout not supplied")
++	}
++	taskID := os.Getenv("KANDEV_TEST_ADOPTED_TASK_ID")
++	if taskID == "" {
++		t.Fatal("KANDEV_TEST_ADOPTED_TASK_ID must identify the repaired task")
++	}
++	m := &Manager{config: Config{TasksBasePath: "/data/tasks"}}
++	wt := &Worktree{TaskID: taskID, TaskDirName: filepath.Base(filepath.Dir(path))}
++	handle, valid, err := m.openReusableWorktreePath(path, wt)
++	if handle != nil {
++		t.Cleanup(func() { _ = handle.Close() })
++	}
++	if err != nil || !valid {
++		t.Fatalf("attested attach-only reuse failed: valid=%v err=%v", valid, err)
++	}
++	if !m.IsValid(path) {
++		t.Fatal("attested integrity admission failed")
++	}
++}
