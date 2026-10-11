@@ -7,6 +7,7 @@ import json
 import hashlib
 import os
 from pathlib import Path
+import re
 import secrets
 import sqlite3
 import subprocess
@@ -24,7 +25,9 @@ REPOSITORY = Path(os.environ.get("KANDEV_SUPPORT_REPOSITORY", Path.home() / "Cod
 SOURCE_REPOSITORY = Path(
     os.environ.get("KANDEV_SUPPORT_SOURCE_REPOSITORY", Path.home() / "Code/kandev-source")
 )
-CODEX = os.environ.get("KANDEV_SUPPORT_CODEX", "codex")
+CODEX = os.environ.get("KANDEV_SUPPORT_CODEX", "")
+NVM_DEFAULT_ALIAS = Path.home() / ".nvm/alias/default"
+NVM_NODE_VERSIONS = Path.home() / ".nvm/versions/node"
 THREAD_MAX_AGE_SECONDS = int(os.environ.get("KANDEV_SUPPORT_THREAD_MAX_AGE_SECS", "86400"))
 TURN_TIMEOUT_SECONDS = int(os.environ.get("KANDEV_SUPPORT_TURN_TIMEOUT_SECS", "7200"))
 THREAD_STATE_OVERRIDE = os.environ.get("KANDEV_SUPPORT_THREAD_STATE", "")
@@ -105,10 +108,31 @@ def parse_codex_jsonl(output: str) -> tuple[str, str]:
     return thread_id, final_message
 
 
+def codex_executable() -> str:
+    """Use the operator's NVM Codex, even under systemd's minimal PATH."""
+    if CODEX:
+        return CODEX
+    try:
+        default_node = NVM_DEFAULT_ALIAS.read_text(encoding="utf-8").strip().removeprefix("v")
+    except OSError:
+        default_node = ""
+    if re.fullmatch(r"\d+\.\d+\.\d+", default_node):
+        candidate = NVM_NODE_VERSIONS / f"v{default_node}/bin/codex"
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    candidates = sorted(
+        (path for path in NVM_NODE_VERSIONS.glob("v*/bin/codex") if path.is_file() and os.access(path, os.X_OK)),
+        key=lambda path: tuple(int(part) for part in path.parent.parent.name.removeprefix("v").split(".")),
+        reverse=True,
+    )
+    return str(candidates[0]) if candidates else "codex"
+
+
 def run_support_turn(record: dict[str, object]) -> subprocess.CompletedProcess[str]:
     """Resume a young thread, or create and record a fresh one after 24 hours."""
+    codex_path = codex_executable()
     common = [
-        CODEX,
+        codex_path,
         "exec",
         "--approve-for-me",
         "--add-dir",
@@ -121,6 +145,9 @@ def run_support_turn(record: dict[str, object]) -> subprocess.CompletedProcess[s
     else:
         command = [*common, "--json", prompt(record)]
         print("Kandev Support starting a fresh Codex thread", flush=True)
+    codex_env = {**os.environ, "KANDEV_SUPPORT_BROKER_REQUEST_ID": str(record["id"])}
+    if Path(codex_path).is_absolute():
+        codex_env["PATH"] = f"{Path(codex_path).parent}:{codex_env.get('PATH', '')}"
     completed = subprocess.run(
         command,
         cwd=REPOSITORY,
@@ -128,7 +155,7 @@ def run_support_turn(record: dict[str, object]) -> subprocess.CompletedProcess[s
         capture_output=True,
         timeout=TURN_TIMEOUT_SECONDS,
         check=False,
-        env={**os.environ, "KANDEV_SUPPORT_BROKER_REQUEST_ID": str(record["id"])},
+        env=codex_env,
     )
     if thread_id:
         return completed

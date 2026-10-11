@@ -31,6 +31,9 @@ class WorkerTest(unittest.TestCase):
         worker.THREAD_MAX_AGE_SECONDS = 86400
         worker.TURN_TIMEOUT_SECONDS = 7200
         worker.SOURCE_REPOSITORY = Path("/home/test/Code/kandev-source")
+        codex = mock.patch.object(worker, "CODEX", "/opt/test/bin/codex")
+        codex.start()
+        self.addCleanup(codex.stop)
         self.notify = mock.patch.object(worker, "notify_coordinator")
         self.notify_mock = self.notify.start()
         self.notify_mock.return_value = "message-id"
@@ -87,7 +90,7 @@ class WorkerTest(unittest.TestCase):
         self.assertEqual(
             command[:6],
             [
-                worker.CODEX,
+                worker.codex_executable(),
                 "exec",
                 "--approve-for-me",
                 "--add-dir",
@@ -103,6 +106,11 @@ class WorkerTest(unittest.TestCase):
         self.assertIn("Never call bare 'docker compose up'", command[7])
         self.assertIn("replacement must preserve all still-required fixes", command[7])
         self.assertEqual(run.call_args.kwargs["timeout"], worker.TURN_TIMEOUT_SECONDS)
+        self.assertTrue(
+            run.call_args.kwargs["env"]["PATH"].startswith(
+                f"{Path(worker.codex_executable()).parent}:"
+            )
+        )
         response = json.loads((worker.QUEUE / "responses/request-success.json").read_text())
         self.assertEqual(response["returncode"], 0)
         self.assertEqual(response["resolution_status"], "resolved")
@@ -138,7 +146,7 @@ class WorkerTest(unittest.TestCase):
 
         command = run.call_args.args[0]
         self.assertEqual(command[:5], [
-            worker.CODEX,
+            worker.codex_executable(),
             "exec",
             "--approve-for-me",
             "--add-dir",
@@ -156,6 +164,29 @@ class WorkerTest(unittest.TestCase):
     def test_missing_thread_state_starts_fresh(self) -> None:
         worker.thread_state_path().unlink()
         self.assertEqual(worker.reusable_thread_id(now=100.0), "")
+
+    def test_systemd_resolves_the_default_nvm_codex(self) -> None:
+        node_versions = Path(self.temporary.name) / "versions/node"
+        old = node_versions / "v16.14.2/bin/codex"
+        current = node_versions / "v22.13.1/bin/codex"
+        for executable in (old, current):
+            executable.parent.mkdir(parents=True)
+            executable.write_text("#!/bin/sh\n")
+            executable.chmod(0o755)
+        alias = Path(self.temporary.name) / "default"
+        alias.write_text("22.13.1\n")
+        with (
+            mock.patch.object(worker, "CODEX", ""),
+            mock.patch.object(worker, "NVM_DEFAULT_ALIAS", alias),
+            mock.patch.object(worker, "NVM_NODE_VERSIONS", node_versions),
+        ):
+            self.assertEqual(worker.codex_executable(), str(current))
+            alias.write_text("16.14.2\n")
+            self.assertEqual(worker.codex_executable(), str(old))
+            alias.write_text("unknown\n")
+            self.assertEqual(worker.codex_executable(), str(current))
+            with mock.patch.object(worker, "CODEX", "/opt/codex/bin/codex"):
+                self.assertEqual(worker.codex_executable(), "/opt/codex/bin/codex")
 
     def test_future_thread_state_is_not_reused(self) -> None:
         self.seed_thread(created_at=101.0)

@@ -427,6 +427,14 @@ request is never killed at the boundary; rotation happens between requests.
 the worker can report the verified result instead of timing out mid-rollback.
 The private `~/.config/kandev/support.env` remains the service's host-local
 configuration file and is not committed to this sanitized repository.
+The worker resolves Codex from the operator's NVM default Node installation
+for each request, so systemd's minimal `PATH` cannot select an older
+`/usr/bin/codex`. `KANDEV_SUPPORT_CODEX` can override the executable; model
+and reasoning effort still come from the user's Codex configuration. On the
+host, `scripts/kandev-support-watch --follow` shows live progress from the
+private Codex session log, while
+`journalctl --user -fu kandev-support.service` shows request and delivery
+lifecycle events. The watcher omits prompts and tool output.
 `systemd/kandev-support.service` reads that file and intentionally fails closed
 when it is absent. The live unit is a copy, not a symlink, so after changing the
 tracked unit install it into `~/.config/systemd/user/`, run

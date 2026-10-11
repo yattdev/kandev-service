@@ -494,6 +494,21 @@ Private service overrides remain outside the repository in
 `~/.config/kandev/support.env`; the user service fails closed if that file is
 absent.
 
+The service has a minimal `PATH`, so the worker resolves Codex from the
+operator's NVM default Node installation for each request. If that alias is
+unavailable, it uses the newest installed NVM Node version; the private
+`KANDEV_SUPPORT_CODEX` setting can override either choice. The selected CLI
+reads the user's configured model and reasoning effort for each turn. Updating
+Codex in the selected Node installation takes effect on the next request.
+
+Run `scripts/kandev-support-watch --follow` on the host to watch the current
+request, model, approval reviewer, agent progress messages, and tool names in
+real time. The view follows daily thread rotation and omits request prompts
+and tool output. `journalctl --user -fu kandev-support.service` shows request
+start, completion, and notification delivery. The worker uses automatic
+approval review; a denied escalation still needs a safer route or an owner
+decision.
+
 Logical dumps may contain sensitive application data. The current Bubblewrap
 policy is a write-confinement boundary, not a distinct-UID confidentiality
 boundary: other guarded agents cannot modify the inbox but may be able to read

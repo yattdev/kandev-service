@@ -1,0 +1,148 @@
+#!/usr/bin/env python3
+"""Show the host Support worker's current state and live Codex progress."""
+
+from __future__ import annotations
+
+import argparse
+from collections import deque
+import json
+from pathlib import Path
+import time
+
+
+HOME = Path.home()
+QUEUE = HOME / ".local/share/kandev/support-broker"
+SESSIONS = HOME / ".codex/sessions"
+REPOSITORY = HOME / "Code/kandev"
+
+
+def thread_file() -> Path | None:
+    try:
+        thread_id = json.loads((QUEUE / "thread-state.json").read_text())["thread_id"]
+    except (OSError, KeyError, ValueError):
+        return None
+    matches = list(SESSIONS.glob(f"*/*/*/rollout-*-{thread_id}.jsonl"))
+    return max(matches, key=lambda path: path.stat().st_mtime) if matches else None
+
+
+def active_session(recorded: Path | None, request: str) -> Path | None:
+    """Find a newly rotated session while the worker has not recorded its ID yet."""
+    if request == "idle":
+        return recorded
+    processing = QUEUE / "processing" / f"{request}.json"
+    try:
+        request_started = processing.stat().st_mtime
+    except OSError:
+        return recorded
+    if recorded and recorded.stat().st_mtime >= request_started:
+        return recorded
+    candidates = sorted(
+        (path for path in SESSIONS.glob("*/*/*/rollout-*.jsonl") if path.stat().st_mtime >= request_started),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    for path in candidates:
+        try:
+            with path.open(encoding="utf-8") as stream:
+                meta = json.loads(stream.readline()).get("payload", {})
+        except (OSError, ValueError):
+            continue
+        if meta.get("cwd") == str(REPOSITORY) and meta.get("originator") == "codex_exec":
+            return path
+    return recorded
+
+
+def current_request() -> str:
+    processing = list((QUEUE / "processing").glob("*.json"))
+    return processing[0].stem if processing else "idle"
+
+
+def render(line: str) -> str | None:
+    try:
+        event = json.loads(line)
+    except ValueError:
+        return None
+    timestamp = event.get("timestamp", "")
+    payload = event.get("payload") or {}
+    kind = event.get("type")
+    if kind == "turn_context":
+        return f"{timestamp} model={payload.get('model')} effort={payload.get('effort')} approval={payload.get('approval_policy')} reviewer={payload.get('approvals_reviewer')}"
+    if kind == "event_msg":
+        event_type = payload.get("type")
+        if event_type == "task_started":
+            return f"{timestamp} turn started"
+        if event_type == "task_complete":
+            error = payload.get("error")
+            return f"{timestamp} turn {'failed' if error else 'completed'}"
+        item = payload.get("item") or {}
+        if event_type == "item_completed" and item.get("type") == "AgentMessage":
+            content = item.get("content") or []
+            message = " ".join(str(part.get("text", "")) for part in content if isinstance(part, dict))
+            if message:
+                return f"{timestamp} agent: {' '.join(message.split())[:500]}"
+    if kind == "response_item" and payload.get("type") in {"custom_tool_call", "function_call"}:
+        return f"{timestamp} tool: {payload.get('name', 'unknown')}"
+    return None
+
+
+def recent_progress(path: Path) -> list[str]:
+    output: deque[str] = deque(maxlen=20)
+    with path.open(encoding="utf-8") as stream:
+        for line in stream:
+            message = render(line)
+            if message:
+                output.append(message)
+    return list(output)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--follow", "-f", action="store_true", help="follow new events until Ctrl-C")
+    options = parser.parse_args()
+    request = current_request()
+    print(f"Support request: {request}", flush=True)
+    path = active_session(thread_file(), request)
+    if path:
+        print(f"Codex session: {path}", flush=True)
+        for message in recent_progress(path):
+            print(message, flush=True)
+    else:
+        print("No recorded Support Codex session yet.", flush=True)
+    if not options.follow:
+        return
+    current_path = path
+    stream = path.open(encoding="utf-8") if path else None
+    if stream:
+        stream.seek(0, 2)
+    try:
+        while True:
+            time.sleep(1)
+            next_request = current_request()
+            if next_request != request:
+                request = next_request
+                print(f"Support request: {request}", flush=True)
+            next_path = active_session(thread_file(), request)
+            if next_path != current_path:
+                if stream:
+                    stream.close()
+                current_path = next_path
+                stream = next_path.open(encoding="utf-8") if next_path else None
+                if next_path:
+                    print(f"Codex session: {next_path}", flush=True)
+                    for message in recent_progress(next_path):
+                        print(message, flush=True)
+                    stream.seek(0, 2)
+            if stream:
+                for line in stream:
+                    message = render(line)
+                    if message:
+                        print(message, flush=True)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if stream:
+            stream.close()
+
+
+if __name__ == "__main__":
+    main()

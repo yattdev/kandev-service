@@ -55,6 +55,7 @@ socket.addEventListener("open", () => {
     }
     action = "message.queue.send_now";
     payload = {
+      task_id: request.task_id,
       session_id: request.session_id,
       session_incarnation_id: request.session_incarnation_id,
       scope: "entry",
