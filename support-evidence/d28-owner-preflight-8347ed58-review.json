@@ -1,0 +1,73 @@
+{
+  "actual_overlap": "UNKNOWN; no finite authenticated partition available",
+  "broker_request_id": "8347ed58-d488-446f-bb17-dc8b48d6e98f",
+  "contract_bytes": 9904,
+  "contract_sha256": "46eac56e3636b2e76aa7731835adad87224c17f78a2ff8e49d01f9291647a784",
+  "delivery_target": {
+    "session": "13d8c011-6e49-40ef-80e9-2f1445296d06",
+    "task": "a68df3ae-aaf5-4591-a46d-9d73db62e46d"
+  },
+  "lineage": {
+    "15388_final_sha256": "21be3d1a89d5399c65727d9954fcc5d489ec24484e9438ccc2b898e241fc4f2d",
+    "b4_preparation_sha256": "0bfd3dfc9205453cc0f7293025df10aeace37ba81f420ec1cf56027d0b5dd4ff",
+    "b4_proposal_sha256": "ffeb3103adfdf0e1f74ebad7732b56f6f0c23bf6617c263a1d06bf053b50e9c7",
+    "continuity_contract_sha256": "1ba70c283bc6f85d0105773941095ae3e1deb17a3fa88f27f1bef4bcf71a91cf"
+  },
+  "missing_fields": [
+    "retained_authenticated_owner_attestation",
+    "original_launch_incarnations_and_full_closure",
+    "preexisting_task_containment_domain_id_generation",
+    "complete_descendant_escape_admission_coverage",
+    "protected_partition_proof",
+    "registered_physical_repository_environment_worktree_binding",
+    "current_authenticated_caller_incarnation",
+    "accepted_preservation_receipt_digest"
+  ],
+  "preservation": {
+    "credentials_accessed": false,
+    "deployment_or_physical_control_installation": false,
+    "new_helper_session_or_writer": false,
+    "old_receipts_helpers_unchanged": true,
+    "process_or_environment_or_filesystem_scans": 0,
+    "runtime_requests": 0,
+    "shared_ledger_reread": false,
+    "source_admission": false,
+    "task_resources_opened_or_mutated": false
+  },
+  "smallest_next_operation": "Existing launcher/OS-supervisor owner supplies only already-retained task-scoped launch/domain/closure proof references and protected partition through existing backend authenticated provenance. If no such pre-existing domain/closure record exists, declare that evidence unavailable; installing a read projection cannot cure it. Do not ask Human to approve unknown handles. Root must review any specifically identified change of physical evidence/preservation boundary separately; generic engineering approval or shared shutdown is not a substitute.",
+  "static_source_revision": "9fde182148c2a186c308376cae0efa8f107d4a66 (uninstalled own-binding descendant; inspected manager files unchanged from deployed79b0 parent)",
+  "static_source_sha256": {
+    "internal/agent/runtime/lifecycle/recovery_guard.go": "7183e74598a3131823109ef9f54dcb246f772528b3507c6792f6b0b048d832c5",
+    "internal/agentctl/server/instance/instance.go": "35bd054a90f10a22ac3299bae684b9c51c0cb8cbb3578c99bed0f331e00cfa72",
+    "internal/agentctl/server/instance/manager.go": "40310dbf0c386b2b7086c3c51a99b04108b47fe00bc3138cb849a4d5b0496975",
+    "internal/agentctl/server/process/manager.go": "6e60cfd6cdac3a914c649d49f6e70cf1855813b78e9b089fe09f3366f6b7ebf1",
+    "internal/agentctl/server/process/procattr_linux.go": "9ab01476f42f8287e0066a99acbf519e271a50457321cfa018ea4266877cfefd",
+    "internal/launcher/process.go": "4d0290fd19205249f2db290bba2eba88ae57f8b1d263c1b00ba0875bb07bece0",
+    "internal/launcher/process_group_unix.go": "b36989ef2868bc594c7dfa0a845236babcc628fb19d4d0cc73f358cd867886d0",
+    "internal/task/models/control_server_record.go": "17991136d1a51c2b27b9073cbb6ccb80dd894f9ad32cd407e826b5e999114976"
+  },
+  "status": "BLOCKED_MISSING_PREEXISTING_OWNER_PROOF",
+  "validation": {
+    "actual_D28_owner_evidence": "UNKNOWN; no live read in this request",
+    "negative_cases": [
+      "forged complete=true",
+      "caller PID/path/scope/body targets",
+      "foreign or missing caller",
+      "stale owner/caller/generation/expiry/read revision",
+      "missing immutable owner proof or wrong task/kind/generation",
+      "partial old executions/descendants/escape/admission coverage",
+      "scope created after old launch",
+      "current833/privatePG/helper/shared/foreign/unique-state overlap",
+      "incomplete protected partition",
+      "preservation mismatch",
+      "tampered owner payload",
+      "foreign registered repository"
+    ],
+    "offline_specification_tests": 14,
+    "positive_cases": "synthetic authenticated-owner fixture for complete pre-existing disjoint route and full original closure; both review-only",
+    "test_file": "tests/specifications/test_owner_attestation_preflight.py",
+    "test_scope": "synthetic decision model only; not installed implementation, authenticated live observation or cryptographic attestation",
+    "test_sha256": "e5b6e3b6e444115bd7896c0d96defd40a3a7a4ef418ca16bb75eb106fc81d6df"
+  },
+  "version": "d28-owner-preflight-support-review/v1"
+}
