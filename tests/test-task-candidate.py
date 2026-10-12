@@ -128,6 +128,86 @@ with tempfile.TemporaryDirectory() as temporary:
             link = original / '.kandev/hqa/escape'
             link.symlink_to(upstream, target_is_directory=True)
             denied(lambda: m.plain(link))
+            # Exercise append-only session transfer on this synthetic clone.
+            # The original source and untracked prompt remain untouched.
+            (candidate / '.git/objects/info/alternates').unlink()
+            link.unlink()
+            db.execute("DELETE FROM executors_running WHERE id='other'")
+            db.execute("ALTER TABLE executors_running ADD COLUMN agent_execution_id TEXT")
+            db.execute("ALTER TABLE executors_running ADD COLUMN updated_at TEXT")
+            db.execute("UPDATE executors_running SET status='failed',local_pid=0,agent_execution_id='old-execution',updated_at='retired' WHERE id='hqa'")
+            db.execute("UPDATE task_sessions SET state='FAILED' WHERE id='hqa'")
+            db.execute("INSERT INTO task_sessions VALUES ('successor','task','repo','env',?,'WAITING_FOR_INPUT')", (str(original),))
+            db.execute("INSERT INTO executors_running VALUES ('successor','task','successor','ready',123,0,'new-execution','live')")
+            db.commit()
+            run(candidate, 'config', 'user.name', 'Synthetic')
+            run(candidate, 'config', 'user.email', 'synthetic@example.invalid')
+            (candidate / 'candidate-change').write_text('synthetic local commit\n')
+            run(candidate, 'add', 'candidate-change')
+            run(candidate, 'commit', '-m', 'synthetic candidate checkpoint')
+            head = run(candidate, 'rev-parse', 'HEAD')
+            transfer_source = ROOT / 'scripts/kandev-task-candidate-transfer.py'
+            transfer_spec = importlib.util.spec_from_file_location('transfer', transfer_source)
+            t = importlib.util.module_from_spec(transfer_spec)
+            transfer_spec.loader.exec_module(t)
+            predecessor = json.loads((original / '.kandev/hqa/.candidate-lease/receipt.json').read_text())
+            immutable = (original / '.kandev/hqa/.candidate-lease/receipt.json').read_bytes()
+            authorization = dict(receipt='retirement', authority_revoked=True, task='task', workspace='workspace',
+                                 old_session='hqa', old_execution='old-execution', successor='successor',
+                                 successor_execution='new-execution', checkpoint=dict(head=head, original_head=base,
+                                 reservation_sha256=m.digest(m.encoded(predecessor))))
+            authorization['receipt_sha256'] = m.digest(m.encoded(authorization))
+            successor_process = dict(pid=22, ppid=1, starttime='fixed', ids=dict(KANDEV_TASK_ID='task',
+                                      KANDEV_SESSION_ID='successor', KANDEV_INSTANCE_ID='new-execution'))
+            t.__retirement_receipt__ = authorization
+            t.__successor_process__ = successor_process
+            preflight = dict(topology=dict(successor=successor_process))
+            authorization.pop('receipt_sha256')
+            authorization['prior_snapshot_sha256'] = m.digest(m.encoded(preflight))
+            authorization['receipt_sha256'] = m.digest(m.encoded(authorization))
+            t.__retirement_preflight__ = preflight
+            transfer_args = SimpleNamespace(**vars(args))
+            transfer_args.operation = 'prepare'
+            transfer_args.session = 'successor'
+            transfer_args.head = head
+            transfer_args.reservation_sha256 = m.digest(m.encoded(predecessor))
+            transfer_args.retirement_sha256 = authorization['receipt_sha256']
+            real_load = t.load_original
+
+            def synthetic_load(*parameters):
+                lease, clone, prior, module = real_load(*parameters)
+                module['ownership'] = lambda db, a, p: real_ownership(db, a, p, root / 'tasks')
+                return lease, clone, prior, module
+
+            def synthetic_process(pid):
+                return successor_process if pid == 22 else dict(pid=pid, ppid=22)
+
+            with patch.object(t, 'load_original', synthetic_load), patch.object(t, 'process_identity', synthetic_process), \
+                 patch.object(t, 'process_reference_current', lambda reference: None):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    t.operate(transfer_args, transfer_source.read_bytes())
+                transferred = json.loads(output.getvalue())
+                assert transferred['original_receipt'] == predecessor['receipt']
+                assert transferred['head'] == head
+                assert immutable == (original / '.kandev/hqa/.candidate-lease/receipt.json').read_bytes()
+                denied(lambda: t.operate(transfer_args, transfer_source.read_bytes()))
+                transfer_args.operation = 'verify'
+                transfer_args.receipt = transferred['receipt']
+                transfer_args.receipt_sha256 = transferred['receipt_sha256']
+                with patch.dict(os.environ, KANDEV_TASK_ID='task', KANDEV_SESSION_ID='successor', KANDEV_INSTANCE_ID='new-execution'):
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        t.operate(transfer_args, transfer_source.read_bytes())
+                    with patch.object(t, 'process_identity', lambda pid: dict(pid=pid, ppid=1)):
+                        denied(lambda: t.caller_anchor(successor_process))
+                    transfer_args.receipt_sha256 = 'stale'
+                    denied(lambda: t.operate(transfer_args, transfer_source.read_bytes()))
+                    transfer_args.receipt_sha256 = transferred['receipt_sha256']
+                    db.execute("UPDATE executors_running SET status='ready',local_pid=123 WHERE id='hqa'")
+                    db.commit()
+                    denied(lambda: t.operate(transfer_args, transfer_source.read_bytes()))
+                assert run(candidate, 'rev-parse', 'HEAD') == head
+                assert (original / 'PROMPT.md').read_text() == 'preserve untracked operator data\n'
     finally:
         os.chdir(previous_cwd)
-print('PASS: independent candidate, preservation, duplicate reservation, receipt, incarnation, writer fence, and storage escape checks')
+print('PASS: candidate preservation, append-only transfer, receipt/ancestry/incarnation fences, old revival and storage escapes')

@@ -77,7 +77,7 @@ Run the isolated regression checks with `python3 tests/test-task-candidate.py`.
 Live verification must use the affected task's guard; a Coordinator's mount
 namespace is not evidence of another task's permissions.
 
-## Session handoff boundary
+## Session handoff boundary and reviewed control
 
 Version 1 implements initial candidate provision/verification only. Its
 reservation names one session, and verification requires that session to be
@@ -132,3 +132,94 @@ lifecycle controls, followed by a reviewed transfer/acceptance request. Do not
 stop the shared agentctl server, stop all sessions, mutate database rows, reset
 CI budgets, replay a source turn, or infer Source admission from a capability
 request. Root retains the final acceptance and Source-admission decision.
+
+### Exact-old retirement
+
+`scripts/kandev-support-exact-stop.py` is an operator-only reviewed recovery
+control. Its default mode reads a JSON request on stdin and emits a content-free
+preflight. The request pins coordinator/task/workspace/repository, exact old and
+successor session/execution UUIDs, original checkout, provider/guard/controller
+PIDs and kernel start times, protected successor PID/start time, exact old
+instance endpoint, original reservation/digest, original HEAD, authorized
+candidate HEAD/base/branch, and operator prompt hash.
+
+It requires both selected sessions at idle checkpoints, exactly those two active
+executors, matching registered repository/worktree bindings, all task FIFOs
+empty, unchanged checkpoint/receipt hashes, valid guard ancestry and exact
+process-group membership. Unknown descendants or runtime roles fail closed.
+The reviewed requester must also attest that the old checkpoint contains no
+unique runtime/Human artifact requiring preservation; a clean Git tree alone
+does not prove that. The preflight exposes only identities and digests.
+
+With explicit Root retirement authorization and automatic host review, pass
+`--terminate <preflight-SHA256>` to the same control. It revalidates the entire
+preflight, tries the exact old instance's supported `POST /api/v1/stop` endpoint
+first, and uses no credentials or auth-row edits. HTTP 401 permits the explicitly
+reviewed recovery path: open pidfds for the positively bound old provider tree,
+revalidate again, send SIGTERM to the exact provider, wait eight seconds, and
+only then TERM still-identical pinned members with another bounded grace.
+It never sends a group-wide signal or SIGKILL. Changed predicates, new input,
+unexpected API errors or surviving old processes stop recovery. Do not retry
+signals against a changed checkpoint or reuse an already completed preflight.
+
+Normal backend process-exit handling owns terminal lifecycle bookkeeping.
+Support must then verify terminal old executor status, cleared process handle,
+absence of the old provider, unchanged protected successor/CI/MAIN records,
+unchanged FIFO/transcript/counters and source artifacts, and sole successor
+eligibility. A TERM receipt alone is not a transfer grant. No raw process,
+socket, sudo or credential capability is exposed to the Coordinator.
+
+### Reservation-preserving transfer
+
+`scripts/kandev-task-candidate-transfer.py` is a separate version 2 companion;
+the original provision marker, lease receipt and helper remain immutable.
+Reviewed Support pipes `prepare` through the existing exact-task guard with
+the retirement receipt, its pinned outer preflight and the protected successor
+process reference supplied by the trusted bootstrap. `--retirement-sha256`
+pins that retirement receipt. Cross-guard environment access stays restricted:
+the outer reviewed preflight attests launch identity, and readable kernel stat
+fields pin the same physical successor inside the guard.
+
+Preparation requires a terminal exact old execution with cleared process
+handles, the exact sole eligible successor, unchanged worktree binding IDs,
+unchanged original checkout/operator prompt, clean independent candidate at
+the explicitly authorized current HEAD descending from its pinned base, and
+the original reservation digest. A refreshed binding timestamp is explicitly
+reconciled against unchanged immutable IDs and captured in the new receipt.
+Before/after snapshots prove preservation during preparation.
+
+It reserves `.candidate-lease/transfers` atomically and appends matching JSON
+receipts there and in the candidate's `.git/`, plus the new task-owned transfer
+helper. Original history, marker, receipt and helper are preserved. Existing
+transfer data stops repeat preparation; failures remain for reviewed
+reconciliation, with no deletion, overwrite or inferred rollback. This utility
+supports one reviewed transfer per original reservation; further transfers
+require a separately reviewed lineage extension.
+
+Support uses `inspect` for neutral read-only verification. Only the actual
+successor uses `verify`, with its own exported task/session/execution IDs and
+ancestry through the exact protected provider PID/start-time reference.
+Substituting environment IDs without that provider ancestry fails closed.
+Missing process visibility never widens the guard. Support returns the new
+receipt UUID, canonical JSON digest and exact caller command:
+
+```sh
+python3 .kandev/hqa/<slot>/.git/kandev-candidate-transfer.py verify \
+  --task '<task-uuid>' --session '<actual-successor-session-uuid>' \
+  --workspace '<workspace-uuid>' --repo '<registered-repository-uuid>' \
+  --original '<original-container-checkout>' --original-head '<original-full-SHA>' \
+  --head '<authorized-clean-candidate-full-SHA>' --base '<pinned-base-full-SHA>' \
+  --branch '<reserved-private-branch>' --slot '<authorized-slot>' \
+  --reservation-sha256 '<original-provision-receipt-SHA256>' \
+  --receipt '<new-transfer-receipt-uuid>' --receipt-sha256 '<new-transfer-receipt-SHA256>'
+```
+
+`successor_guard_verified` is an inert capability acceptance result. Root still
+owns Source admission; no Source turn, product tests, lane move, model change,
+primary selection or CI budget reset follows automatically. A revived old
+execution, new competing writer, changed helper/receipt, changed checkpoint,
+stale binding or different successor process incarnation denies acceptance.
+
+Regression checks are `python3 tests/test-support-exact-stop.py` and
+`python3 tests/test-task-candidate.py`. They use synthetic Git/metadata/process
+fixtures and fake pidfds; they do not signal live processes or run product tests.
