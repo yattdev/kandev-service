@@ -1,0 +1,1236 @@
+diff --git a/apps/backend/internal/mcp/handlers/handlers.go b/apps/backend/internal/mcp/handlers/handlers.go
+index c88c833d5d..6ed7ae4be6 100644
+--- a/apps/backend/internal/mcp/handlers/handlers.go
++++ b/apps/backend/internal/mcp/handlers/handlers.go
+@@ -541,6 +541,8 @@ func (h *Handlers) registerTaskMutationHandlers(d *guardedMCPDispatcher) {
+ 	d.RegisterFunc(ws.ActionMCPUpdateRepositoryBaseBranch, h.handleUpdateRepositoryBaseBranch)
+ 	d.RegisterFunc(ws.ActionMCPStepComplete, h.handleStepComplete)
+ 	d.RegisterFunc(ws.ActionMCPMessageTask, h.handleMessageTask)
++	d.RegisterFunc(ws.ActionMCPGetTaskMessageStatus, h.handleGetTaskMessageStatus)
++	d.RegisterFunc(ws.ActionMCPContinueTaskMessage, h.handleGetTaskMessageStatus)
+ 	d.RegisterFunc(ws.ActionMCPStopTask, h.handleStopTask)
+ 	d.RegisterFunc(ws.ActionMCPSpawnSession, h.handleSpawnSession)
+ }
+@@ -2674,10 +2676,14 @@ func (h *Handlers) handleMessageTask(ctx context.Context, msg *ws.Message) (*ws.
+ 		SenderSessionID   string `json:"sender_session_id"`
+ 		DeliveryMode      string `json:"delivery_mode"`
+ 		ReplyToQuestionID string `json:"reply_to_question_id"`
++		IntentID          string `json:"intent_id"`
+ 	}
+ 	if err := json.Unmarshal(msg.Payload, &req); err != nil {
+ 		return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeBadRequest, "Invalid payload: "+err.Error(), nil)
+ 	}
++	if req.IntentID != "" {
++		return h.handleReceiptTaskMessage(ctx, msg)
++	}
+ 	if req.TaskID == "" {
+ 		return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeValidation, "task_id is required", nil)
+ 	}
+@@ -3623,7 +3629,13 @@ func (h *Handlers) ensureTaskInProgressForTaskMessage(ctx context.Context, taskI
+ 	if task.IsFromOffice {
+ 		return rollback, nil
+ 	}
+-	if _, err := h.taskSvc.UpdateTaskState(ctx, taskID, v1.TaskStateInProgress); err != nil {
++	if err := retryTaskMessageWrite(ctx, func() error {
++		updated, err := h.taskSvc.UpdateTaskStateIfCurrentIn(ctx, taskID, v1.TaskStateInProgress, []v1.TaskState{v1.TaskStateReview})
++		if err == nil && !updated {
++			return errors.New("task review transition superseded")
++		}
++		return err
++	}); err != nil {
+ 		return taskMessageReviewRollback{}, fmt.Errorf("failed to transition task from REVIEW to IN_PROGRESS for task message: %w", err)
+ 	}
+ 	h.logger.Info("task transitioned from REVIEW to IN_PROGRESS for task message",
+diff --git a/apps/backend/internal/mcp/handlers/task_message_receipt.go b/apps/backend/internal/mcp/handlers/task_message_receipt.go
+new file mode 100644
+index 0000000000..1ac9e7500b
+--- /dev/null
++++ b/apps/backend/internal/mcp/handlers/task_message_receipt.go
+@@ -0,0 +1,352 @@
++package handlers
++
++import (
++	"context"
++	"crypto/sha256"
++	"encoding/hex"
++	"encoding/json"
++	"errors"
++	"time"
++
++	"github.com/google/uuid"
++	"github.com/kandev/kandev/internal/db"
++	mcpscope "github.com/kandev/kandev/internal/mcp/scope"
++	"github.com/kandev/kandev/internal/orchestrator/messagequeue"
++	"github.com/kandev/kandev/internal/task/models"
++	"github.com/kandev/kandev/internal/task/plancomments"
++	"github.com/kandev/kandev/internal/task/repository/repoerrors"
++	"github.com/kandev/kandev/internal/task/service"
++	ws "github.com/kandev/kandev/pkg/websocket"
++)
++
++const taskMessageIntentKey = "task_message_intent_id"
++const observeTaskMessageTurn = "observe_original_turn"
++
++var taskMessageIntentNamespace = uuid.MustParse("2c81d732-93f2-48b8-b132-1fde6e603147")
++
++type taskMessageReceiptRequest struct {
++	TaskID            string `json:"task_id"`
++	SessionID         string `json:"session_id"`
++	IntentID          string `json:"intent_id"`
++	MessageID         string `json:"message_id"`
++	SenderTaskID      string `json:"sender_task_id"`
++	SenderSessionID   string `json:"sender_session_id"`
++	Prompt            string `json:"prompt"`
++	DeliveryMode      string `json:"delivery_mode"`
++	ReplyToQuestionID string `json:"reply_to_question_id"`
++}
++
++type taskMessageReceipt struct {
++	TaskID          string `json:"task_id,omitempty"`
++	SessionID       string `json:"session_id,omitempty"`
++	IntentID        string `json:"intent_id,omitempty"`
++	IntentMessageID string `json:"intent_message_id,omitempty"`
++	MessageID       string `json:"message_id,omitempty"`
++	QueueID         string `json:"queue_id,omitempty"`
++	TurnID          string `json:"turn_id,omitempty"`
++	Status          string `json:"status"`
++	RetryAllowed    bool   `json:"retry_allowed"`
++	ContinueAllowed bool   `json:"continue_allowed"`
++	Continuation    string `json:"continuation"`
++	ContentSHA256   string `json:"content_sha256,omitempty"`
++	AdmissionError  string `json:"admission_error,omitempty"`
++}
++
++type taskMessageReceiptReader interface {
++	FindOwnTaskMessageRecords(context.Context, string, string, string, string, string, string, string) ([]models.TaskMessageRecord, error)
++}
++type queuedTaskMessageNotifier interface {
++	NotifyQueuedUserPrompt(context.Context, string, string)
++}
++
++func validateTaskMessageIntent(id string) error {
++	if len(id) < 8 || len(id) > 128 {
++		return errors.New("intent_id requires 8-128 ASCII identifier bytes")
++	}
++	for _, c := range []byte(id) {
++		valid := c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_' || c == '.'
++		if !valid {
++			return errors.New("invalid intent_id")
++		}
++	}
++	return nil
++}
++
++func (h *Handlers) authorizeTaskMessageReceipt(ctx context.Context, req taskMessageReceiptRequest) (mcpscope.Principal, error) {
++	p, ok := mcpscope.PrincipalFromContext(ctx)
++	if !ok || p.IsAutomation() || req.SenderTaskID != p.CallerTaskID || req.SenderSessionID != p.CallerSessionID {
++		return p, errors.New("exact task message sender required")
++	}
++	if _, err := h.authorizeOwnQuestion(ctx, ownQuestionRequest{TaskID: p.CallerTaskID, SessionID: p.CallerSessionID}); err != nil {
++		return p, err
++	}
++	if req.IntentID != "" {
++		if err := validateTaskMessageIntent(req.IntentID); err != nil {
++			return p, err
++		}
++		if req.MessageID != "" || req.TaskID == "" || req.SessionID == "" {
++			return p, errors.New("intent requires one exact target task/session")
++		}
++	} else {
++		if _, err := uuid.Parse(req.MessageID); err != nil {
++			return p, errors.New("exact legacy message UUID required")
++		}
++	}
++	if (req.TaskID == "") != (req.SessionID == "") {
++		return p, errors.New("target task/session must be paired")
++	}
++	if req.TaskID != "" {
++		if _, _, err := h.taskMessageReceiptTarget(ctx, p, req.TaskID, req.SessionID); err != nil {
++			return p, err
++		}
++	}
++	return p, nil
++}
++
++func (h *Handlers) taskMessageReceiptTarget(ctx context.Context, p mcpscope.Principal, taskID, sessionID string) (*models.Task, *models.TaskSession, error) {
++	task, err := h.taskSvc.GetTask(ctx, taskID)
++	if err != nil || task == nil || task.WorkspaceID != p.WorkspaceID {
++		return nil, nil, errors.New("task message target unavailable")
++	}
++	session, err := h.sessionRepo.GetTaskSession(ctx, sessionID)
++	if err != nil || session == nil || session.TaskID != taskID || sessionID == p.CallerSessionID {
++		return nil, nil, errors.New("task message session unavailable")
++	}
++	return task, session, nil
++}
++
++func taskMessageIntentMessageID(p mcpscope.Principal, req taskMessageReceiptRequest) string {
++	raw, _ := json.Marshal([]string{p.CallerTaskID, p.CallerSessionID, req.TaskID, req.SessionID, req.IntentID})
++	return uuid.NewSHA1(taskMessageIntentNamespace, raw).String()
++}
++
++func (h *Handlers) readTaskMessageReceipt(ctx context.Context, p mcpscope.Principal, req taskMessageReceiptRequest) (*taskMessageReceipt, []models.TaskMessageRecord, error) {
++	reader, ok := h.sessionRepo.(taskMessageReceiptReader)
++	if !ok {
++		return nil, nil, errors.New("task message receipt reader unavailable")
++	}
++	records, err := reader.FindOwnTaskMessageRecords(ctx, p.WorkspaceID, p.CallerTaskID, p.CallerSessionID, req.TaskID, req.SessionID, req.IntentID, req.MessageID)
++	if err != nil {
++		return nil, nil, err
++	}
++	receipt := &taskMessageReceipt{TaskID: req.TaskID, SessionID: req.SessionID, IntentID: req.IntentID, Status: "not_created", RetryAllowed: req.IntentID != "", Continuation: observeTaskMessageTurn}
++	if req.IntentID != "" {
++		receipt.IntentMessageID = taskMessageIntentMessageID(p, req)
++		receipt.Continuation = "publish_same_intent"
++	}
++	if len(records) == 0 {
++		if req.IntentID == "" {
++			receipt.Status = "not_found"
++		}
++		return receipt, records, nil
++	}
++	receipt.RetryAllowed = false
++	receipt.Continuation = observeTaskMessageTurn
++	seen := map[string]bool{}
++	identity := ""
++	for _, record := range records {
++		if seen[record.Kind] || (identity != "" && identity != record.ID) {
++			return nil, nil, errors.New("ambiguous task message intent")
++		}
++		seen[record.Kind] = true
++		identity = record.ID
++		receipt.TaskID = record.TaskID
++		receipt.SessionID = record.SessionID
++		receipt.ContentSHA256 = record.ContentSHA256
++		if record.Kind == "message" {
++			receipt.MessageID = record.ID
++			receipt.TurnID = record.TurnID
++			receipt.Status = "recorded_delivery_unknown"
++		} else {
++			receipt.QueueID = record.ID
++		}
++	}
++	for _, record := range records {
++		if record.Kind == "queue" {
++			projectTaskMessageQueueReceipt(receipt, record)
++		}
++	}
++	if receipt.ContinueAllowed {
++		if err := h.validateTaskMessageContinuation(ctx, p, receipt, records); err != nil {
++			receipt.ContinueAllowed = false
++			receipt.Continuation = observeTaskMessageTurn
++		}
++	}
++	return receipt, records, nil
++}
++
++func projectTaskMessageQueueReceipt(r *taskMessageReceipt, record models.TaskMessageRecord) {
++	r.Status = taskMessageStatusQueued
++	r.ContinueAllowed = true
++	r.Continuation = "recheck_original_queue"
++	if attempted, _ := record.Metadata[messagequeue.MetadataDeliveryAttempted].(bool); attempted {
++		r.Status = "delivery_attempted"
++		r.ContinueAllowed = false
++		r.Continuation = observeTaskMessageTurn
++		return
++	}
++	if reserved, _ := record.Metadata[messagequeue.MetadataLifecycleReserved].(bool); reserved {
++		r.Status = "dispatching"
++		r.ContinueAllowed = false
++		r.Continuation = observeTaskMessageTurn
++	}
++}
++
++func (h *Handlers) handleGetTaskMessageStatus(ctx context.Context, msg *ws.Message) (*ws.Message, error) {
++	var req taskMessageReceiptRequest
++	if err := json.Unmarshal(msg.Payload, &req); err != nil {
++		return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeValidation, "invalid receipt request", nil)
++	}
++	p, err := h.authorizeTaskMessageReceipt(ctx, req)
++	if err != nil {
++		return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeForbidden, "authenticated same-workspace exact sender receipt required", nil)
++	}
++	receipt, records, err := h.readTaskMessageReceipt(ctx, p, req)
++	if err != nil {
++		return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeConflict, "task message status unavailable or ambiguous; do not resend", nil)
++	}
++	if msg.Action == ws.ActionMCPContinueTaskMessage && receipt.ContinueAllowed {
++		if err := h.continueTaskMessageReceipt(ctx, p, receipt, records); err != nil {
++			return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeConflict, "original queue cannot safely continue; do not resend", nil)
++		}
++	}
++	return ws.NewResponse(msg.ID, msg.Action, receipt)
++}
++
++func (h *Handlers) validateTaskMessageContinuation(ctx context.Context, p mcpscope.Principal, r *taskMessageReceipt, records []models.TaskMessageRecord) error {
++	task, session, err := h.taskMessageReceiptTarget(ctx, p, r.TaskID, r.SessionID)
++	if err != nil {
++		return err
++	}
++	if task.ArchivedAt != nil || session.State == models.TaskSessionStateCancelled || session.State == models.TaskSessionStateCompleted || session.State == models.TaskSessionStateFailed {
++		return errors.New("task message continuation owner inactive")
++	}
++	for _, record := range records {
++		if step, ok := record.Metadata["task_message_target_step"].(string); ok && step != task.WorkflowStepID {
++			return errors.New("original task message step changed")
++		}
++		if incarnation, ok := record.Metadata["task_message_target_incarnation"].(string); ok && incarnation != session.QueueIncarnationID {
++			return errors.New("original session replaced")
++		}
++	}
++	return nil
++}
++
++func (h *Handlers) continueTaskMessageReceipt(ctx context.Context, p mcpscope.Principal, r *taskMessageReceipt, records []models.TaskMessageRecord) error {
++	if err := h.validateTaskMessageContinuation(ctx, p, r, records); err != nil {
++		return err
++	}
++	notifier, ok := h.sessionLauncher.(queuedTaskMessageNotifier)
++	if !ok {
++		return errors.New("queue readiness unavailable")
++	}
++	notifyCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
++	defer cancel()
++	notifier.NotifyQueuedUserPrompt(notifyCtx, r.TaskID, r.SessionID)
++	return nil
++}
++
++func (h *Handlers) handleReceiptTaskMessage(ctx context.Context, msg *ws.Message) (*ws.Message, error) {
++	var req taskMessageReceiptRequest
++	if err := json.Unmarshal(msg.Payload, &req); err != nil {
++		return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeValidation, "invalid intent request", nil)
++	}
++	p, err := h.authorizeTaskMessageReceipt(ctx, req)
++	if err != nil {
++		return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeForbidden, "authenticated same-workspace exact sender required", nil)
++	}
++	if req.Prompt == "" || len(req.Prompt) > 65536 || req.ReplyToQuestionID != "" || (req.DeliveryMode != "" && req.DeliveryMode != deliveryModeQueued) {
++		return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeValidation, "intent receipts require a bounded prompt and queued delivery without parent-question reply", nil)
++	}
++	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
++	defer cancel()
++	receipt, records, err := h.readTaskMessageReceipt(ctx, p, req)
++	if err != nil {
++		return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeConflict, "correlate task message status before retry", nil)
++	}
++	fingerprint := taskMessageRequestFingerprint(req)
++	if len(records) > 0 {
++		return replayTaskMessageReceipt(msg, receipt, records, fingerprint)
++	}
++	if h.sessionLauncher == nil || h.sessionLauncher.GetMessageQueue() == nil {
++		return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeConflict, "durable queue unavailable", nil)
++	}
++	err = h.admitTaskMessageReceipt(ctx, p, req, receipt.IntentMessageID, fingerprint)
++	readCtx, readCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
++	defer readCancel()
++	receipt, readRecords, readErr := h.readTaskMessageReceipt(readCtx, p, req)
++	if readErr != nil {
++		return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeConflict, "task message admission unconfirmed; read original intent before retry", nil)
++	}
++	if err != nil {
++		receipt.AdmissionError = taskMessageAdmissionError(err)
++	} else if receipt.ContinueAllowed {
++		_ = h.continueTaskMessageReceipt(readCtx, p, receipt, readRecords)
++	}
++	return ws.NewResponse(msg.ID, msg.Action, receipt)
++}
++
++func taskMessageRequestFingerprint(req taskMessageReceiptRequest) string {
++	raw, _ := json.Marshal([]string{req.SenderTaskID, req.SenderSessionID, req.TaskID, req.SessionID, req.IntentID, req.Prompt})
++	digest := sha256.Sum256(raw)
++	return hex.EncodeToString(digest[:])
++}
++
++func replayTaskMessageReceipt(msg *ws.Message, r *taskMessageReceipt, records []models.TaskMessageRecord, fingerprint string) (*ws.Message, error) {
++	for _, record := range records {
++		if got, _ := record.Metadata[plancomments.MetadataClientMessageFingerprint].(string); got != "" && got != fingerprint {
++			return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeConflict, "intent already identifies a different task message", nil)
++		}
++	}
++	return ws.NewResponse(msg.ID, msg.Action, r)
++}
++
++func (h *Handlers) admitTaskMessageReceipt(ctx context.Context, p mcpscope.Principal, req taskMessageReceiptRequest, id, fingerprint string) error {
++	task, session, err := h.taskMessageReceiptTarget(ctx, p, req.TaskID, req.SessionID)
++	if err != nil {
++		return err
++	}
++	sender, err := h.taskSvc.GetTask(ctx, p.CallerTaskID)
++	if err != nil {
++		return err
++	}
++	prompt := h.appendPromptReferenceExpansionContext(ctx, req.Prompt)
++	prompt, metadata := wrapAgentMessage(prompt, sender, p.CallerSessionID, h.lookupSenderSessionName(ctx, p.CallerTaskID, p.CallerSessionID), task.ID == sender.ID)
++	metadata[taskMessageIntentKey] = req.IntentID
++	metadata[plancomments.MetadataClientMessageFingerprint] = fingerprint
++	metadata["task_message_target_step"] = task.WorkflowStepID
++	metadata["task_message_target_incarnation"] = session.QueueIncarnationID
++	queueMetadata := cloneTaskMessageMetadataMap(metadata)
++	queueMetadata[messagequeue.MetadataDurableTranscriptMessageID] = id
++	queueMetadata["user_message_recorded"] = true
++	queued := &messagequeue.QueuedMessage{ID: id, Metadata: queueMetadata}
++	create := &service.CreateMessageRequest{TaskID: task.ID, TaskSessionID: session.ID, Content: prompt, AuthorType: string(models.MessageAuthorUser), Metadata: metadata, ExpectedSessionState: session.State}
++	return retryTaskMessageWrite(ctx, func() error {
++		_, err := h.taskSvc.CreateTaskMessageQueuedIdempotent(ctx, id, create, queued, h.sessionLauncher.GetMessageQueue().MaxPerSession())
++		return err
++	})
++}
++
++func retryTaskMessageWrite(ctx context.Context, write func() error) error {
++	var err error
++	for attempt := 0; attempt < 3; attempt++ {
++		if err = write(); err == nil || !db.IsTransientError(err) {
++			return err
++		}
++		timer := time.NewTimer(time.Duration(attempt+1) * 100 * time.Millisecond)
++		select {
++		case <-ctx.Done():
++			timer.Stop()
++			return ctx.Err()
++		case <-timer.C:
++		}
++	}
++	return err
++}
++
++func taskMessageAdmissionError(err error) string {
++	if errors.Is(err, repoerrors.ErrTaskMessageInputPending) {
++		return "human_input_pending"
++	}
++	return "admission_unavailable"
++}
+diff --git a/apps/backend/internal/mcp/handlers/task_message_receipt_test.go b/apps/backend/internal/mcp/handlers/task_message_receipt_test.go
+new file mode 100644
+index 0000000000..c16ee1143c
+--- /dev/null
++++ b/apps/backend/internal/mcp/handlers/task_message_receipt_test.go
+@@ -0,0 +1,267 @@
++package handlers
++
++import (
++	"context"
++	"encoding/json"
++	"errors"
++	"strings"
++	"sync"
++	"testing"
++	"testing/synctest"
++	"time"
++
++	"github.com/google/uuid"
++	"github.com/jmoiron/sqlx"
++	mcpprofile "github.com/kandev/kandev/internal/mcp/profile"
++	mcpscope "github.com/kandev/kandev/internal/mcp/scope"
++	"github.com/kandev/kandev/internal/orchestrator/messagequeue"
++	"github.com/kandev/kandev/internal/task/models"
++	sqliterepo "github.com/kandev/kandev/internal/task/repository/sqlite"
++	"github.com/kandev/kandev/internal/task/service"
++	v1 "github.com/kandev/kandev/pkg/api/v1"
++	ws "github.com/kandev/kandev/pkg/websocket"
++	"github.com/stretchr/testify/require"
++)
++
++type receiptNotifier struct {
++	*fakeOrchestrator
++	notifications int
++}
++
++func (n *receiptNotifier) NotifyQueuedUserPrompt(context.Context, string, string) {
++	n.mu.Lock()
++	n.notifications++
++	n.mu.Unlock()
++}
++
++func taskMessageReceiptFixture(t *testing.T) (*Handlers, *sqliterepo.Repository, context.Context, map[string]any, *receiptNotifier) {
++	t.Helper()
++	svc, repo := newTestTaskService(t)
++	sender, target, session := seedTaskWithSession(t, svc, repo, models.TaskSessionStateWaitingForInput)
++	require.NoError(t, repo.UpdateTaskState(context.Background(), target.ID, v1.TaskStateReview))
++	pool := sqlx.NewDb(repo.DB(), "sqlite3")
++	queueRepo, err := messagequeue.NewSQLiteRepository(pool, pool)
++	require.NoError(t, err)
++	notifier := &receiptNotifier{fakeOrchestrator: &fakeOrchestrator{queue: messagequeue.NewService(queueRepo, 10, testLogger(t))}}
++	h, _ := newMessageTaskHandler(t, svc, repo)
++	h.sessionLauncher = notifier
++	ctx := mcpscope.WithPrincipal(context.Background(), mcpscope.Principal{CallerTaskID: sender.ID, CallerSessionID: "sender-sess-1", WorkspaceID: sender.WorkspaceID, Surface: mcpprofile.SurfaceKanbanTask})
++	req := map[string]any{"task_id": target.ID, "session_id": session.ID, "sender_task_id": sender.ID, "sender_session_id": "sender-sess-1", "intent_id": "synthetic-intent-0001", "prompt": "synthetic-intent-0001\nHarmless fixture message", "delivery_mode": "queued"}
++	return h, repo, ctx, req, notifier
++}
++
++func messageReceiptResponse(t *testing.T, response *ws.Message) taskMessageReceipt {
++	t.Helper()
++	require.Equal(t, ws.MessageTypeResponse, response.Type, string(response.Payload))
++	var r taskMessageReceipt
++	require.NoError(t, json.Unmarshal(response.Payload, &r))
++	return r
++}
++
++func TestTaskMessageReceiptAtomicReplayAndContinuation(t *testing.T) {
++	h, repo, ctx, req, notifier := taskMessageReceiptFixture(t)
++	response, err := h.handleGetTaskMessageStatus(ctx, makeWSMessage(t, ws.ActionMCPGetTaskMessageStatus, req))
++	require.NoError(t, err)
++	absent := messageReceiptResponse(t, response)
++	require.Equal(t, "not_created", absent.Status)
++	require.True(t, absent.RetryAllowed)
++	response, err = h.handleMessageTask(ctx, makeWSMessage(t, ws.ActionMCPMessageTask, req))
++	require.NoError(t, err)
++	first := messageReceiptResponse(t, response)
++	require.Equal(t, "queued", first.Status)
++	require.Equal(t, first.IntentMessageID, first.MessageID)
++	require.Equal(t, first.MessageID, first.QueueID)
++	require.False(t, first.RetryAllowed)
++	require.Empty(t, notifier.promptCalls)
++	require.Empty(t, notifier.startCreatedCalls)
++	require.Empty(t, notifier.turnStartCalls)
++	task, err := repo.GetTask(ctx, req["task_id"].(string))
++	require.NoError(t, err)
++	require.Equal(t, v1.TaskStateReview, task.State, "admission does not move the QA owner")
++	for i := 0; i < 3; i++ {
++		response, err = h.handleMessageTask(ctx, makeWSMessage(t, ws.ActionMCPMessageTask, req))
++		require.NoError(t, err)
++		require.Equal(t, first, messageReceiptResponse(t, response))
++	}
++	require.Equal(t, 1, notifier.notifications, "replay cannot reapply readiness/moves")
++	response, err = h.handleGetTaskMessageStatus(ctx, makeWSMessage(t, ws.ActionMCPContinueTaskMessage, req))
++	require.NoError(t, err)
++	require.Equal(t, first, messageReceiptResponse(t, response))
++	require.Equal(t, 2, notifier.notifications)
++	require.NoError(t, repo.UpdateTaskSessionState(ctx, req["session_id"].(string), models.TaskSessionStateCancelled, ""))
++	response, err = h.handleGetTaskMessageStatus(ctx, makeWSMessage(t, ws.ActionMCPGetTaskMessageStatus, req))
++	require.NoError(t, err)
++	require.False(t, messageReceiptResponse(t, response).ContinueAllowed, "cancelled owners cannot be woken")
++	records, err := repo.FindOwnTaskMessageRecords(ctx, "ws-1", req["sender_task_id"].(string), "sender-sess-1", task.ID, req["session_id"].(string), req["intent_id"].(string), "")
++	require.NoError(t, err)
++	require.Len(t, records, 2)
++	req["prompt"] = "Changed message under original identity"
++	response, err = h.handleMessageTask(ctx, makeWSMessage(t, ws.ActionMCPMessageTask, req))
++	require.NoError(t, err)
++	require.Equal(t, ws.MessageTypeError, response.Type)
++}
++
++func TestTaskMessageReceiptLegacyUnknownAndScope(t *testing.T) {
++	h, _, ctx, req, notifier := taskMessageReceiptFixture(t)
++	id := uuid.NewString()
++	metadata := map[string]any{"sender_task_id": req["sender_task_id"], "sender_session_id": "sender-sess-1"}
++	_, err := h.taskSvc.CreateMessageWithID(ctx, id, &service.CreateMessageRequest{TaskID: req["task_id"].(string), TaskSessionID: req["session_id"].(string), AuthorType: "user", Content: req["prompt"].(string), Metadata: metadata})
++	require.NoError(t, err)
++	response, err := h.handleGetTaskMessageStatus(ctx, makeWSMessage(t, ws.ActionMCPGetTaskMessageStatus, req))
++	require.NoError(t, err)
++	original := messageReceiptResponse(t, response)
++	require.Equal(t, "recorded_delivery_unknown", original.Status)
++	require.Equal(t, id, original.MessageID)
++	require.False(t, original.RetryAllowed)
++	require.False(t, original.ContinueAllowed)
++	missingUUID := map[string]any{"sender_task_id": req["sender_task_id"], "sender_session_id": "sender-sess-1", "message_id": uuid.NewString()}
++	response, err = h.handleGetTaskMessageStatus(ctx, makeWSMessage(t, ws.ActionMCPGetTaskMessageStatus, missingUUID))
++	require.NoError(t, err)
++	missing := messageReceiptResponse(t, response)
++	require.Equal(t, "not_found", missing.Status)
++	require.False(t, missing.RetryAllowed)
++	caseMismatch := map[string]any{"task_id": req["task_id"], "session_id": req["session_id"], "sender_task_id": req["sender_task_id"], "sender_session_id": "sender-sess-1", "intent_id": strings.ToUpper(req["intent_id"].(string))}
++	response, err = h.handleGetTaskMessageStatus(ctx, makeWSMessage(t, ws.ActionMCPGetTaskMessageStatus, caseMismatch))
++	require.NoError(t, err)
++	require.Equal(t, "not_created", messageReceiptResponse(t, response).Status, "legacy correlation is byte-exact")
++	caseMismatch["intent_id"] = strings.TrimSuffix(req["intent_id"].(string), "1")
++	response, err = h.handleGetTaskMessageStatus(ctx, makeWSMessage(t, ws.ActionMCPGetTaskMessageStatus, caseMismatch))
++	require.NoError(t, err)
++	require.Equal(t, ws.MessageTypeError, response.Type, "partial legacy markers cannot prove absence")
++	lookup := map[string]any{"sender_task_id": req["sender_task_id"], "sender_session_id": "sender-sess-1", "message_id": id}
++	response, err = h.handleGetTaskMessageStatus(ctx, makeWSMessage(t, ws.ActionMCPContinueTaskMessage, lookup))
++	require.NoError(t, err)
++	require.Equal(t, id, messageReceiptResponse(t, response).MessageID)
++	require.Zero(t, notifier.notifications)
++	response, err = h.handleMessageTask(ctx, makeWSMessage(t, ws.ActionMCPMessageTask, req))
++	require.NoError(t, err)
++	require.Equal(t, id, messageReceiptResponse(t, response).MessageID)
++	for _, bad := range []context.Context{context.Background(), mcpscope.WithPrincipal(ctx, mcpscope.Principal{CallerTaskID: req["sender_task_id"].(string), CallerSessionID: "peer-session", WorkspaceID: "ws-1"}), mcpscope.WithPrincipal(ctx, mcpscope.Principal{CallerTaskID: req["sender_task_id"].(string), CallerSessionID: "sender-sess-1", WorkspaceID: "foreign"})} {
++		response, err = h.handleGetTaskMessageStatus(bad, makeWSMessage(t, ws.ActionMCPGetTaskMessageStatus, lookup))
++		require.NoError(t, err)
++		require.Equal(t, ws.MessageTypeError, response.Type)
++	}
++	duplicate := &models.Message{ID: uuid.NewString(), TaskID: req["task_id"].(string), TaskSessionID: req["session_id"].(string), Content: req["prompt"].(string), Type: models.MessageTypeMessage, AuthorType: models.MessageAuthorUser, Metadata: metadata, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
++	_, err = h.taskSvc.CreateMessageWithID(ctx, duplicate.ID, &service.CreateMessageRequest{TaskID: duplicate.TaskID, TaskSessionID: duplicate.TaskSessionID, Content: duplicate.Content, AuthorType: "user", Metadata: duplicate.Metadata})
++	require.NoError(t, err)
++	response, err = h.handleGetTaskMessageStatus(ctx, makeWSMessage(t, ws.ActionMCPGetTaskMessageStatus, req))
++	require.NoError(t, err)
++	require.Equal(t, ws.MessageTypeError, response.Type, "multiple legacy identities fail closed")
++}
++
++func TestTaskMessageReceiptConcurrentTimeoutRetry(t *testing.T) {
++	h, repo, ctx, req, _ := taskMessageReceiptFixture(t)
++	var wg sync.WaitGroup
++	results := make(chan *ws.Message, 4)
++	msg := makeWSMessage(t, ws.ActionMCPMessageTask, req)
++	for i := 0; i < 4; i++ {
++		wg.Add(1)
++		go func() {
++			defer wg.Done()
++			response, err := h.handleMessageTask(ctx, msg)
++			if err != nil {
++				return
++			}
++			results <- response
++		}()
++	}
++	wg.Wait()
++	close(results)
++	var identity string
++	for response := range results {
++		r := messageReceiptResponse(t, response)
++		if identity == "" {
++			identity = r.MessageID
++		}
++		require.Equal(t, identity, r.MessageID)
++	}
++	records, err := repo.FindOwnTaskMessageRecords(ctx, "ws-1", req["sender_task_id"].(string), "sender-sess-1", req["task_id"].(string), req["session_id"].(string), req["intent_id"].(string), "")
++	require.NoError(t, err)
++	require.Len(t, records, 2)
++	cancelled, cancel := context.WithCancel(ctx)
++	cancel()
++	response, err := h.handleMessageTask(cancelled, msg)
++	require.NoError(t, err)
++	require.Equal(t, ws.MessageTypeError, response.Type)
++	response, err = h.handleGetTaskMessageStatus(ctx, makeWSMessage(t, ws.ActionMCPGetTaskMessageStatus, req))
++	require.NoError(t, err)
++	require.Equal(t, identity, messageReceiptResponse(t, response).MessageID)
++}
++
++func TestTaskMessageWriteBoundedLockRetry(t *testing.T) {
++	synctest.Test(t, func(t *testing.T) {
++		calls := 0
++		err := retryTaskMessageWrite(context.Background(), func() error {
++			calls++
++			if calls < 3 {
++				return errors.New("database is locked")
++			}
++			return nil
++		})
++		require.NoError(t, err)
++		require.Equal(t, 3, calls)
++		calls = 0
++		err = retryTaskMessageWrite(context.Background(), func() error { calls++; return errors.New("database is locked") })
++		require.Error(t, err)
++		require.Equal(t, 3, calls)
++		ctx, cancel := context.WithCancel(context.Background())
++		cancel()
++		calls = 0
++		err = retryTaskMessageWrite(ctx, func() error { calls++; return errors.New("database is locked") })
++		require.ErrorIs(t, err, context.Canceled)
++		require.Equal(t, 1, calls)
++	})
++}
++
++func TestTaskMessageReceiptFullQueueAndTerminalAdmissionPreserveState(t *testing.T) {
++	h, repo, ctx, req, notifier := taskMessageReceiptFixture(t)
++	turnsBefore, err := repo.ListTurnsBySession(ctx, req["session_id"].(string))
++	require.NoError(t, err)
++	notifier.queue.SetMaxPerSession(1)
++	_, err = notifier.queue.QueueMessageWithMetadata(ctx, req["session_id"].(string), req["task_id"].(string), "existing FIFO sentinel", "", messagequeue.QueuedByUser, false, nil, nil)
++	require.NoError(t, err)
++	response, err := h.handleMessageTask(ctx, makeWSMessage(t, ws.ActionMCPMessageTask, req))
++	require.NoError(t, err)
++	denied := messageReceiptResponse(t, response)
++	require.Equal(t, "not_created", denied.Status)
++	require.True(t, denied.RetryAllowed)
++	require.Equal(t, "admission_unavailable", denied.AdmissionError)
++	turnsAfter, err := repo.ListTurnsBySession(ctx, req["session_id"].(string))
++	require.NoError(t, err)
++	require.Equal(t, turnsBefore, turnsAfter, "failed admission cannot create an orphan turn")
++	_, err = repo.GetMessage(ctx, denied.IntentMessageID)
++	require.Error(t, err, "failed queue transaction cannot leave a transcript")
++	require.NoError(t, repo.UpdateTaskSessionState(ctx, req["session_id"].(string), models.TaskSessionStateCancelled, ""))
++	response, err = h.handleMessageTask(ctx, makeWSMessage(t, ws.ActionMCPMessageTask, req))
++	require.NoError(t, err)
++	require.Equal(t, "not_created", messageReceiptResponse(t, response).Status)
++	task, err := repo.GetTask(ctx, req["task_id"].(string))
++	require.NoError(t, err)
++	require.Equal(t, v1.TaskStateReview, task.State)
++	require.Empty(t, notifier.promptCalls)
++	require.Empty(t, notifier.startCreatedCalls)
++}
++
++func TestTaskMessageReceiptPreservesPendingHumanInput(t *testing.T) {
++	h, repo, ctx, req, notifier := taskMessageReceiptFixture(t)
++	turn := &models.Turn{ID: "synthetic-human-turn", TaskID: req["task_id"].(string), TaskSessionID: req["session_id"].(string), StartedAt: time.Now().UTC()}
++	require.NoError(t, repo.CreateTurn(ctx, turn))
++	question := &models.Message{ID: uuid.NewString(), TaskID: turn.TaskID, TaskSessionID: turn.TaskSessionID, TurnID: turn.ID, AuthorType: models.MessageAuthorAgent, Type: models.MessageTypeClarificationRequest, Content: "Synthetic Human-input fixture", RequestsInput: true, Metadata: map[string]any{"status": "pending", "pending_id": "synthetic-pending", "question_id": "synthetic-human-question"}}
++	require.NoError(t, repo.CreateMessage(ctx, question))
++	response, err := h.handleMessageTask(ctx, makeWSMessage(t, ws.ActionMCPMessageTask, req))
++	require.NoError(t, err)
++	denied := messageReceiptResponse(t, response)
++	require.Equal(t, "not_created", denied.Status)
++	require.Equal(t, "human_input_pending", denied.AdmissionError)
++	turns, err := repo.ListTurnsBySession(ctx, turn.TaskSessionID)
++	require.NoError(t, err)
++	require.Len(t, turns, 1)
++	require.Equal(t, turn.ID, turns[0].ID)
++	original, err := repo.GetMessage(ctx, question.ID)
++	require.NoError(t, err)
++	require.Equal(t, "pending", original.Metadata["status"])
++	require.Equal(t, "synthetic-pending", original.Metadata["pending_id"])
++	_, err = repo.GetMessage(ctx, denied.IntentMessageID)
++	require.Error(t, err)
++	require.Zero(t, notifier.notifications)
++}
+diff --git a/apps/backend/internal/mcp/server/handlers.go b/apps/backend/internal/mcp/server/handlers.go
+index 53955e5373..f446d2ee2d 100644
+--- a/apps/backend/internal/mcp/server/handlers.go
++++ b/apps/backend/internal/mcp/server/handlers.go
+@@ -684,6 +684,7 @@ func (s *Server) messageTaskHandler() server.ToolHandlerFunc {
+ 			"sender_task_id":    s.taskID,
+ 			"sender_session_id": s.sessionID,
+ 		}
++		copyOptionalStringArg(payload, req, "intent_id")
+ 		copyOptionalStringArg(payload, req, "delivery_mode")
+ 		copyOptionalStringArg(payload, req, "session_id")
+ 		copyOptionalStringArg(payload, req, "reply_to_question_id")
+@@ -691,6 +692,9 @@ func (s *Server) messageTaskHandler() server.ToolHandlerFunc {
+ 		if err := s.backend.RequestPayload(ctx, ws.ActionMCPMessageTask, payload, &result); err != nil {
+ 			return mcp.NewToolResultError(err.Error()), nil
+ 		}
++		if req.GetString("intent_id", "") != "" {
++			return ownQuestionToolResult(result), nil
++		}
+ 		data, _ := json.MarshalIndent(result, "", "  ")
+ 		return mcp.NewToolResultText(string(data)), nil
+ 	}
+diff --git a/apps/backend/internal/mcp/server/server.go b/apps/backend/internal/mcp/server/server.go
+index 5d213cb439..441cdf6d36 100644
+--- a/apps/backend/internal/mcp/server/server.go
++++ b/apps/backend/internal/mcp/server/server.go
+@@ -1213,6 +1213,7 @@ func (s *Server) registerDiagnosticBundleTool() {
+ }
+ 
+ func (s *Server) registerKanbanTools() {
++	s.registerTaskMessageReceiptTools()
+ 	// Use NewToolWithRawSchema for parameter-less tools to ensure the schema
+ 	// includes "properties": {}. The default ToolInputSchema type in mcp-go uses
+ 	// omitempty which drops empty properties maps, causing OpenAI API validation
+@@ -1312,6 +1313,7 @@ func (s *Server) registerKanbanTools() {
+ 			mcp.WithString("task_id", mcp.Required(), mcp.Description("The target task's full UUID (not a truncated prefix)")),
+ 			mcp.WithString("session_id", mcp.Description("Optional target session ID (must belong to task_id). Omit to message the task's primary session. Required when messaging a sibling session on your OWN task (task_id may then be your own task ID) — e.g. a session you spawned with spawn_session_kandev.")),
+ 			mcp.WithString("prompt", mcp.Required(), mcp.Description("The message to deliver to the task's agent")),
++			mcp.WithString("intent_id", mcp.Description("Optional stable sender intent ID. With an explicit session_id and queued delivery, atomically persists one transcript and durable FIFO receipt, returns before startup, and deduplicates identical retries. Read get_task_message_status_kandev before retry after a timeout; continue_task_message_kandev only rechecks the original queue. Does not move a workflow step. Omit for legacy delivery.")),
+ 			mcp.WithString("delivery_mode",
+ 				mcp.Enum("queued", "interrupt"),
+ 				mcp.DefaultString("queued"),
+diff --git a/apps/backend/internal/mcp/server/server_test.go b/apps/backend/internal/mcp/server/server_test.go
+index 7d91a39508..1f7b90007c 100644
+--- a/apps/backend/internal/mcp/server/server_test.go
++++ b/apps/backend/internal/mcp/server/server_test.go
+@@ -811,7 +811,7 @@ drained:
+ 	// as in TestServerModeTask_ToolCount and
+ 	// TestRegisterTools_LoggedCountMatchesRegisteredTools (list_task_sessions_test.go),
+ 	// which pin the per-mode registration rather than this SetProviders rebuild.
+-	require.Len(t, tools, 47, "final registry should contain the complete GitLab-only task tool set")
++	require.Len(t, tools, 49, "final registry should contain the complete GitLab-only task tool set")
+ 	assert.Contains(t, tools, "get_task_change_requests_kandev")
+ 	assert.Contains(t, tools, "manage_task_change_request_kandev")
+ 	assert.Contains(t, tools, "update_task_change_request_automation_kandev")
+@@ -1003,7 +1003,7 @@ func TestServerModeTask_ToolCount(t *testing.T) {
+ 	assert.Contains(t, tools, "add_task_dependency_kandev", "dependency edges must be manageable in task mode")
+ 	assert.Contains(t, tools, "remove_task_dependency_kandev")
+ 	assert.Contains(t, tools, "show_rich_output_kandev", "native rich output must be registered in task mode")
+-	assert.Equal(t, 48, len(tools))
++	assert.Equal(t, 50, len(tools))
+ }
+ 
+ func TestServerStepCompleteTool_TaskAndOfficeOnlyAndDiscoverable(t *testing.T) {
+diff --git a/apps/backend/internal/mcp/server/task_message_receipt.go b/apps/backend/internal/mcp/server/task_message_receipt.go
+new file mode 100644
+index 0000000000..72d81e0242
+--- /dev/null
++++ b/apps/backend/internal/mcp/server/task_message_receipt.go
+@@ -0,0 +1,43 @@
++package mcp
++
++import (
++	"context"
++	"encoding/json"
++
++	ws "github.com/kandev/kandev/pkg/websocket"
++	"github.com/mark3labs/mcp-go/mcp"
++	"github.com/mark3labs/mcp-go/server"
++)
++
++const taskMessageReceiptOutputSchema = `{"type":"object","required":["status","retry_allowed","continue_allowed","continuation"],"properties":{"task_id":{"type":"string"},"session_id":{"type":"string"},"intent_id":{"type":"string"},"intent_message_id":{"type":"string"},"message_id":{"type":"string"},"queue_id":{"type":"string"},"turn_id":{"type":"string"},"content_sha256":{"type":"string"},"status":{"type":"string","enum":["not_created","not_found","queued","dispatching","delivery_attempted","recorded_delivery_unknown"]},"retry_allowed":{"type":"boolean"},"continue_allowed":{"type":"boolean"},"continuation":{"type":"string"},"admission_error":{"type":"string"}},"additionalProperties":false}`
++
++func (s *Server) registerTaskMessageReceiptTools() {
++	if s.mode == ModeExternal || s.mode == ModeAutomation {
++		return
++	}
++	for _, entry := range []struct {
++		name, action, description string
++		readOnly                  bool
++	}{
++		{"get_task_message_status_kandev", ws.ActionMCPGetTaskMessageStatus, "Read only the authenticated sender's own task-message receipt in this workspace. Supply exact task_id/session_id plus intent_id, or an exact legacy message_id. Returns identities and lifecycle metadata only, never prompt bodies or peer messages. recorded_delivery_unknown does not prove provider acceptance; never resend an existing identity.", true},
++		{"continue_task_message_kandev", ws.ActionMCPContinueTaskMessage, "Recheck readiness of an existing sender-owned queued task message using its exact receipt. Preserves FIFO, clarification, WIP, session-incarnation and writer fences. Does not create a prompt, reapply a move, interrupt a turn, or replay a legacy transcript with uncertain acceptance. Observe existing turn when continuation is denied.", false},
++	} {
++		tool := mcp.NewTool(entry.name, mcp.WithDescription(entry.description), mcp.WithRawOutputSchema(json.RawMessage(taskMessageReceiptOutputSchema)), mcp.WithReadOnlyHintAnnotation(entry.readOnly), mcp.WithIdempotentHintAnnotation(true), mcp.WithDestructiveHintAnnotation(false), mcp.WithOpenWorldHintAnnotation(false),
++			mcp.WithString("task_id", mcp.Description("Exact target task UUID, required with intent_id.")), mcp.WithString("session_id", mcp.Description("Exact target session UUID, required with intent_id.")), mcp.WithString("intent_id", mcp.Description("Exact stable sender intent identifier (8-128 ASCII identifier bytes).")), mcp.WithString("message_id", mcp.Description("Exact existing legacy user-message UUID; mutually exclusive with intent_id.")))
++		s.mcpServer.AddTool(tool, s.wrapSensitiveHandler(entry.name, s.taskMessageReceiptHandler(entry.action)))
++	}
++}
++
++func (s *Server) taskMessageReceiptHandler(action string) server.ToolHandlerFunc {
++	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
++		payload := map[string]interface{}{"sender_task_id": s.taskID, "sender_session_id": s.sessionID}
++		for _, key := range []string{"task_id", "session_id", "intent_id", "message_id"} {
++			copyOptionalStringArg(payload, req, key)
++		}
++		var result map[string]interface{}
++		if err := s.backend.RequestPayload(ctx, action, payload, &result); err != nil {
++			return mcp.NewToolResultError("task message receipt unavailable or ambiguous; correlate before any retry"), nil
++		}
++		return ownQuestionToolResult(result), nil
++	}
++}
+diff --git a/apps/backend/internal/mcp/server/task_message_receipt_test.go b/apps/backend/internal/mcp/server/task_message_receipt_test.go
+new file mode 100644
+index 0000000000..3a1162639f
+--- /dev/null
++++ b/apps/backend/internal/mcp/server/task_message_receipt_test.go
+@@ -0,0 +1,33 @@
++package mcp
++
++import (
++	ws "github.com/kandev/kandev/pkg/websocket"
++	"github.com/stretchr/testify/require"
++	"testing"
++)
++
++func TestTaskMessageReceiptToolScopeAndForwarding(t *testing.T) {
++	backend := &testBackend{response: map[string]interface{}{"status": "queued", "message_id": "original-message", "retry_allowed": false, "continue_allowed": true, "continuation": "recheck_original_queue"}}
++	s := newTaskModeServer(t, backend, "sender-task")
++	require.Contains(t, s.mcpServer.ListTools(), "get_task_message_status_kandev")
++	result := callTool(t, s, "message_task_kandev", map[string]interface{}{"task_id": "target", "session_id": "target-session", "intent_id": "stable-intent-1", "prompt": "synthetic", "delivery_mode": "queued"})
++	require.False(t, result.IsError)
++	require.NotNil(t, result.StructuredContent)
++	payload := backend.lastPayload.(map[string]interface{})
++	require.Equal(t, "sender-task", payload["sender_task_id"])
++	require.Equal(t, s.sessionID, payload["sender_session_id"])
++	require.Equal(t, "stable-intent-1", payload["intent_id"])
++	for _, entry := range []struct{ name, action string }{{"get_task_message_status_kandev", ws.ActionMCPGetTaskMessageStatus}, {"continue_task_message_kandev", ws.ActionMCPContinueTaskMessage}} {
++		result = callTool(t, s, entry.name, map[string]interface{}{"message_id": "legacy-message"})
++		require.False(t, result.IsError)
++		require.Equal(t, entry.action, backend.lastAction)
++		require.NotNil(t, result.StructuredContent)
++		result = callTool(t, s, entry.name, map[string]interface{}{"message_id": "legacy-message", "sender_task_id": "peer"})
++		require.True(t, result.IsError)
++	}
++	for _, mode := range []string{ModeExternal, ModeAutomation} {
++		restricted := New(&testBackend{}, "s", "t", 10006, newTestLogger(t), "", false, mode)
++		require.NotContains(t, restricted.mcpServer.ListTools(), "get_task_message_status_kandev")
++		require.NotContains(t, restricted.mcpServer.ListTools(), "continue_task_message_kandev")
++	}
++}
+diff --git a/apps/backend/internal/task/models/task_message_receipt.go b/apps/backend/internal/task/models/task_message_receipt.go
+new file mode 100644
+index 0000000000..e9b5a922f4
+--- /dev/null
++++ b/apps/backend/internal/task/models/task_message_receipt.go
+@@ -0,0 +1,15 @@
++package models
++
++import "time"
++
++// TaskMessageRecord is a bounded sender-owned projection, never a conversation.
++type TaskMessageRecord struct {
++	Kind          string
++	ID            string
++	TaskID        string
++	SessionID     string
++	TurnID        string
++	Metadata      map[string]any
++	CreatedAt     time.Time
++	ContentSHA256 string
++}
+diff --git a/apps/backend/internal/task/repository/repoerrors/errors.go b/apps/backend/internal/task/repository/repoerrors/errors.go
+index 01c451ab80..286220594e 100644
+--- a/apps/backend/internal/task/repository/repoerrors/errors.go
++++ b/apps/backend/internal/task/repository/repoerrors/errors.go
+@@ -141,3 +141,6 @@ var ErrStepChanged = errors.New("step_changed")
+ // duplicate id list, or an id that names a task outside the named step/band.
+ // Unlike ErrStepChanged this implies nothing about the persisted order.
+ var ErrInvalidReorder = errors.New("invalid_reorder")
++
++// ErrTaskMessageInputPending preserves an existing clarification or permission owner.
++var ErrTaskMessageInputPending = errors.New("task message has pending Human input")
+diff --git a/apps/backend/internal/task/repository/sqlite/task_message_receipt.go b/apps/backend/internal/task/repository/sqlite/task_message_receipt.go
+new file mode 100644
+index 0000000000..dbb30b5ea8
+--- /dev/null
++++ b/apps/backend/internal/task/repository/sqlite/task_message_receipt.go
+@@ -0,0 +1,203 @@
++package sqlite
++
++import (
++	"context"
++	"crypto/sha256"
++	"database/sql"
++	"encoding/hex"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"github.com/jmoiron/sqlx"
++	"regexp"
++
++	"github.com/kandev/kandev/internal/db/dialect"
++	"github.com/kandev/kandev/internal/orchestrator/messagequeue"
++	"github.com/kandev/kandev/internal/task/models"
++	"github.com/kandev/kandev/internal/task/repository/plancommenttx"
++	"github.com/kandev/kandev/internal/task/repository/repoerrors"
++)
++
++// FindOwnTaskMessageRecords reads only messages sent by one authenticated
++// task/session in its workspace. Legacy marker matches remain ambiguity checked.
++func (r *Repository) FindOwnTaskMessageRecords(ctx context.Context, workspace, senderTask, senderSession, targetTask, targetSession, intentID, messageID string) ([]models.TaskMessageRecord, error) {
++	if workspace == "" || senderTask == "" || senderSession == "" || (intentID == "" && messageID == "") {
++		return nil, errors.New("exact sender scope required")
++	}
++	records, err := r.findOwnTaskMessageKind(ctx, "message", workspace, senderTask, senderSession, targetTask, targetSession, intentID, messageID)
++	if err != nil {
++		return nil, err
++	}
++	queue, err := r.findOwnTaskMessageKind(ctx, "queue", workspace, senderTask, senderSession, targetTask, targetSession, intentID, messageID)
++	return append(records, queue...), err
++}
++
++func (r *Repository) findOwnTaskMessageKind(ctx context.Context, kind, workspace, senderTask, senderSession, targetTask, targetSession, intentID, messageID string) ([]models.TaskMessageRecord, error) {
++	table, session, metadata, created, turn := "task_session_messages", "task_session_id", "metadata", "created_at", "turn_id"
++	author := " AND m.author_type = 'user' AND m.type = 'message'"
++	if kind == "queue" {
++		table, session, metadata, created, turn = "queued_messages", "session_id", "metadata_json", "queued_at", "''"
++		author = ""
++	}
++	extract := func(key string) string { return dialect.JSONExtract(r.ro.DriverName(), "m."+metadata, key) }
++	match := "m.id = ?"
++	value := messageID
++	if intentID != "" {
++		contains := "instr(m.content, ?)"
++		if dialect.IsPostgres(r.ro.DriverName()) {
++			contains = "strpos(m.content, ?)"
++		}
++		match = fmt.Sprintf("(%s = ? OR (COALESCE(%s,'') = '' AND %s > 0))", extract("task_message_intent_id"), extract("task_message_intent_id"), contains)
++		value = intentID
++	}
++	query := fmt.Sprintf(`SELECT m.id, m.task_id, m.%s, %s, m.%s AS receipt_metadata, m.%s AS receipt_created_at, m.content
++ FROM %s m JOIN tasks t ON t.id = m.task_id WHERE t.workspace_id = ?
++ AND %s = ? AND %s = ? AND (? = '' OR m.task_id = ?) AND (? = '' OR m.%s = ?)
++ AND %s %s ORDER BY m.%s, m.id LIMIT 3`, session, turn, metadata, created, table, extract("sender_task_id"), extract("sender_session_id"), session, match, author, created)
++	args := []any{workspace, senderTask, senderSession, targetTask, targetTask, targetSession, targetSession, value}
++	if intentID != "" {
++		args = append(args, intentID)
++	}
++	rows, err := r.ro.QueryContext(ctx, r.ro.Rebind(query), args...)
++	if err != nil {
++		return nil, err
++	}
++	defer func() { _ = rows.Close() }()
++	return scanOwnTaskMessageRecords(rows, kind, intentID)
++}
++
++func scanOwnTaskMessageRecords(rows *sql.Rows, kind, intentID string) ([]models.TaskMessageRecord, error) {
++	records := []models.TaskMessageRecord{}
++	candidates := 0
++	var legacyMarker *regexp.Regexp
++	if intentID != "" {
++		legacyMarker = regexp.MustCompile(`(?:^|[^A-Za-z0-9_.-])` + regexp.QuoteMeta(intentID) + `(?:$|[^A-Za-z0-9_.-])`)
++	}
++	for rows.Next() {
++		candidates++
++		if candidates > 2 {
++			return nil, errors.New("ambiguous task message receipt")
++		}
++		record := models.TaskMessageRecord{Kind: kind}
++		var raw, content string
++		if err := rows.Scan(&record.ID, &record.TaskID, &record.SessionID, &record.TurnID, &raw, &record.CreatedAt, &content); err != nil {
++			return nil, err
++		}
++		if len(raw) > 65536 || len(content) > 1048576 {
++			return nil, errors.New("task message receipt exceeds bound")
++		}
++		if err := json.Unmarshal([]byte(raw), &record.Metadata); err != nil {
++			return nil, err
++		}
++		if legacyMarker != nil && record.Metadata["task_message_intent_id"] != intentID && !legacyMarker.MatchString(content) {
++			return nil, errors.New("ambiguous legacy task message marker")
++		}
++		digest := sha256.Sum256([]byte(content))
++		record.ContentSHA256 = hex.EncodeToString(digest[:])
++		records = append(records, record)
++	}
++	if len(records) > 2 {
++		return nil, errors.New("ambiguous task message receipt")
++	}
++	return records, rows.Err()
++}
++
++// CreateTaskMessageAndQueue commits one transcript and durable delivery receipt
++// under the existing task -> session writer fences, without a workflow move.
++func (r *Repository) CreateTaskMessageAndQueue(ctx context.Context, message *models.Message, queued *messagequeue.QueuedMessage, turn *models.Turn, expectedState models.TaskSessionState, max int) (err error) {
++	fields, err := prepareQueuedPlanCommentMessage(message, queued)
++	if err != nil {
++		return err
++	}
++	originalMessage, originalQueued := *message, *queued
++	tx, release, err := r.beginPlanCommentTx(ctx, message.TaskID)
++	if err != nil {
++		return err
++	}
++	defer release()
++	defer func() {
++		_ = tx.Rollback()
++		if err != nil {
++			*message = originalMessage
++			*queued = originalQueued
++		}
++	}()
++	if err := r.guardActivePlanCommentTaskTx(ctx, tx, message.TaskID); err != nil {
++		return err
++	}
++	if err := lockSessionTurnWrites(ctx, tx, r.db.DriverName(), message.TaskSessionID); err != nil {
++		return err
++	}
++	if err := plancommenttx.ValidateTargetSession(ctx, tx, r.db, message.TaskID, message.TaskSessionID, false, expectedState); err != nil {
++		return err
++	}
++	var step, incarnation string
++	if err := tx.QueryRowContext(ctx, r.db.Rebind(`SELECT COALESCE(t.workflow_step_id,''), s.queue_incarnation_id FROM tasks t JOIN task_sessions s ON s.task_id=t.id WHERE t.id=? AND s.id=?`), message.TaskID, message.TaskSessionID).Scan(&step, &incarnation); err != nil {
++		return err
++	}
++	if step != message.Metadata["task_message_target_step"] || incarnation != message.Metadata["task_message_target_incarnation"] {
++		return errors.New("task message route changed")
++	}
++	if err := r.guardTaskMessageInputTx(ctx, tx, message); err != nil {
++		return err
++	}
++	if err := r.bindTaskMessageTurnTx(ctx, tx, message, turn, step); err != nil {
++		return err
++	}
++	normalizedTime := dialect.NormalizedMicrosecond(r.db.DriverName(), "created_at")
++	if err := r.assignUserMessageBoundary(ctx, tx, message, r.db.DriverName(), normalizedTime); err != nil {
++		return err
++	}
++	if err := r.insertMessageRow(ctx, tx, message, fields.requestsInput, fields.messageType, fields.metadataJSON); err != nil {
++		return err
++	}
++	if err := messagequeue.InsertTaskOwnedInTransaction(ctx, tx, r.db, queued, max); err != nil {
++		return err
++	}
++	return tx.Commit()
++}
++
++// Turn binding and a successor turn, when needed, share queue admission's
++// transaction. A rejected queue cannot leave a turn or displace pending input.
++func (r *Repository) bindTaskMessageTurnTx(ctx context.Context, tx *sqlx.Tx, message *models.Message, turn *models.Turn, step string) error {
++	if message.TurnID != "" {
++		return nil
++	}
++	predicate, order := currentTurnAuthority(r.db.DriverName(), "turn_row")
++	query := fmt.Sprintf(`SELECT id FROM task_session_turns turn_row WHERE task_session_id=? AND completed_at IS NULL AND %s ORDER BY %s LIMIT 1`, predicate, order)
++	err := tx.QueryRowContext(ctx, r.db.Rebind(query), message.TaskSessionID).Scan(&message.TurnID)
++	if err == nil {
++		return nil
++	}
++	if !errors.Is(err, sql.ErrNoRows) {
++		return err
++	}
++	if turn == nil || turn.TaskID != message.TaskID || turn.TaskSessionID != message.TaskSessionID {
++		return errors.New("task message turn candidate unavailable")
++	}
++	stampTurnDefaults(turn)
++	if step != "" {
++		if turn.Metadata == nil {
++			turn.Metadata = map[string]any{}
++		}
++		turn.Metadata[models.TurnMetaKeyWorkflowStepIDAtStart] = step
++	}
++	if err := r.insertTurnRow(ctx, tx, turn); err != nil {
++		return err
++	}
++	message.TurnID = turn.ID
++	return nil
++}
++
++func (r *Repository) guardTaskMessageInputTx(ctx context.Context, tx *sqlx.Tx, message *models.Message) error {
++	status := dialect.JSONExtract(r.db.DriverName(), "metadata", "status")
++	query := fmt.Sprintf(`SELECT EXISTS(SELECT 1 FROM task_session_messages WHERE task_id=? AND task_session_id=? AND author_type='agent' AND type IN ('clarification_request','permission_request') AND COALESCE(%s,'pending') IN ('pending','unknown'))`, status)
++	var pending bool
++	if err := tx.QueryRowContext(ctx, r.db.Rebind(query), message.TaskID, message.TaskSessionID).Scan(&pending); err != nil {
++		return err
++	}
++	if pending {
++		return repoerrors.ErrTaskMessageInputPending
++	}
++	return nil
++}
+diff --git a/apps/backend/internal/task/repository/sqlite/task_message_receipt_test.go b/apps/backend/internal/task/repository/sqlite/task_message_receipt_test.go
+new file mode 100644
+index 0000000000..63087f055f
+--- /dev/null
++++ b/apps/backend/internal/task/repository/sqlite/task_message_receipt_test.go
+@@ -0,0 +1,85 @@
++package sqlite
++
++import (
++	"context"
++	"testing"
++	"time"
++
++	"github.com/google/uuid"
++	"github.com/kandev/kandev/internal/orchestrator/messagequeue"
++	"github.com/kandev/kandev/internal/task/models"
++	"github.com/kandev/kandev/internal/task/plancomments"
++	"github.com/kandev/kandev/internal/testutil"
++	v1 "github.com/kandev/kandev/pkg/api/v1"
++	"github.com/stretchr/testify/require"
++)
++
++func TestTaskMessageReceiptRepositoryAtomicFences(t *testing.T) {
++	verifyTaskMessageAtomicFences(t, newRepoForSessionTests(t))
++}
++func TestTaskMessageReceiptRepositoryPostgresAtomicFences(t *testing.T) {
++	pool := testutil.OpenIsolatedPostgres(t, testutil.PostgresDSNFromEnv(t))
++	repo, err := NewWithDB(pool, pool, nil)
++	require.NoError(t, err)
++	verifyTaskMessageAtomicFences(t, repo)
++}
++
++func verifyTaskMessageAtomicFences(t *testing.T, repo *Repository) {
++	t.Helper()
++	ctx := context.Background()
++	seedForMsgTest(t, repo, "receipt-task", "receipt-session", "receipt-turn")
++	require.NoError(t, repo.CreateWorkspace(ctx, &models.Workspace{ID: "receipt-workspace", Name: "Synthetic"}))
++	_, err := repo.db.ExecContext(ctx, repo.db.Rebind(`UPDATE tasks SET workspace_id=?, state=? WHERE id=?`), "receipt-workspace", v1.TaskStateReview, "receipt-task")
++	require.NoError(t, err)
++	session, err := repo.GetTaskSession(ctx, "receipt-session")
++	require.NoError(t, err)
++	queueRepo, err := messagequeue.NewSQLiteRepository(repo.db, repo.db)
++	require.NoError(t, err)
++	now := time.Now().UTC()
++	makePair := func() (*models.Message, *messagequeue.QueuedMessage) {
++		id := uuid.NewString()
++		timestamp := now
++		now = now.Add(time.Second)
++		metadata := map[string]any{"sender_task_id": "receipt-sender", "sender_session_id": "receipt-sender-session", "task_message_intent_id": "synthetic-exact-intent", "task_message_target_step": "", "task_message_target_incarnation": session.QueueIncarnationID, plancomments.MetadataClientMessageFingerprint: "synthetic-fingerprint"}
++		message := &models.Message{ID: id, TaskID: "receipt-task", TaskSessionID: "receipt-session", TurnID: "receipt-turn", Type: models.MessageTypeMessage, AuthorType: models.MessageAuthorUser, Content: "synthetic-exact-intent", Metadata: metadata, CreatedAt: timestamp, UpdatedAt: timestamp}
++		queueMetadata := map[string]any{"sender_task_id": "receipt-sender", "sender_session_id": "receipt-sender-session", "task_message_intent_id": "synthetic-exact-intent", plancomments.MetadataClientMessageFingerprint: "synthetic-fingerprint", messagequeue.MetadataDurableTranscriptMessageID: id, "user_message_recorded": true}
++		queued := &messagequeue.QueuedMessage{ID: id, TaskID: message.TaskID, SessionID: message.TaskSessionID, Content: message.Content, Metadata: queueMetadata, QueuedBy: messagequeue.QueuedByUser}
++		return message, queued
++	}
++	message, queued := makePair()
++	require.NoError(t, repo.CreateTaskMessageAndQueue(ctx, message, queued, nil, session.State, 1))
++	require.True(t, queued.IsDurableDelivery(), "uses existing reserve/attempt/ack lifecycle")
++	records, err := repo.FindOwnTaskMessageRecords(ctx, "receipt-workspace", "receipt-sender", "receipt-sender-session", "receipt-task", "receipt-session", "synthetic-exact-intent", "")
++	require.NoError(t, err)
++	require.Len(t, records, 2)
++	for _, record := range records {
++		require.Equal(t, message.ID, record.ID)
++		require.NotEmpty(t, record.ContentSHA256)
++	}
++	for _, scope := range []struct{ workspace, sender, session string }{{"foreign", "receipt-sender", "receipt-sender-session"}, {"receipt-workspace", "peer", "receipt-sender-session"}, {"receipt-workspace", "receipt-sender", "peer"}} {
++		hidden, err := repo.FindOwnTaskMessageRecords(ctx, scope.workspace, scope.sender, scope.session, "receipt-task", "receipt-session", "synthetic-exact-intent", "")
++		require.NoError(t, err)
++		require.Empty(t, hidden)
++	}
++	rejected, rejectedQueue := makePair()
++	require.ErrorIs(t, repo.CreateTaskMessageAndQueue(ctx, rejected, rejectedQueue, nil, session.State, 1), messagequeue.ErrQueueFull)
++	_, err = repo.GetMessage(ctx, rejected.ID)
++	require.Error(t, err, "queue failure rolls back transcript")
++	entries, err := queueRepo.ListBySession(ctx, "receipt-session")
++	require.NoError(t, err)
++	require.Len(t, entries, 1)
++	require.Equal(t, message.ID, entries[0].ID)
++	changed, changedQueue := makePair()
++	changed.Metadata["task_message_target_step"] = "different-human-step"
++	require.Error(t, repo.CreateTaskMessageAndQueue(ctx, changed, changedQueue, nil, session.State, 10))
++	_, err = repo.GetMessage(ctx, changed.ID)
++	require.Error(t, err)
++	task, err := repo.GetTask(ctx, "receipt-task")
++	require.NoError(t, err)
++	require.Equal(t, v1.TaskStateReview, task.State)
++	require.NoError(t, repo.UpdateTaskSessionState(ctx, "receipt-session", models.TaskSessionStateCancelled, ""))
++	stopped, stoppedQueue := makePair()
++	require.Error(t, repo.CreateTaskMessageAndQueue(ctx, stopped, stoppedQueue, nil, session.State, 10))
++	_, err = repo.GetMessage(ctx, stopped.ID)
++	require.Error(t, err)
++}
+diff --git a/apps/backend/internal/task/service/task_message_receipt.go b/apps/backend/internal/task/service/task_message_receipt.go
+new file mode 100644
+index 0000000000..2892a5d4a7
+--- /dev/null
++++ b/apps/backend/internal/task/service/task_message_receipt.go
+@@ -0,0 +1,59 @@
++package service
++
++import (
++	"context"
++	"errors"
++	"github.com/google/uuid"
++	"time"
++
++	"github.com/kandev/kandev/internal/events"
++	"github.com/kandev/kandev/internal/orchestrator/messagequeue"
++	"github.com/kandev/kandev/internal/task/models"
++)
++
++type taskMessageQueueWriter interface {
++	CreateTaskMessageAndQueue(context.Context, *models.Message, *messagequeue.QueuedMessage, *models.Turn, models.TaskSessionState, int) error
++}
++
++// CreateTaskMessageQueuedIdempotent uses the existing message admission lease
++// and immutable fingerprint to preserve an exact inter-task replay identity.
++func (s *Service) CreateTaskMessageQueuedIdempotent(ctx context.Context, id string, req *CreateMessageRequest, queued *messagequeue.QueuedMessage, max int) (*models.Message, error) {
++	if id == "" || req == nil || req.AuthorType != string(models.MessageAuthorUser) || queued == nil {
++		return nil, errors.New("exact task message required")
++	}
++	if err := s.authorizeMessageCreate(ctx, req); err != nil {
++		return nil, err
++	}
++	ctx, release, err := s.AcquireMessageAdmission(ctx, id)
++	if err != nil {
++		return nil, err
++	}
++	defer release()
++	existing, found, err := s.findPlanCommentMessageReplay(ctx, id, req)
++	if err != nil || found {
++		return existing, err
++	}
++	session, err := s.getSessionWithRetry(ctx, req.TaskSessionID, id, messageCreateMaxRetries, messageCreateRetryDelay)
++	if err != nil {
++		return nil, err
++	}
++	message := &models.Message{ID: id, TaskID: session.TaskID, TaskSessionID: session.ID, AuthorType: models.MessageAuthorUser, AuthorID: s.resolveAuthorID(ctx, models.MessageAuthorUser, req.AuthorID), Content: req.Content, Type: models.MessageTypeMessage, Metadata: req.Metadata}
++	turn := &models.Turn{ID: uuid.NewString(), TaskID: session.TaskID, TaskSessionID: session.ID, ExecutionProfileID: session.ExecutionProfileID, RouteGeneration: session.RouteGeneration, StartedAt: time.Now().UTC(), Metadata: turnStartRuntimeMetadata(session)}
++	queued.ID = id
++	queued.TaskID = message.TaskID
++	queued.SessionID = message.TaskSessionID
++	queued.Content = message.Content
++	queued.QueuedBy = messagequeue.QueuedByUser
++	writer, ok := s.messages.(taskMessageQueueWriter)
++	if !ok {
++		return nil, errors.New("atomic task message admission unavailable")
++	}
++	if err := writer.CreateTaskMessageAndQueue(ctx, message, queued, turn, req.ExpectedSessionState, max); err != nil {
++		return nil, err
++	}
++	if message.TurnID == turn.ID {
++		_ = s.PublishTurnStarted(ctx, turn)
++	}
++	_ = s.publishMessageEvent(ctx, events.MessageAdded, message)
++	return message, nil
++}
+diff --git a/apps/backend/pkg/websocket/actions.go b/apps/backend/pkg/websocket/actions.go
+index 4c850cbd1a..a2528da3a5 100644
+--- a/apps/backend/pkg/websocket/actions.go
++++ b/apps/backend/pkg/websocket/actions.go
+@@ -555,6 +555,8 @@ const (
+ 	ActionMCPArchiveTask                 = "mcp.archive_task"
+ 	ActionMCPUpdateTaskState             = "mcp.update_task_state"
+ 	ActionMCPMessageTask                 = "mcp.message_task"
++	ActionMCPGetTaskMessageStatus        = "mcp.get_task_message_status"
++	ActionMCPContinueTaskMessage         = "mcp.continue_task_message"
+ 	ActionMCPStopTask                    = "mcp.stop_task"
+ 	ActionMCPSpawnSession                = "mcp.spawn_session"
+ 	ActionMCPGetTaskConversation         = "mcp.get_task_conversation"

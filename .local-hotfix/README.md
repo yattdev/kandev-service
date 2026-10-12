@@ -266,3 +266,12 @@ permission. It preserves strict complete single-request ask retry correlation.
 See [the mixed-batch contract and deployment record](../patches/kandev-v096-own-question-mixed-batch.md)
 for the updated source, trio provenance, synthetic acceptance, and read-only
 Coordinator recipe.
+
+Support request `0c0acd13-dd1d-4372-90dc-b5d27dd6d169` adds authenticated
+same-workspace sender-owned task-message receipts. Stable intent admission
+commits the turn, transcript, and durable FIFO entry atomically, preserves
+pending Human input, and returns without waiting for startup. It also bounds
+transient REVIEW transition retries. The backend and paired MCP binaries retain
+the entire preceding lineage and unchanged adoption/frontend overlays. See
+[the task-message contract and deployment record](../patches/kandev-v096-task-message-receipts.md)
+for provenance and the exact Coordinator acceptance recipe.
