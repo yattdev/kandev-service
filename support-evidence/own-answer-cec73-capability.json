@@ -1,0 +1,67 @@
+{
+  "arguments": {
+    "answer_message_id": "22f9ad84-4ccc-5efe-8a09-1bfa9e5ae16b",
+    "answer_sha256": "bd91e709b82e25da7fac2fe0c092120221005f5c161a0529f61dbd5ebc3fef39",
+    "pending_id": "abb398da-aa99-4e8e-8326-9f24242e8b01",
+    "question_id": "coordinator_shared_mobile_lock_owner_20261012",
+    "question_message_id": "1f853401-5b78-4c93-84c7-057017dbf603",
+    "question_sha256": "8e8d1ed69938f26208e88c50d6af859e4f2a0870bcba1cbda89630c75fb8c635"
+  },
+  "broker_request_id": "cec73e6a-6760-40d0-9a92-25c15d7fbd96",
+  "candidate_answer_receipt_id": "936094a4-4a3f-54f0-875c-1a82f0cc7e4d",
+  "candidate_binary_sha256": {
+    "agentctl": "4181384550bbe0d1c1f2f1f5157a4a819482417ed8789a8903155779292da8ec",
+    "agentctl-linux-amd64": "bc7f9d9494ff117bf2bd884fa10f6f4e0e92104fa8c75cd0063edcc81cfa7869",
+    "kandev": "75128d854c9f5ddcdebe85fd9e3c057897f460ae1d10535a67805ed9053bf57b"
+  },
+  "candidate_identity_is_not_acceptance": true,
+  "child_material_report_relayed": false,
+  "deployment": {
+    "accepted_at": "2026-10-12T22:10:35Z",
+    "apparmor": "kandev-codex",
+    "apparmor_enforced": true,
+    "deployment_tests_passed": 129,
+    "image": "sha256:cee318f8d409330e9945cd958bb6c6159eec72c56e990f43cc31323debfba16f",
+    "restart_count": 0,
+    "rolled_back": false,
+    "safe_deploy_exit": 0,
+    "seccomp_enforced": true,
+    "status": "running"
+  },
+  "live_reconciliation_performed": false,
+  "preflight": {
+    "full_context_question_option_envelope_match": true,
+    "legacy_human_account_id_recorded": false,
+    "legacy_message_metadata_sha256": "e61b78940ece2fbabb5e3b285251e634b0dab4871ab748b7790f8076ea43d317",
+    "native_admission_content_exact": true,
+    "native_admission_current_incarnation": true,
+    "native_admission_metadata_keys": [
+      "queue_admission_ids"
+    ],
+    "native_message_metadata_keys": [
+      "client_message_request_fingerprint",
+      "queue_admission_ids"
+    ],
+    "native_user_admission_count": 1,
+    "question_sha256_verified": true,
+    "unclassified_answer_residual": false
+  },
+  "previous_binary_sha256": {
+    "agentctl": "7b48366861f4a878c6c70e3922651c9ebcb2e0b3dda37cffd2eef40ed8c2030e",
+    "agentctl-linux-amd64": "a4c382a005e621d9629edd03e780b77178c7284a7d0e7cc124dcb69e71c1a88a",
+    "kandev": "5d803423d161ba4ebb77e53dc71bc100117199c487d0d2aa101346eada2a3753"
+  },
+  "required_caller": {
+    "session_id": "13d8c011-6e49-40ef-80e9-2f1445296d06",
+    "task_id": "a68df3ae-aaf5-4591-a46d-9d73db62e46d",
+    "workspace_id": "2e62401b-5ffe-4050-bc1b-d49ea5d5dbcd"
+  },
+  "retained_adoption_patch_sha256": "79b787b189b8df3742d5bd67d838974232f2517c14e3bdd4ce64bab0e9274e2a",
+  "retained_frontend_hash_count": 361,
+  "schema_version": "own-answer-capability/v1",
+  "source_commit": "79b0e8a39b7a3ff74cf15fa611202ab558dfaa64",
+  "source_parent": "02bb5d05944141c9e03ad746dde120668f98e46f",
+  "source_patch_sha256": "3aee3ecf979f2e089eb43e45035d0601f1ce77bca67d92bb196e27798738523d",
+  "tool": "reconcile_own_question_answer_kandev",
+  "verified_canonical_upstream_main": "d6887b98b60f530b7e52d5d874019ea1a960550a"
+}

@@ -275,3 +275,5 @@ transient REVIEW transition retries. The backend and paired MCP binaries retain
 the entire preceding lineage and unchanged adoption/frontend overlays. See
 [the task-message contract and deployment record](../patches/kandev-v096-task-message-receipts.md)
 for provenance and the exact Coordinator acceptance recipe.
+
+Support request `cec73e6a-6760-40d0-9a92-25c15d7fbd96` adds scoped reconciliation of an already-delivered native Human reply to its exact own disconnected question. The trio retains source `02bb5d059`, the unchanged adoption patch, and all 361 frontend hashes. See [the own-answer contract and deployment receipt](../patches/kandev-v096-own-answer-reconciliation.md). No Human choice input, replay, provider resume or foreign-question dismissal is exposed.
