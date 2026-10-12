@@ -1,0 +1,53 @@
+{
+  "audit_document_sha256": "796c4b765c3bf56f9175f86e032b8c36bffbbeaa5922ef3dea032efa8af0a3fc",
+  "delivery_target_session": "13d8c011-6e49-40ef-80e9-2f1445296d06",
+  "deployment_guard_sha256": "6714a34454ca408f1163f6e8f2ef783fec478c3e340ad149388ae77ae450c55d",
+  "findings": {
+    "Windows_jobs": "wrong platform; no retained D28 scope/partition attestation",
+    "conditional_pid_namespace": "static configuration only; original launches and live selection UNKNOWN; no durable task scope/closure certificate",
+    "durable_owner": "logical run/task identity; no typed authenticated physical coverage record",
+    "external_supervisor": "UNKNOWN; no new live query or credentials permitted",
+    "run_recovery": "Office run mutation path; empty TaskID required; ineligible and not invoked",
+    "scope_audit": "Coordinator-only grant/revocation records; not exhaustive D28 descendant closure"
+  },
+  "immutable_lineage": {
+    "support-evidence/d28-owner-preflight-8347ed58-contract.json": "46eac56e3636b2e76aa7731835adad87224c17f78a2ff8e49d01f9291647a784",
+    "support-evidence/d28-owner-preflight-8347ed58-review.json": "7b67b0a2160e48f6c3bd766f32ff58d5b49389a1c5e420935a22dcc7ddaf9e4b",
+    "tests/specifications/test_owner_attestation_preflight.py": "e5b6e3b6e444115bd7896c0d96defd40a3a7a4ef418ca16bb75eb106fc81d6df"
+  },
+  "next_owner_response": "Existing authenticated supervisor resolves pre-existing exact-task immutable scope/launch, coverage and protected-partition references. If unavailable, explicitly report missing proof; a separately reviewed changed evidence boundary requires an actual finite resource reference and disjoint protected partition first. No physical operation or Source admission authorized.",
+  "pass": 1,
+  "preservation": {
+    "caller_accepted": false,
+    "credentials_accessed": false,
+    "installed": false,
+    "ledger_rereads": 0,
+    "old_artifacts_unchanged": true,
+    "physical_operations": 0,
+    "process_environment_filesystem_scans": 0,
+    "runtime_requests": 0,
+    "source_admission": false,
+    "target_resources_accessed": false
+  },
+  "protected_caller": "833d9d08-69b8-4855-9ff8-6b05c59a1647",
+  "request": "8347ed58-d488-446f-bb17-dc8b48d6e98f",
+  "static_parent": "79b0e8a39b7a3ff74cf15fa611202ab558dfaa64",
+  "static_source_sha256": {
+    "apps/backend/internal/agent/runtime/lifecycle/persistence.go": "18a6a01addde72526bdfd07ff681b083d88f98463a5c64285b8730e8486a918f",
+    "apps/backend/internal/agent/runtime/lifecycle/run_owner_persistence.go": "66e7408c0cb72cb919fc997401987a41e5b25ed095fed3f9b88fcfeff03449a6",
+    "apps/backend/internal/agent/runtime/lifecycle/types.go": "8d703c5391df0eafae44b0607b9de4d8e6b3d45acdd8c66f22d091799357d9bd",
+    "apps/backend/internal/agentctl/server/process/procattr_linux.go": "9ab01476f42f8287e0066a99acbf519e271a50457321cfa018ea4266877cfefd",
+    "apps/backend/internal/common/winproc/lifecycle_windows.go": "ff19107b1b39e50d17e3a343f8ff69da44167c44eb2da541917847100d63ddcd",
+    "apps/backend/internal/launcher/process.go": "4d0290fd19205249f2db290bba2eba88ae57f8b1d263c1b00ba0875bb07bece0",
+    "apps/backend/internal/task/models/models.go": "c068f36eac9fcf6a8e38c8e769a5b4865efaec233905e4ca7812fc76ec056744"
+  },
+  "status": "HELD_MISSING_AUTHENTICATED_PREEXISTING_OWNER_PROOF",
+  "task": "d28be44c-136f-47af-af5d-faa7e6381818",
+  "validation": {
+    "additive_tests_sha256": "e9a76ae3a299fd5012ef3ea35097362cd264bac66ba4275da3af2b1b60ecfbe9",
+    "live_proof": false,
+    "offline_specification_checks": 17
+  },
+  "version": "d28-owner-preflight-escalation/v1",
+  "workspace": "2e62401b-5ffe-4050-bc1b-d49ea5d5dbcd"
+}
