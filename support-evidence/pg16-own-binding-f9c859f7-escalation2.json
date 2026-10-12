@@ -1,0 +1,56 @@
+{
+  "additional_finding": "SIGHUP invokes shutdown, not native code reload; no signal sent. Safe deploy and rollback recreate service, whose HTTP readiness is not exact provider/caller preservation proof. Survival-enabled backend detach remains conditional; no current runtime eligibility inferred.",
+  "additional_static_parent_sha256": {
+    "apps/backend/internal/backendapp/helpers.go": "65216773708848e8a9bc75c0f4031996570b7218c293ab7085d149133f9ad97b",
+    "apps/backend/internal/backendapp/main.go": "71ab94442e8e34dccce229d77b44f1c658b59cc86b8b98823ba85d3c2bfa56f3",
+    "apps/backend/internal/backendapp/startup.go": "1700767b0ce88f3d2368dc57b245286b2e53e10e159b46b45a2e1c1ae2d79cda",
+    "apps/backend/internal/launcher/process.go": "4d0290fd19205249f2db290bba2eba88ae57f8b1d263c1b00ba0875bb07bece0"
+  },
+  "broker_request_id": "f9c859f7-c0d1-480b-a571-fc269ece3380",
+  "candidate_sha256": {
+    "agentctl": "9731de452fabcb4389fb12537e6fb2d0bee67dd70dbbeb561338fb2274f4f16c",
+    "agentctl-linux-amd64": "061206dda525d05a39da2058f3504e5fc5bdbd5572d7c8456d8acc3bef064e32",
+    "kandev": "bf170441899c7533eb6783a121838230dd5f5a373abdfbf98a4788223f1b73fb"
+  },
+  "delivery_target_session": "13d8c011-6e49-40ef-80e9-2f1445296d06",
+  "document_sha256": "332b1e09828208e1a92bd01398cdcc32be86d5c94edadefe95ee312a982d6cf1",
+  "preservation": {
+    "caller_acceptance": "NOT RUN",
+    "credentials_environment_process_data_accessed": false,
+    "fifo_counters_questions_changed": false,
+    "installed": false,
+    "old_receipts_and_binaries_unchanged": true,
+    "paired_tests": "NOT RUN/UNKNOWN",
+    "source_provider_runtime_deployment_changed": false,
+    "target_resources_accessed": false,
+    "task_message_relayed": false
+  },
+  "retained_lineage_sha256": {
+    "patches/kandev-v096-own-distribution-binding.patch": "282e5c5749614a92cfda3becf785f1bbb1eb95a053a51075e24ebd1391b958b9",
+    "support-evidence/pg16-e872-31a2d4ae.json": "fb02ba36a12af620c92525be0ad8f8eaa6cadd5aaa5d6e063aeb0f38222e9500",
+    "support-evidence/pg16-own-binding-f9c859f7-escalation1.json": "fc05bb5ce0d6720a2aef1eacde1465e3e51d3cd5ae4304aee16d627c124b878a",
+    "support-evidence/pg16-own-binding-f9c859f7.json": "181094a23a2572a2b25894ed578c927546014a98b4e91f9b0d2aec6a79d15740"
+  },
+  "reviewed_host_escalation": {
+    "attempt": 2,
+    "automatic_review": "REJECTED",
+    "executed": false,
+    "indirect_retry": false,
+    "namespace_topology": "UNVERIFIED",
+    "requested_fields": [
+      "image",
+      "pid_mode",
+      "init",
+      "restart_count"
+    ],
+    "review_basis": "broker explicitly distinguishes reviewed Support read-only diagnostics from agent raw host authority",
+    "stated_reason": "repeats Docker/host diagnostic explicitly prohibited by request and previously rejected",
+    "target": "exact kandev service only"
+  },
+  "safe_deploy_sha256": "3aa06a9b523a8cbffea04ea96dd005ad37b2d107ef4fa45145cc136065d99c5b",
+  "smallest_next_action": "Explicit reviewed authorization for only the rejected service configuration read; then establish supported exact-provider-preserving code load. If no such path exists, a separately scoped maintenance/preservation/recovery contract is required before any lifecycle operation. Read approval alone does not authorize deployment.",
+  "source_fix": "9fde182148c2a186c308376cae0efa8f107d4a66",
+  "status": "BLOCKED_PROVIDER_PRESERVING_INSTALLATION_UNVERIFIED",
+  "validation": "original passing synthetic verifier/race/lint/build evidence retained; no code changed or new runtime test claimed",
+  "version": "pg16-own-binding-escalation2/v1"
+}
