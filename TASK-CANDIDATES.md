@@ -76,3 +76,59 @@ that is a review condition, not proof that the helper made those writes.
 Run the isolated regression checks with `python3 tests/test-task-candidate.py`.
 Live verification must use the affected task's guard; a Coordinator's mount
 namespace is not evidence of another task's permissions.
+
+## Session handoff boundary
+
+Version 1 implements initial candidate provision/verification only. Its
+reservation names one session, and verification requires that session to be
+the sole active executor. It also pins the candidate HEAD to the initial base.
+A later clean commit does not invalidate the Git repository, but the initial
+receipt is not an authorization to transfer or accept that changed HEAD.
+Do not substitute the old session ID, overwrite the receipt, reprovision the
+slot, or relax the active-executor check to make a successor pass.
+
+A conversational PAUSED acknowledgement is not lifecycle revocation. A
+`WAITING_FOR_INPUT` session with executor status `ready` can still have a live
+guarded provider with write access. For standalone execution, `local_pid`
+identifies the shared agentctl controller, not the session-specific provider;
+equal controller PIDs do not prove that either provider has stopped. A private
+agent PID namespace also cannot prove absence of another session's processes.
+
+A reviewed transfer needs all of these predicates before any new ownership
+receipt is issued:
+
+- The authorized existing lifecycle control has retired the exact old
+  session/execution incarnation. Its executor is no longer active, and trusted
+  process/lifecycle evidence confirms its provider tree and outstanding commands
+  have exited or an enforced write revocation has taken effect. An ACK alone
+  cannot satisfy this predicate.
+- The exact authenticated successor is the sole active executor for the task
+  and matches its workspace, repository, environment, binding and worktree
+  incarnation. Caller authentication must come from the trusted launch/broker
+  boundary; a session argument or a task-owned marker is not sufficient alone.
+- The original reservation and candidate marker match their pinned canonical
+  receipt digest. The original checkout, untracked operator data, original
+  branch and failed-attempt branch remain preserved. The candidate is clean,
+  retains its independent Git administration and branch, and has the explicitly
+  authorized current HEAD descending from the pinned base.
+- The transfer records a new append-only lineage entry containing the previous
+  receipt/digest, old and successor session/execution identities, binding and
+  process incarnations, unchanged base/branch, authorized current HEAD, helper
+  digest and before/after preservation fingerprints. The original receipt
+  remains immutable; no reset, cleanup or rollback is inferred.
+
+Initial receipt fingerprints of all other sessions and shared Git activity
+are conservative initial-admission checks. A transfer must explicitly reconcile
+authorized lifecycle changes and reservation lineage; it must not silently
+replace those fingerprints. A refreshed binding timestamp also requires
+reconciliation even when the worktree UUID and path have remained the same.
+
+If the old provider is still live, the reviewed Support request forbids runtime
+mutation, or exact caller/revocation evidence is unavailable, transfer is
+BLOCKED. Return the exact execution and missing predicate with preservation
+evidence. The smallest next action is an independently authorized retirement
+or enforced write revocation of that exact old execution through existing
+lifecycle controls, followed by a reviewed transfer/acceptance request. Do not
+stop the shared agentctl server, stop all sessions, mutate database rows, reset
+CI budgets, replay a source turn, or infer Source admission from a capability
+request. Root retains the final acceptance and Source-admission decision.
