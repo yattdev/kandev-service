@@ -250,3 +250,12 @@ links. It preserves that adoption patch and the entire preceding backend lineage
 the agentctl pair and frontend assets are unchanged. See
 [the source patch and deployment record](../patches/kandev-v096-merged-pr-url-link.md)
 for the current build provenance and acceptance results.
+
+For Support request `292e71d2-00d0-49fc-bb37-c9cb95de1785`, the backend and
+paired agentctl overlays were rebuilt from source `6d75fff4da` plus the unchanged
+workspace-adoption patch. They add authenticated exact own-question lifecycle
+readback and durable immediate publication receipts, preserving the preceding
+hotfix lineage and all frontend assets. See
+[the contract, source patch, and deployment record](../patches/kandev-v096-own-question-lifecycle.md)
+for the current trio's provenance, acceptance recipe, and original-question
+correlation. The new route never answers a question or disposes of Human input.

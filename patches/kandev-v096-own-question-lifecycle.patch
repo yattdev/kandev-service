@@ -1,0 +1,1054 @@
+diff --git a/apps/backend/config/prompts/config-context.md b/apps/backend/config/prompts/config-context.md
+index 55b590138d..8aca35f19c 100644
+--- a/apps/backend/config/prompts/config-context.md
++++ b/apps/backend/config/prompts/config-context.md
+@@ -83,6 +83,7 @@ TASK TOOLS:
+ 
+ INTERACTION:
+ - ask_user_question_kandev: Ask the user one or more clarifying questions in a single tool call. Required: questions (array of 1-4 question objects; each has prompt and options (2-6 {label, description})). Optional: context.
++- get_own_question_status_kandev: Read lifecycle and recorded answers for exact stable question IDs on your own active task/session. Correlate the original before retry; pending is not an answer or scope grant.
+ 
+ EXAMPLE REQUESTS the user might ask:
+ - "Create a new workflow called 'Feature Development'"
+diff --git a/apps/backend/config/prompts/office-context.md b/apps/backend/config/prompts/office-context.md
+index 31d08f98f0..fb7b27426d 100644
+--- a/apps/backend/config/prompts/office-context.md
++++ b/apps/backend/config/prompts/office-context.md
+@@ -7,6 +7,7 @@ Use these IDs when a tool requires task_id or session_id.
+ 
+ Available tools:
+ - ask_user_question_kandev: Ask the user one or more clarifying questions in a single call. Required: questions (1-4 items, each with prompt and 2-6 labeled options). Optional: context.
++- get_own_question_status_kandev: Read lifecycle and recorded answers for exact stable question IDs on your own active task/session. Correlate the original before retry; pending is not an answer or scope grant.
+ - create_task_plan_kandev: Save an implementation plan. This replaces existing content only with the current expected_version; use edit_task_plan_kandev for a local change or update_task_plan_kandev with mode="append" for a new section. Required: task_id, content. Optional: title, expected_version, allow_truncation.
+ - get_task_plan_kandev: Retrieve the current task plan, including user edits and the current version. Required: task_id.
+ - update_task_plan_kandev: Update the current task plan. Use mode="replace" with expected_version for the whole document, or mode="append" for a new section without reading first. Required: task_id, content. Optional: title, mode, expected_version, allow_truncation.
+diff --git a/apps/backend/internal/mcp/handlers/handlers.go b/apps/backend/internal/mcp/handlers/handlers.go
+index 0898e7e65e..c88c833d5d 100644
+--- a/apps/backend/internal/mcp/handlers/handlers.go
++++ b/apps/backend/internal/mcp/handlers/handlers.go
+@@ -565,6 +565,7 @@ func (h *Handlers) registerTaskPlanHandlers(d *guardedMCPDispatcher) {
+ 
+ func (h *Handlers) registerTaskQuestionHandlers(d *guardedMCPDispatcher) {
+ 	d.RegisterFunc(ws.ActionMCPAskUserQuestion, h.handleAskUserQuestion)
++	d.RegisterFunc(ws.ActionMCPGetOwnQuestionStatus, h.handleGetOwnQuestionStatus)
+ 	d.RegisterFunc(ws.ActionMCPAskParentQuestion, h.handleAskParentQuestion)
+ 	d.RegisterFunc(ws.ActionMCPClarificationTimeout, h.handleClarificationTimeout)
+ 	if h.diagnosticBundles != nil && h.diagnosticMaterializer != nil {
+@@ -4073,14 +4074,21 @@ func (h *Handlers) publishQueueStatusEvent(
+ // the event-based fallback in the orchestrator handles resuming with a new turn.
+ func (h *Handlers) handleAskUserQuestion(ctx context.Context, msg *ws.Message) (*ws.Message, error) {
+ 	var req struct {
+-		SessionID string                   `json:"session_id"`
+-		TaskID    string                   `json:"task_id"`
+-		Questions []clarification.Question `json:"questions"`
+-		Context   string                   `json:"context"`
++		SessionID  string                   `json:"session_id"`
++		TaskID     string                   `json:"task_id"`
++		Questions  []clarification.Question `json:"questions"`
++		Context    string                   `json:"context"`
++		ReturnMode string                   `json:"return_mode"`
+ 	}
+ 	if err := json.Unmarshal(msg.Payload, &req); err != nil {
+ 		return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeBadRequest, "Invalid payload: "+err.Error(), nil)
+ 	}
++	if req.ReturnMode == "receipt" {
++		return h.handleReceiptUserQuestion(ctx, msg, req.TaskID, req.SessionID, req.Questions, req.Context)
++	}
++	if req.ReturnMode != "" {
++		return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeValidation, "return_mode must be receipt or omitted", nil)
++	}
+ 	if req.SessionID == "" {
+ 		return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeValidation, "session_id is required", nil)
+ 	}
+@@ -4104,32 +4112,12 @@ func (h *Handlers) handleAskUserQuestion(ctx context.Context, msg *ws.Message) (
+ 		}
+ 	}
+ 
+-	// Create the clarification request
+-	clarificationReq := &clarification.Request{
+-		SessionID: req.SessionID,
+-		TaskID:    taskID,
+-		Questions: req.Questions,
+-		Context:   req.Context,
++	pendingID, existing, err := h.prepareQuestionPublication(ctx, taskID, req.SessionID, req.Questions, req.Context)
++	if err != nil {
++		return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeConflict, "question publication failed or conflicted; correlate own status before retry", nil)
+ 	}
+-	pendingID, isNew := h.clarificationSvc.CreateRequest(clarificationReq)
+-
+-	// Create one chat message per question (triggers WS events to frontend).
+-	// If the create fails, the in-store pending entry must be cancelled too —
+-	// otherwise the agent's WaitForResponse would block for the full 2-hour
+-	// timeout while the user never sees clarification cards.
+-	// When dedup fires (isNew=false) the messages already exist, so skip creation.
+-	if isNew && h.messageCreator != nil {
+-		if _, err := h.messageCreator.CreateClarificationRequestMessages(
+-			ctx, taskID, req.SessionID, pendingID, req.Questions, req.Context,
+-		); err != nil {
+-			h.logger.Error("failed to create clarification request messages",
+-				zap.String("pending_id", pendingID),
+-				zap.String("session_id", req.SessionID),
+-				zap.Error(err))
+-			h.clarificationSvc.CancelRequest(pendingID)
+-			return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeInternalError,
+-				"failed to create clarification messages: "+err.Error(), nil)
+-		}
++	if existing != nil {
++		return ws.NewResponse(msg.ID, msg.Action, existing)
+ 	}
+ 
+ 	// Update session and task states to waiting for input
+diff --git a/apps/backend/internal/mcp/handlers/own_question.go b/apps/backend/internal/mcp/handlers/own_question.go
+new file mode 100644
+index 0000000000..5d00d4ce87
+--- /dev/null
++++ b/apps/backend/internal/mcp/handlers/own_question.go
+@@ -0,0 +1,331 @@
++package handlers
++
++import (
++	"context"
++	"crypto/sha256"
++	"encoding/hex"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"reflect"
++	"sync"
++	"time"
++
++	"github.com/google/uuid"
++	"github.com/kandev/kandev/internal/clarification"
++	mcpscope "github.com/kandev/kandev/internal/mcp/scope"
++	"github.com/kandev/kandev/internal/task/models"
++	ws "github.com/kandev/kandev/pkg/websocket"
++)
++
++// Serializes durable correlation and publication for the single backend owner.
++// It is released before any Human wait. Restarts deduplicate from durable rows.
++var ownQuestionCreationMu sync.Mutex
++
++type ownQuestionReader interface {
++	FindOwnClarificationMessages(context.Context, string, string, []string) ([]*models.Message, error)
++}
++
++type ownQuestionRequest struct {
++	TaskID      string   `json:"task_id"`
++	SessionID   string   `json:"session_id"`
++	QuestionIDs []string `json:"question_ids"`
++}
++
++type ownQuestionItem struct {
++	QuestionID        string                `json:"question_id"`
++	MessageID         string                `json:"message_id"`
++	TurnID            string                `json:"requesting_turn_id"`
++	Status            string                `json:"status"`
++	CreatedAt         time.Time             `json:"created_at"`
++	UpdatedAt         time.Time             `json:"updated_at"`
++	AgentDisconnected bool                  `json:"agent_disconnected"`
++	QuestionSHA256    string                `json:"question_sha256"`
++	Answer            *clarification.Answer `json:"answer,omitempty"`
++}
++
++type ownQuestionReceipt struct {
++	TaskID       string            `json:"task_id"`
++	SessionID    string            `json:"session_id"`
++	PendingID    string            `json:"pending_id,omitempty"`
++	Status       string            `json:"status"`
++	RetryAllowed bool              `json:"retry_allowed"`
++	Questions    []ownQuestionItem `json:"questions"`
++}
++
++func validateQuestionIDs(ids []string) error {
++	if len(ids) < 1 || len(ids) > 4 {
++		return errors.New("question_ids requires 1-4 stable IDs")
++	}
++	seen := map[string]bool{}
++	for _, id := range ids {
++		if id == "" || len(id) > 128 || seen[id] {
++			return errors.New("question IDs must be nonempty, unique, and at most 128 bytes")
++		}
++		seen[id] = true
++	}
++	return nil
++}
++
++func (h *Handlers) authorizeOwnQuestion(ctx context.Context, req ownQuestionRequest) (*models.Task, error) {
++	p, ok := mcpscope.PrincipalFromContext(ctx)
++	if !ok || p.IsAutomation() || req.SessionID != p.CallerSessionID || (req.TaskID != "" && req.TaskID != p.CallerTaskID) {
++		return nil, errors.New("own-question caller mismatch")
++	}
++	caller := h.authorizedQueueCaller(ctx)
++	if caller == nil {
++		return nil, errors.New("own-question caller unavailable")
++	}
++	session, err := h.sessionRepo.GetTaskSession(ctx, p.CallerSessionID)
++	if err != nil || session == nil || (session.State == models.TaskSessionStateCompleted || session.State == models.TaskSessionStateFailed || session.State == models.TaskSessionStateCancelled) {
++		return nil, errors.New("own-question session is not active")
++	}
++	return caller, nil
++}
++
++func (h *Handlers) handleGetOwnQuestionStatus(ctx context.Context, msg *ws.Message) (*ws.Message, error) {
++	var req ownQuestionRequest
++	if err := json.Unmarshal(msg.Payload, &req); err != nil {
++		return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeBadRequest, "invalid payload", nil)
++	}
++	caller, err := h.authorizeOwnQuestion(ctx, req)
++	if err != nil {
++		return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeForbidden, "exact own-task/session question access required", nil)
++	}
++	if err := validateQuestionIDs(req.QuestionIDs); err != nil {
++		return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeValidation, err.Error(), nil)
++	}
++	receipt, _, err := h.readOwnQuestion(ctx, caller.ID, req.SessionID, req.QuestionIDs)
++	if err != nil {
++		return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeConflict, "own-question status unavailable or ambiguous", nil)
++	}
++	return ws.NewResponse(msg.ID, msg.Action, receipt)
++}
++
++func (h *Handlers) readOwnQuestion(ctx context.Context, taskID, sessionID string, ids []string) (*ownQuestionReceipt, []*models.Message, error) {
++	reader, ok := h.sessionRepo.(ownQuestionReader)
++	if !ok {
++		return nil, nil, errors.New("own-question reader unavailable")
++	}
++	messages, err := reader.FindOwnClarificationMessages(ctx, taskID, sessionID, ids)
++	if err != nil {
++		return nil, nil, err
++	}
++	receipt := &ownQuestionReceipt{TaskID: taskID, SessionID: sessionID, Status: "not_created", RetryAllowed: true, Questions: []ownQuestionItem{}}
++	if len(messages) == 0 {
++		return receipt, messages, nil
++	}
++	receipt.RetryAllowed = false
++	seen := map[string]bool{}
++	for _, m := range messages {
++		if err := addOwnQuestionItem(receipt, m, seen, taskID, sessionID); err != nil {
++			return nil, nil, err
++		}
++	}
++	if len(seen) != len(ids) {
++		return nil, nil, errors.New("incomplete question identity")
++	}
++	receipt.Status = ownBundleStatus(receipt.Questions)
++	return receipt, messages, nil
++}
++
++func addOwnQuestionItem(r *ownQuestionReceipt, m *models.Message, seen map[string]bool, taskID, sessionID string) error {
++	if m.TaskID != taskID || m.TaskSessionID != sessionID || m.Type != models.MessageTypeClarificationRequest || m.AuthorType != models.MessageAuthorAgent {
++		return errors.New("question scope mismatch")
++	}
++	id, _ := m.Metadata["question_id"].(string)
++	pending, _ := m.Metadata["pending_id"].(string)
++	if id == "" || pending == "" || seen[id] || (r.PendingID != "" && r.PendingID != pending) {
++		return errors.New("ambiguous question identity")
++	}
++	seen[id] = true
++	r.PendingID = pending
++	raw, err := json.Marshal(m.Metadata)
++	if err != nil || len(raw) > 65536 {
++		return errors.New("question metadata exceeds bound")
++	}
++	question, err := json.Marshal(m.Metadata["question"])
++	if err != nil {
++		return err
++	}
++	digest := sha256.Sum256(question)
++	status, _ := m.Metadata["status"].(string)
++	disconnected, _ := m.Metadata["agent_disconnected"].(bool)
++	item := ownQuestionItem{QuestionID: id, MessageID: m.ID, TurnID: m.TurnID, Status: status, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt, AgentDisconnected: disconnected, QuestionSHA256: hex.EncodeToString(digest[:])}
++	item.Answer, item.Status, err = projectOwnAnswer(status, m.Metadata["response"], id)
++	if err != nil {
++		return err
++	}
++	r.Questions = append(r.Questions, item)
++	return nil
++}
++
++func ownBundleStatus(items []ownQuestionItem) string {
++	status := string(clarification.StatusAnswered)
++	for _, item := range items {
++		switch item.Status {
++		case string(clarification.StatusRejected):
++			return string(clarification.StatusRejected)
++		case string(clarification.StatusPending), "":
++			status = string(clarification.StatusPending)
++		case string(clarification.StatusAnswered):
++		case string(clarification.StatusExpired), string(clarification.StatusCancelled):
++			return item.Status
++		default:
++			return "unknown"
++		}
++	}
++	return status
++}
++
++// prepareOwnQuestion preserves old identities, terminal answers, and pending
++// Human input. Reusing a stable ID for a different question is a conflict.
++func (h *Handlers) prepareOwnQuestion(ctx context.Context, taskID, sessionID string, questions []clarification.Question, questionContext string, liveWait bool) (string, *ownQuestionReceipt, error) {
++	ownQuestionCreationMu.Lock()
++	defer ownQuestionCreationMu.Unlock()
++	ids := make([]string, len(questions))
++	for i, q := range questions {
++		ids[i] = q.ID
++	}
++	if err := validateQuestionIDs(ids); err != nil {
++		return "", nil, err
++	}
++	receipt, messages, err := h.readOwnQuestion(ctx, taskID, sessionID, ids)
++	if err != nil {
++		return "", nil, err
++	}
++	if len(messages) > 0 {
++		if err := matchOwnQuestionRetry(messages, questions, questionContext); err != nil {
++			return "", nil, err
++		}
++		return receipt.PendingID, receipt, nil
++	}
++	if h.messageCreator == nil || h.clarificationSvc == nil {
++		return "", nil, errors.New("clarification publication unavailable")
++	}
++	pending := uuid.New().String()
++	if liveWait {
++		pending, _ = h.clarificationSvc.CreateRequest(&clarification.Request{TaskID: taskID, SessionID: sessionID, Questions: questions, Context: questionContext})
++	}
++	if _, err := h.messageCreator.CreateClarificationRequestMessages(ctx, taskID, sessionID, pending, questions, questionContext); err != nil {
++		if liveWait {
++			h.clarificationSvc.CancelRequest(pending)
++		}
++		return "", nil, errors.New("clarification publication failed; correlate status before retry")
++	}
++	return pending, nil, nil
++}
++
++func matchOwnQuestionRetry(messages []*models.Message, questions []clarification.Question, questionContext string) error {
++	byID := map[string]clarification.Question{}
++	for _, q := range questions {
++		byID[q.ID] = q
++	}
++	for _, m := range messages {
++		id, _ := m.Metadata["question_id"].(string)
++		data, err := json.Marshal(m.Metadata["question"])
++		if err != nil {
++			return err
++		}
++		var original clarification.Question
++		if err := json.Unmarshal(data, &original); err != nil {
++			return err
++		}
++		contextText, _ := m.Metadata["context"].(string)
++		if !reflect.DeepEqual(original, byID[id]) || contextText != questionContext {
++			return fmt.Errorf("stable question ID %s already identifies a different request", id)
++		}
++	}
++	return nil
++}
++
++func (h *Handlers) handleReceiptUserQuestion(ctx context.Context, msg *ws.Message, taskID, sessionID string, questions []clarification.Question, questionContext string) (*ws.Message, error) {
++	caller, err := h.authorizeOwnQuestion(ctx, ownQuestionRequest{TaskID: taskID, SessionID: sessionID})
++	if err != nil {
++		return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeForbidden, "exact own-task/session question access required", nil)
++	}
++	ids := make([]string, len(questions))
++	for i, q := range questions {
++		ids[i] = q.ID
++	}
++	if err := validateQuestionIDs(ids); err != nil {
++		return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeValidation, err.Error(), nil)
++	}
++	if message := clarification.NormalizeAndValidateQuestions(questions); message != "" {
++		return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeValidation, message, nil)
++	}
++	_, existing, err := h.prepareOwnQuestion(ctx, caller.ID, sessionID, questions, questionContext, false)
++	if err != nil {
++		return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeConflict, "question publication conflict; correlate own status before retry", nil)
++	}
++	if existing != nil {
++		return ws.NewResponse(msg.ID, msg.Action, existing)
++	}
++	h.setSessionWaitingForInput(ctx, caller.ID, sessionID)
++	receipt, _, err := h.readOwnQuestion(ctx, caller.ID, sessionID, ids)
++	if err != nil {
++		return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeInternalError, "question accepted; read own status before retry", nil)
++	}
++	return ws.NewResponse(msg.ID, msg.Action, receipt)
++}
++
++func (h *Handlers) prepareQuestionPublication(ctx context.Context, taskID, sessionID string, questions []clarification.Question, questionContext string) (string, *ownQuestionReceipt, error) {
++	if _, trusted := mcpscope.PrincipalFromContext(ctx); trusted && hasDurableQuestionIdentity(questions) {
++		caller, err := h.authorizeOwnQuestion(ctx, ownQuestionRequest{TaskID: taskID, SessionID: sessionID})
++		if err != nil {
++			return "", nil, err
++		}
++		return h.prepareOwnQuestion(ctx, caller.ID, sessionID, questions, questionContext, true)
++	}
++	// Preserve the existing internal/configuration entrypoint. The new receipt
++	// and readback endpoints always require a trusted task-session principal.
++	req := &clarification.Request{TaskID: taskID, SessionID: sessionID, Questions: questions, Context: questionContext}
++	pending, isNew := h.clarificationSvc.CreateRequest(req)
++	if isNew && h.messageCreator != nil {
++		if _, err := h.messageCreator.CreateClarificationRequestMessages(ctx, taskID, sessionID, pending, questions, questionContext); err != nil {
++			h.clarificationSvc.CancelRequest(pending)
++			return "", nil, err
++		}
++	}
++	return pending, nil, nil
++}
++
++// Legacy autogenerated q1/q2 identities remain local to that interaction.
++// Receipt mode requires explicit IDs and always deduplicates them.
++func hasDurableQuestionIdentity(questions []clarification.Question) bool {
++	for i, q := range questions {
++		if q.ID == fmt.Sprintf("q%d", i+1) {
++			return false
++		}
++	}
++	return true
++}
++
++func recordedOwnAnswer(raw any, id string) (*clarification.Answer, error) {
++	if raw == nil {
++		return nil, nil
++	}
++	data, err := json.Marshal(raw)
++	if err != nil {
++		return nil, err
++	}
++	var answer clarification.Answer
++	if err := json.Unmarshal(data, &answer); err != nil || answer.QuestionID != id {
++		return nil, errors.New("invalid own-question answer")
++	}
++	return &answer, nil
++}
++
++func projectOwnAnswer(status string, raw any, id string) (*clarification.Answer, string, error) {
++	if status == "" {
++		status = string(clarification.StatusPending)
++	}
++	if status != string(clarification.StatusAnswered) {
++		return nil, status, nil
++	}
++	answer, err := recordedOwnAnswer(raw, id)
++	if answer == nil {
++		status = "unknown"
++	}
++	return answer, status, err
++}
+diff --git a/apps/backend/internal/mcp/handlers/own_question_test.go b/apps/backend/internal/mcp/handlers/own_question_test.go
+new file mode 100644
+index 0000000000..6ffd48bd14
+--- /dev/null
++++ b/apps/backend/internal/mcp/handlers/own_question_test.go
+@@ -0,0 +1,193 @@
++package handlers
++
++import (
++	"context"
++	"encoding/json"
++	"errors"
++	"sync"
++	"testing"
++	"time"
++
++	"github.com/kandev/kandev/internal/clarification"
++	mcpprofile "github.com/kandev/kandev/internal/mcp/profile"
++	mcpscope "github.com/kandev/kandev/internal/mcp/scope"
++	"github.com/kandev/kandev/internal/task/models"
++	sqliterepo "github.com/kandev/kandev/internal/task/repository/sqlite"
++	ws "github.com/kandev/kandev/pkg/websocket"
++	"github.com/stretchr/testify/require"
++)
++
++type ownQuestionCreator struct {
++	repo *sqliterepo.Repository
++	fail bool
++}
++
++func (c *ownQuestionCreator) CreateClarificationRequestMessages(ctx context.Context, taskID, sessionID, pending string, questions []clarification.Question, questionContext string) ([]string, error) {
++	if c.fail {
++		return nil, errors.New("synthetic publication failure")
++	}
++	ids := []string{}
++	for _, q := range questions {
++		now := time.Now().UTC()
++		m := &models.Message{TaskID: taskID, TaskSessionID: sessionID, TurnID: "own-turn", AuthorType: "agent", Content: "synthetic prompt", Type: models.MessageTypeClarificationRequest, RequestsInput: true, CreatedAt: now, UpdatedAt: now,
++			Metadata: map[string]any{"question_id": q.ID, "pending_id": pending, "status": "pending", "question": q, "context": questionContext}}
++		if err := c.repo.CreateMessage(ctx, m); err != nil {
++			return nil, err
++		}
++		ids = append(ids, m.ID)
++	}
++	return ids, nil
++}
++
++func ownQuestionFixture(t *testing.T) (*Handlers, *sqliterepo.Repository, context.Context, []clarification.Question) {
++	t.Helper()
++	svc, repo := newTestTaskService(t)
++	seedMCPHandlerSession(t, repo, "own-task", "own-session", models.TaskSessionStateRunning)
++	require.NoError(t, repo.CreateTurn(context.Background(), &models.Turn{ID: "own-turn", TaskSessionID: "own-session", TaskID: "own-task", StartedAt: time.Now().UTC()}))
++	h := NewHandlers(svc, nil, clarification.NewStore(0), nil, &ownQuestionCreator{repo: repo}, repo, repo, nil, nil, nil, nil, nil, testLogger(t))
++	p := mcpscope.Principal{CallerTaskID: "own-task", CallerSessionID: "own-session", WorkspaceID: "ws-state-event", Surface: mcpprofile.SurfaceKanbanTask}
++	ctx := mcpscope.WithPrincipal(context.Background(), p)
++	q := []clarification.Question{{ID: "stable-own-q", Prompt: "Synthetic choice?", Options: []clarification.Option{{Label: "A", Description: "First"}, {Label: "B", Description: "Second"}}}}
++	require.Empty(t, clarification.NormalizeAndValidateQuestions(q))
++	return h, repo, ctx, q
++}
++
++func ownReceipt(t *testing.T, response *ws.Message) ownQuestionReceipt {
++	t.Helper()
++	require.Equal(t, ws.MessageTypeResponse, response.Type)
++	var r ownQuestionReceipt
++	require.NoError(t, json.Unmarshal(response.Payload, &r))
++	return r
++}
++
++func TestOwnQuestionReceiptDurableDedupAndReadback(t *testing.T) {
++	h, repo, ctx, q := ownQuestionFixture(t)
++	statusMsg := makeWSMessage(t, ws.ActionMCPGetOwnQuestionStatus, map[string]any{"task_id": "own-task", "session_id": "own-session", "question_ids": []string{q[0].ID}})
++	response, err := h.handleGetOwnQuestionStatus(ctx, statusMsg)
++	require.NoError(t, err)
++	absent := ownReceipt(t, response)
++	require.Equal(t, "not_created", absent.Status)
++	require.True(t, absent.RetryAllowed)
++	ask := makeWSMessage(t, ws.ActionMCPAskUserQuestion, map[string]any{"task_id": "own-task", "session_id": "own-session", "questions": q, "context": "synthetic context", "return_mode": "receipt"})
++	response, err = h.handleAskUserQuestion(ctx, ask)
++	require.NoError(t, err)
++	first := ownReceipt(t, response)
++	require.Equal(t, "pending", first.Status)
++	require.False(t, first.RetryAllowed)
++	_, live := h.clarificationSvc.(*clarification.Store).GetRequest(first.PendingID)
++	require.False(t, live, "receipt must use durable answer fallback, not an unwaited live store entry")
++	// A backend restart loses all in-memory entries, while durable IDs survive.
++	h.clarificationSvc = clarification.NewStore(0)
++	response, err = h.handleAskUserQuestion(ctx, ask)
++	require.NoError(t, err)
++	require.Equal(t, first.PendingID, ownReceipt(t, response).PendingID)
++	messages, err := repo.FindOwnClarificationMessages(ctx, "own-task", "own-session", []string{q[0].ID})
++	require.NoError(t, err)
++	require.Len(t, messages, 1)
++	require.Empty(t, messages[0].Content, "reader must not load conversation content")
++	// Preserve the original identity even after its waiter disconnected.
++	messages[0].Metadata["agent_disconnected"] = true
++	require.NoError(t, repo.UpdateMessage(ctx, messages[0]))
++	response, err = h.handleGetOwnQuestionStatus(ctx, statusMsg)
++	require.NoError(t, err)
++	require.True(t, ownReceipt(t, response).Questions[0].AgentDisconnected)
++	for _, terminal := range []string{"answered", "rejected", "expired", "cancelled"} {
++		messages[0].Metadata["status"] = terminal
++		if terminal == "answered" {
++			messages[0].Metadata["response"] = &clarification.Answer{QuestionID: q[0].ID, SelectedOptions: []string{q[0].Options[0].ID}, CustomText: "synthetic recorded answer"}
++		}
++		require.NoError(t, repo.UpdateMessage(ctx, messages[0]))
++		response, err = h.handleGetOwnQuestionStatus(ctx, statusMsg)
++		require.NoError(t, err)
++		r := ownReceipt(t, response)
++		require.Equal(t, terminal, r.Status)
++		require.False(t, r.RetryAllowed)
++		if terminal == "answered" {
++			require.Equal(t, "synthetic recorded answer", r.Questions[0].Answer.CustomText)
++		}
++		response, err = h.handleAskUserQuestion(ctx, ask)
++		require.NoError(t, err)
++		require.Equal(t, first.PendingID, ownReceipt(t, response).PendingID)
++	}
++}
++
++func TestOwnQuestionRejectsCallerMismatchAndStableIDChanges(t *testing.T) {
++	h, repo, ctx, q := ownQuestionFixture(t)
++	ask := makeWSMessage(t, ws.ActionMCPAskUserQuestion, map[string]any{"session_id": "own-session", "questions": q, "return_mode": "receipt"})
++	response, err := h.handleAskUserQuestion(ctx, ask)
++	require.NoError(t, err)
++	require.Equal(t, ws.MessageTypeResponse, response.Type)
++	q[0].Prompt = "Changed synthetic question"
++	response, err = h.handleAskUserQuestion(ctx, makeWSMessage(t, ws.ActionMCPAskUserQuestion, map[string]any{"session_id": "own-session", "questions": q, "return_mode": "receipt"}))
++	require.NoError(t, err)
++	require.Equal(t, ws.MessageTypeError, response.Type)
++	for _, tc := range []struct {
++		ctx               context.Context
++		taskID, sessionID string
++	}{
++		{context.Background(), "own-task", "own-session"}, {ctx, "peer-task", "own-session"}, {ctx, "own-task", "peer-session"},
++		{mcpscope.WithPrincipal(ctx, mcpscope.Principal{CallerTaskID: "own-task", CallerSessionID: "own-session", WorkspaceID: "foreign"}), "own-task", "own-session"},
++	} {
++		response, err = h.handleGetOwnQuestionStatus(tc.ctx, makeWSMessage(t, ws.ActionMCPGetOwnQuestionStatus, map[string]any{"task_id": tc.taskID, "session_id": tc.sessionID, "question_ids": []string{q[0].ID}}))
++		require.NoError(t, err)
++		require.Equal(t, ws.MessageTypeError, response.Type)
++	}
++	require.NoError(t, repo.UpdateTaskSessionState(ctx, "own-session", models.TaskSessionStateCancelled, ""))
++	response, err = h.handleGetOwnQuestionStatus(ctx, makeWSMessage(t, ws.ActionMCPGetOwnQuestionStatus, map[string]any{"session_id": "own-session", "question_ids": []string{q[0].ID}}))
++	require.NoError(t, err)
++	require.Equal(t, ws.MessageTypeError, response.Type)
++}
++
++func TestOwnQuestionConcurrentRetryAndPublicationFailure(t *testing.T) {
++	h, repo, ctx, q := ownQuestionFixture(t)
++	creator := h.messageCreator.(*ownQuestionCreator)
++	creator.fail = true
++	response, err := h.handleAskUserQuestion(ctx, makeWSMessage(t, ws.ActionMCPAskUserQuestion, map[string]any{"session_id": "own-session", "questions": q, "return_mode": "receipt"}))
++	require.NoError(t, err)
++	require.Equal(t, ws.MessageTypeError, response.Type)
++	r, _, err := h.readOwnQuestion(ctx, "own-task", "own-session", []string{q[0].ID})
++	require.NoError(t, err)
++	require.Equal(t, "not_created", r.Status)
++	creator.fail = false
++	var wg sync.WaitGroup
++	results := make(chan *ws.Message, 4)
++	for range 4 {
++		wg.Go(func() {
++			response, err := h.handleAskUserQuestion(ctx, makeWSMessage(t, ws.ActionMCPAskUserQuestion, map[string]any{"session_id": "own-session", "questions": q, "return_mode": "receipt"}))
++			if err != nil {
++				t.Error(err)
++			}
++			results <- response
++		})
++	}
++	wg.Wait()
++	close(results)
++	var pending string
++	for response := range results {
++		r := ownReceipt(t, response)
++		if pending == "" {
++			pending = r.PendingID
++		}
++		require.Equal(t, pending, r.PendingID)
++	}
++	messages, err := repo.FindOwnClarificationMessages(ctx, "own-task", "own-session", []string{q[0].ID})
++	require.NoError(t, err)
++	require.Len(t, messages, 1)
++}
++
++func TestOwnQuestionLegacyAutogeneratedIDsRemainInteractionLocal(t *testing.T) {
++	h, repo, ctx, q := ownQuestionFixture(t)
++	q[0].ID = "q1"
++	pending, _, err := h.prepareQuestionPublication(ctx, "own-task", "own-session", q, "")
++	require.NoError(t, err)
++	next := append([]clarification.Question(nil), q...)
++	next[0].Prompt = "Different later synthetic question"
++	later, _, err := h.prepareQuestionPublication(ctx, "own-task", "own-session", next, "")
++	require.NoError(t, err)
++	require.NotEqual(t, pending, later)
++	messages, err := repo.FindOwnClarificationMessages(ctx, "own-task", "own-session", []string{"q1"})
++	require.NoError(t, err)
++	require.Len(t, messages, 2)
++	_, _, err = h.readOwnQuestion(ctx, "own-task", "own-session", []string{"q1"})
++	require.Error(t, err, "ambiguous legacy IDs must not guess an answer or permit recreation")
++}
+diff --git a/apps/backend/internal/mcp/server/handlers.go b/apps/backend/internal/mcp/server/handlers.go
+index bd12f0021d..53955e5373 100644
+--- a/apps/backend/internal/mcp/server/handlers.go
++++ b/apps/backend/internal/mcp/server/handlers.go
+@@ -961,6 +961,12 @@ func copyOptionalMessageTypesArg(payload map[string]interface{}, req mcp.CallToo
+ 
+ func (s *Server) askUserQuestionHandler() server.ToolHandlerFunc {
+ 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
++		if mode := req.GetString("return_mode", ""); mode != "" {
++			if mode != "receipt" {
++				return mcp.NewToolResultError("return_mode must be receipt or omitted"), nil
++			}
++			return s.receiptQuestionHandler(ctx, req)
++		}
+ 		questions, errResult := parseQuestions(req)
+ 		if errResult != nil {
+ 			return errResult, nil
+@@ -995,6 +1001,9 @@ func (s *Server) askUserQuestionHandler() server.ToolHandlerFunc {
+ 			return mcp.NewToolResultError(err.Error()), nil
+ 		}
+ 
++		if _, ok := result["status"]; ok {
++			return ownQuestionToolResult(result), nil
++		}
+ 		return extractQuestionAnswers(result, questions), nil
+ 	}
+ }
+diff --git a/apps/backend/internal/mcp/server/own_question.go b/apps/backend/internal/mcp/server/own_question.go
+new file mode 100644
+index 0000000000..9d93b40cb3
+--- /dev/null
++++ b/apps/backend/internal/mcp/server/own_question.go
+@@ -0,0 +1,84 @@
++package mcp
++
++import (
++	"context"
++	"encoding/json"
++
++	ws "github.com/kandev/kandev/pkg/websocket"
++	"github.com/mark3labs/mcp-go/mcp"
++	"github.com/mark3labs/mcp-go/server"
++)
++
++const ownQuestionReceiptOutputSchema = `{
++ "type":"object",
++ "required":["task_id","session_id","status","retry_allowed","questions"],
++ "properties":{
++  "task_id":{"type":"string"},"session_id":{"type":"string"},
++  "pending_id":{"type":"string"},
++  "status":{"type":"string","enum":["not_created","pending","answered","rejected","expired","cancelled","unknown"]},
++  "retry_allowed":{"type":"boolean"},
++  "questions":{"type":"array","maxItems":4,"items":{"type":"object"}}
++ },
++ "additionalProperties":false
++}`
++
++func (s *Server) registerOwnQuestionStatusTool() {
++	s.mcpServer.AddTool(mcp.NewTool("get_own_question_status_kandev",
++		mcp.WithDescription("Read durable lifecycle metadata and recorded answers for 1-4 exact stable question IDs on this caller's own active task/session. Returns not_created, pending, answered, rejected, expired, cancelled, or unknown. No question prompts, other messages, acknowledgement, retry, or policy change. Correlate the original ID before retry; an existing identity cannot be recreated."),
++		mcp.WithRawOutputSchema(json.RawMessage(ownQuestionReceiptOutputSchema)),
++		mcp.WithReadOnlyHintAnnotation(true), mcp.WithDestructiveHintAnnotation(false), mcp.WithIdempotentHintAnnotation(true), mcp.WithOpenWorldHintAnnotation(false),
++		mcp.WithArray("question_ids", mcp.Required(), mcp.MinItems(1), mcp.MaxItems(4), mcp.Items(map[string]any{"type": "string", "minLength": 1, "maxLength": 128}))),
++		s.wrapSensitiveHandler("get_own_question_status_kandev", s.ownQuestionStatusHandler()))
++}
++
++func (s *Server) ownQuestionStatusHandler() server.ToolHandlerFunc {
++	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
++		ids := req.GetStringSlice("question_ids", nil)
++		if len(ids) < 1 || len(ids) > 4 {
++			return mcp.NewToolResultError("question_ids requires 1-4 stable IDs"), nil
++		}
++		payload := map[string]any{"task_id": s.taskID, "session_id": s.sessionID, "question_ids": ids}
++		return s.ownQuestionBackendCall(ctx, ws.ActionMCPGetOwnQuestionStatus, payload)
++	}
++}
++
++func (s *Server) receiptQuestionHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
++	// Check explicit IDs before parseQuestions can generate defaults.
++	raw, err := json.Marshal(req.GetArguments()[questionsArg])
++	if err != nil {
++		return mcp.NewToolResultError("invalid questions"), nil
++	}
++	var entries []struct {
++		ID string `json:"id"`
++	}
++	if err := json.Unmarshal(raw, &entries); err != nil {
++		return mcp.NewToolResultError("invalid questions"), nil
++	}
++	for _, entry := range entries {
++		if entry.ID == "" || len(entry.ID) > 128 {
++			return mcp.NewToolResultError("receipt mode requires explicit stable question IDs"), nil
++		}
++	}
++	questions, errResult := parseQuestions(req)
++	if errResult != nil {
++		return errResult, nil
++	}
++	payload := map[string]any{"task_id": s.taskID, "session_id": s.sessionID, questionsArg: questions, "context": readQuestionContext(req), "return_mode": "receipt"}
++	return s.ownQuestionBackendCall(ctx, ws.ActionMCPAskUserQuestion, payload)
++}
++
++func (s *Server) ownQuestionBackendCall(ctx context.Context, action string, payload map[string]any) (*mcp.CallToolResult, error) {
++	var result map[string]interface{}
++	if err := s.backend.RequestPayload(ctx, action, payload, &result); err != nil {
++		return mcp.NewToolResultError("own-question operation failed; correlate original status before retry"), nil
++	}
++	return ownQuestionToolResult(result), nil
++}
++
++func ownQuestionToolResult(result map[string]interface{}) *mcp.CallToolResult {
++	data, err := json.Marshal(result)
++	if err != nil {
++		return mcp.NewToolResultError("invalid own-question receipt")
++	}
++	return mcp.NewToolResultStructured(result, string(data))
++}
+diff --git a/apps/backend/internal/mcp/server/own_question_test.go b/apps/backend/internal/mcp/server/own_question_test.go
+new file mode 100644
+index 0000000000..92e9b316d3
+--- /dev/null
++++ b/apps/backend/internal/mcp/server/own_question_test.go
+@@ -0,0 +1,44 @@
++package mcp
++
++import (
++	"testing"
++
++	ws "github.com/kandev/kandev/pkg/websocket"
++	"github.com/stretchr/testify/require"
++)
++
++func TestOwnQuestionReceiptSchemaForwardingAndStatus(t *testing.T) {
++	backend := &testBackend{response: map[string]interface{}{"status": "pending", "pending_id": "synthetic-pending", "retry_allowed": false, "questions": []any{}}}
++	s := newTaskModeServer(t, backend, "own-task")
++	require.Contains(t, s.mcpServer.ListTools(), "get_own_question_status_kandev")
++	result := callTool(t, s, "ask_user_question_kandev", map[string]interface{}{"return_mode": "receipt", "questions": []map[string]interface{}{{"id": "stable-q", "prompt": "Synthetic choice?", "options": []map[string]interface{}{{"label": "A", "description": "First"}, {"label": "B", "description": "Second"}}}}})
++	require.False(t, result.IsError)
++	require.NotNil(t, result.StructuredContent)
++	require.Equal(t, ws.ActionMCPAskUserQuestion, backend.lastAction)
++	require.Equal(t, "receipt", backend.lastPayload.(map[string]interface{})["return_mode"])
++	require.Equal(t, "own-task", backend.lastPayload.(map[string]interface{})["task_id"])
++	result = callTool(t, s, "get_own_question_status_kandev", map[string]interface{}{"question_ids": []string{"stable-q"}})
++	require.False(t, result.IsError)
++	require.Equal(t, ws.ActionMCPGetOwnQuestionStatus, backend.lastAction)
++	require.Equal(t, "own-task", backend.lastPayload.(map[string]interface{})["task_id"])
++	require.Equal(t, s.sessionID, backend.lastPayload.(map[string]interface{})["session_id"])
++	result = callTool(t, s, "get_own_question_status_kandev", map[string]interface{}{"question_ids": []string{"stable-q"}, "task_id": "foreign", "session_id": "foreign"})
++	require.True(t, result.IsError)
++}
++
++func TestOwnQuestionReceiptRequiresExplicitIDs(t *testing.T) {
++	backend := &testBackend{}
++	s := newTaskModeServer(t, backend, "own-task")
++	result := callTool(t, s, "ask_user_question_kandev", map[string]interface{}{"return_mode": "receipt", "questions": []map[string]interface{}{{"prompt": "Synthetic?", "options": []map[string]interface{}{{"label": "A", "description": "First"}, {"label": "B", "description": "Second"}}}}})
++	require.True(t, result.IsError)
++	require.Empty(t, backend.lastAction)
++}
++
++func TestOwnQuestionReadbackDoesNotExpandRestrictedCatalogs(t *testing.T) {
++	for _, s := range []*Server{
++		New(&testBackend{}, "s", "t", 10005, newTestLogger(t), "", false, ModeExternal),
++		New(&testBackend{}, "s", "t", 10005, newTestLogger(t), "", true, ModeTask),
++	} {
++		require.NotContains(t, s.mcpServer.ListTools(), "get_own_question_status_kandev")
++	}
++}
+diff --git a/apps/backend/internal/mcp/server/server.go b/apps/backend/internal/mcp/server/server.go
+index 0dc5da4898..5d213cb439 100644
+--- a/apps/backend/internal/mcp/server/server.go
++++ b/apps/backend/internal/mcp/server/server.go
+@@ -1868,26 +1868,33 @@ func (s *Server) stepCompleteHandler() server.ToolHandlerFunc {
+ 	}
+ }
+ 
+-const askUserQuestionOutputSchema = `{
+-  "type": "object",
+-  "properties": {
+-    "rejected": {"type": "boolean", "description": "True when the user rejected the question bundle."},
+-    "reject_reason": {"type": "string", "description": "Optional reason supplied when the bundle was rejected."}
++const askUserQuestionLegacyOutputSchema = `{
++  "type":"object",
++  "properties":{
++    "rejected":{"type":"boolean"},
++    "reject_reason":{"type":"string"}
+   },
+-  "additionalProperties": {
+-    "type": "object",
+-    "description": "Answer keyed by question id.",
+-    "properties": {
+-      "selected_option": {"type": "string"},
+-      "custom_text": {"type": "string"},
+-      "answered": {"type": "boolean"},
+-      "rejected": {"type": "boolean"}
++  "additionalProperties":{
++    "type":"object",
++    "properties":{
++      "selected_option":{"type":"string"},
++      "custom_text":{"type":"string"},
++      "answered":{"type":"boolean"},
++      "rejected":{"type":"boolean"}
+     },
+-    "additionalProperties": false
++    "additionalProperties":false
+   }
+ }`
+ 
++const askUserQuestionOutputSchema = `{
++ "type":"object",
++ "properties":{"rejected":{"type":"boolean"},"reject_reason":{"type":"string"}},
++ "additionalProperties":true,
++ "anyOf":[` + askUserQuestionLegacyOutputSchema + `,` + ownQuestionReceiptOutputSchema + `]
++}`
++
+ func (s *Server) registerInteractionTools() {
++	s.registerOwnQuestionStatusTool()
+ 	s.mcpServer.AddTool(
+ 		mcp.NewTool("ask_user_question_kandev",
+ 			mcp.WithDescription(`Ask the user 1-4 related questions and wait for all answers. Each question requires a prompt and 2-6 concrete options with short labels and descriptions; use a stable id when response keys matter. Call only when required input cannot be inferred, and bundle related questions in one call. Returns answers keyed by question id; a rejected bundle includes rejected=true and may include reject_reason.`),
+@@ -1899,6 +1906,7 @@ func (s *Server) registerInteractionTools() {
+ 				mcp.MaxItems(4),
+ 				mcp.Items(buildQuestionSchemaItem()),
+ 			),
++			mcp.WithString("return_mode", mcp.Description("Use receipt to durably publish and return immediately without waiting for Human input. Requires explicit stable question IDs. A pending receipt is not an answer; end the turn and read get_own_question_status_kandev before any retry."), mcp.Enum("receipt")),
+ 			mcp.WithString("context", mcp.Description("Optional single block of shared background information. Preserved verbatim; use context_paragraphs for multiple paragraphs.")),
+ 			mcp.WithArray(contextParagraphsArg,
+ 				mcp.Description("Optional shared background as separate paragraphs. Preferred for multiline context; when non-empty, overrides context and is joined with blank lines."),
+diff --git a/apps/backend/internal/mcp/server/server_test.go b/apps/backend/internal/mcp/server/server_test.go
+index f506dee183..7d91a39508 100644
+--- a/apps/backend/internal/mcp/server/server_test.go
++++ b/apps/backend/internal/mcp/server/server_test.go
+@@ -811,7 +811,7 @@ drained:
+ 	// as in TestServerModeTask_ToolCount and
+ 	// TestRegisterTools_LoggedCountMatchesRegisteredTools (list_task_sessions_test.go),
+ 	// which pin the per-mode registration rather than this SetProviders rebuild.
+-	require.Len(t, tools, 46, "final registry should contain the complete GitLab-only task tool set")
++	require.Len(t, tools, 47, "final registry should contain the complete GitLab-only task tool set")
+ 	assert.Contains(t, tools, "get_task_change_requests_kandev")
+ 	assert.Contains(t, tools, "manage_task_change_request_kandev")
+ 	assert.Contains(t, tools, "update_task_change_request_automation_kandev")
+@@ -1003,7 +1003,7 @@ func TestServerModeTask_ToolCount(t *testing.T) {
+ 	assert.Contains(t, tools, "add_task_dependency_kandev", "dependency edges must be manageable in task mode")
+ 	assert.Contains(t, tools, "remove_task_dependency_kandev")
+ 	assert.Contains(t, tools, "show_rich_output_kandev", "native rich output must be registered in task mode")
+-	assert.Equal(t, 47, len(tools))
++	assert.Equal(t, 48, len(tools))
+ }
+ 
+ func TestServerStepCompleteTool_TaskAndOfficeOnlyAndDiscoverable(t *testing.T) {
+@@ -1041,7 +1041,7 @@ func TestServerModeConfig_ToolCount(t *testing.T) {
+ 	tools := getRegisteredToolNames(s)
+ 	// Existing configuration tools plus the five compact settings tools.
+ 	assert.NotContains(t, tools, "step_complete_kandev", "step_complete_kandev requires a live task session; must NOT register in config mode")
+-	assert.Equal(t, 42, len(tools))
++	assert.Equal(t, 43, len(tools))
+ }
+ 
+ func TestServerModeConfig_ToolDescriptions(t *testing.T) {
+@@ -1123,12 +1123,12 @@ func TestServerModeOffice_ToolCount(t *testing.T) {
+ 
+ 	s := New(backend, "test-session", "test-task", 10005, log, "", false, ModeOffice)
+ 	tools := getRegisteredToolNames(s)
+-	// 8 plan + 1 interaction + 1 related-tasks + 3 task-documents
+-	// + 1 rich-output + 1 step_complete (ADR 0015) = 15.
++	// 8 plan + 2 interaction (ask + own status) + 1 related-tasks + 3 task-documents
++	// + 1 rich-output + 1 step_complete (ADR 0015) = 16.
+ 	// (delegate_task_kandev retired in favour of `agentctl kandev task create …`).
+ 	// (list_task_comments_kandev retired in favour of `agentctl kandev comment list …`).
+ 	assert.Contains(t, tools, "step_complete_kandev", "office mode must register the ADR 0015 completion signal")
+-	assert.Equal(t, 15, len(tools))
++	assert.Equal(t, 16, len(tools))
+ }
+ 
+ func TestServerModeOffice_DisableAskQuestion(t *testing.T) {
+diff --git a/apps/backend/internal/mcp/server/sysprompt_sync_test.go b/apps/backend/internal/mcp/server/sysprompt_sync_test.go
+index 679546595a..7a435647a5 100644
+--- a/apps/backend/internal/mcp/server/sysprompt_sync_test.go
++++ b/apps/backend/internal/mcp/server/sysprompt_sync_test.go
+@@ -274,7 +274,7 @@ func TestSyspromptToolNames_ExactlyMatchMCPOfficeMode(t *testing.T) {
+ 
+ 	assert.Equal(t, registered, referenced,
+ 		"Office first-turn context must advertise exactly the ModeOffice tool inventory")
+-	assert.Len(t, registered, 15, "Office MCP must expose the complete 15-tool catalog")
++	assert.Len(t, registered, 16, "Office MCP must expose the complete 16-tool catalog")
+ }
+ 
+ func TestDecisionMCPTransportIsAbsentFromOfficeAndKanban(t *testing.T) {
+diff --git a/apps/backend/internal/sysprompt/sysprompt.go b/apps/backend/internal/sysprompt/sysprompt.go
+index 3fdf41b6e3..ceee8ac026 100644
+--- a/apps/backend/internal/sysprompt/sysprompt.go
++++ b/apps/backend/internal/sysprompt/sysprompt.go
+@@ -231,7 +231,8 @@ func KandevContext() string {
+ 	})
+ }
+ 
+-const userQuestionSection = `- ask_user_question_kandev: Ask the user 1-4 related questions and wait for all answers. Use this whenever you need user input to proceed. Treat this call as a hard user-input barrier: do not call another tool, do not continue working, and do not provide a final response until the tool returns completed user answers or a structured rejection. If the tool reports a validation error before creating a question, correct the request and retry. If an accepted question returns without completed answers or a structured rejection, end your turn immediately. This includes a timeout, disconnect, or pending wait. For an incomplete result, do not infer an answer or continue the task.
++const userQuestionSection = `- ask_user_question_kandev: Ask the user 1-4 related questions and wait for all answers. This is a hard user-input barrier: do not call another tool, do not continue working, and do not provide a final response until the tool returns completed user answers or a structured rejection. If the tool reports a validation error before creating a question, correct the request and retry. If an accepted question returns without completed answers or a structured rejection, end your turn immediately. Timeout, disconnect or pending means no answer.
++- get_own_question_status_kandev: Read own stable question IDs before retry; only not_created permits receipt-mode publication.
+ `
+ 
+ const parentQuestionSection = `- ask_parent_question_kandev: Ask the direct parent task one or more critical questions. Use this only when you cannot continue safely without a parent decision. The question is sent to the parent task, and this call MUST end your turn; do not use an operator-question tool.
+diff --git a/apps/backend/internal/task/repository/sqlite/message_own_question.go b/apps/backend/internal/task/repository/sqlite/message_own_question.go
+new file mode 100644
+index 0000000000..ffd3d5cb86
+--- /dev/null
++++ b/apps/backend/internal/task/repository/sqlite/message_own_question.go
+@@ -0,0 +1,41 @@
++package sqlite
++
++import (
++	"context"
++	"fmt"
++	"strings"
++
++	"github.com/kandev/kandev/internal/db/dialect"
++	"github.com/kandev/kandev/internal/task/models"
++)
++
++// FindOwnClarificationMessages reads only exact task/session clarification
++// metadata. It never loads conversation content or a foreign bundle's rows.
++func (r *Repository) FindOwnClarificationMessages(ctx context.Context, taskID, sessionID string, questionIDs []string) ([]*models.Message, error) {
++	if taskID == "" || sessionID == "" || len(questionIDs) < 1 || len(questionIDs) > 4 {
++		return nil, fmt.Errorf("invalid own-question scope")
++	}
++	args := []any{taskID, sessionID, string(models.MessageTypeClarificationRequest), models.MessageAuthorAgent}
++	marks := make([]string, len(questionIDs))
++	for i, id := range questionIDs {
++		marks[i] = "?"
++		args = append(args, id)
++	}
++	query := fmt.Sprintf(`SELECT id, task_session_id, task_id, turn_id, author_type, author_id,
++  '', requests_input, type, metadata, created_at, updated_at FROM task_session_messages
++  WHERE task_id = ? AND task_session_id = ? AND type = ? AND author_type = ? AND %s IN (%s)
++  ORDER BY created_at, id LIMIT 17`, dialect.JSONExtract(r.ro.DriverName(), "metadata", "question_id"), strings.Join(marks, ","))
++	rows, err := r.ro.QueryContext(ctx, r.ro.Rebind(query), args...)
++	if err != nil {
++		return nil, err
++	}
++	defer func() { _ = rows.Close() }()
++	messages, _, err := scanMessageRows(rows, 0)
++	if err != nil {
++		return nil, err
++	}
++	if len(messages) > 16 {
++		return nil, fmt.Errorf("own-question identity is ambiguous")
++	}
++	return messages, nil
++}
+diff --git a/apps/backend/internal/task/repository/sqlite/message_own_question_test.go b/apps/backend/internal/task/repository/sqlite/message_own_question_test.go
+new file mode 100644
+index 0000000000..358d2a5016
+--- /dev/null
++++ b/apps/backend/internal/task/repository/sqlite/message_own_question_test.go
+@@ -0,0 +1,52 @@
++package sqlite
++
++import (
++	"context"
++	"testing"
++	"time"
++
++	"github.com/kandev/kandev/internal/task/models"
++	"github.com/kandev/kandev/internal/testutil"
++)
++
++func TestOwnQuestionReaderExactScope(t *testing.T) {
++	verifyOwnQuestionScope(t, newRepoForSessionTests(t))
++}
++
++func TestOwnQuestionReaderPostgresExactScope(t *testing.T) {
++	db := testutil.OpenIsolatedPostgres(t, testutil.PostgresDSNFromEnv(t))
++	repo, err := NewWithDB(db, db, nil)
++	if err != nil {
++		t.Fatal(err)
++	}
++	verifyOwnQuestionScope(t, repo)
++}
++
++func verifyOwnQuestionScope(t *testing.T, repo *Repository) {
++	t.Helper()
++	ctx := context.Background()
++	seedForMsgTest(t, repo, "own-q-task", "own-q-session", "own-q-turn")
++	seedForMsgTest(t, repo, "peer-q-task", "peer-q-session", "peer-q-turn")
++	now := time.Now().UTC()
++	for _, m := range []*models.Message{
++		{ID: "own-q", TaskID: "own-q-task", TaskSessionID: "own-q-session", TurnID: "own-q-turn", Type: models.MessageTypeClarificationRequest, AuthorType: "agent", Content: "MUST NOT LOAD BODY", CreatedAt: now, UpdatedAt: now, Metadata: map[string]any{"question_id": "same-q", "pending_id": "own-pending", "status": "answered"}},
++		{ID: "human-q", TaskID: "own-q-task", TaskSessionID: "own-q-session", TurnID: "own-q-turn", Type: models.MessageTypeMessage, AuthorType: "user", Content: "MUST NOT LOAD HUMAN", CreatedAt: now, UpdatedAt: now, Metadata: map[string]any{"question_id": "same-q", "pending_id": "human-pending"}},
++		{ID: "peer-q", TaskID: "peer-q-task", TaskSessionID: "peer-q-session", TurnID: "peer-q-turn", Type: models.MessageTypeClarificationRequest, AuthorType: "agent", Content: "MUST NOT LOAD PEER", CreatedAt: now, UpdatedAt: now, Metadata: map[string]any{"question_id": "same-q", "pending_id": "peer-pending"}},
++	} {
++		if err := repo.CreateMessage(ctx, m); err != nil {
++			t.Fatal(err)
++		}
++	}
++	messages, err := repo.FindOwnClarificationMessages(ctx, "own-q-task", "own-q-session", []string{"same-q"})
++	if err != nil || len(messages) != 1 || messages[0].ID != "own-q" || messages[0].Content != "" {
++		t.Fatalf("exact-own metadata read failed: %+v, %v", messages, err)
++	}
++	messages, err = repo.FindOwnClarificationMessages(ctx, "own-q-task", "peer-q-session", []string{"same-q"})
++	if err != nil || len(messages) != 0 {
++		t.Fatalf("mixed task/session returned rows: %+v, %v", messages, err)
++	}
++	messages, err = repo.FindOwnClarificationMessages(ctx, "own-q-task", "own-q-session", []string{"unknown-q"})
++	if err != nil || len(messages) != 0 {
++		t.Fatalf("unknown question returned rows: %+v, %v", messages, err)
++	}
++}
+diff --git a/apps/backend/pkg/websocket/actions.go b/apps/backend/pkg/websocket/actions.go
+index 31b5708acf..4c850cbd1a 100644
+--- a/apps/backend/pkg/websocket/actions.go
++++ b/apps/backend/pkg/websocket/actions.go
+@@ -479,6 +479,7 @@ const (
+ 	ActionMCPUpdateRepositoryBaseBranch            = "mcp.update_repository_base_branch"
+ 	ActionMCPStepComplete                          = "mcp.step_complete" // ADR 0015: agent-emitted explicit completion signal
+ 	ActionMCPAskUserQuestion                       = "mcp.ask_user_question"
++	ActionMCPGetOwnQuestionStatus                  = "mcp.get_own_question_status"
+ 	ActionMCPAskParentQuestion                     = "mcp.ask_parent_question"
+ 	ActionMCPListPendingQuestions                  = "mcp.list_pending_questions"
+ 	ActionMCPAnswerQuestion                        = "mcp.answer_question"
