@@ -1,0 +1,96 @@
+{
+  "alternate_routes": [
+    {
+      "result": "required own incarnation and environment generation not returned; conversation exposes messages/IDs only; no live calls made",
+      "route": "ordinary session/conversation/queue MCP projections"
+    },
+    {
+      "result": "projection lacks the required binding tuple and collection scope is broader than this exact inert verifier; not invoked",
+      "route": "diagnostic session bundle"
+    },
+    {
+      "result": "stored environment getter exists but not a same-caller ordinary MCP operation; no preissued usable caller auth route established; credentials were not acquired/read/minted and hidden API not invoked",
+      "route": "HTTP environment getter"
+    },
+    {
+      "result": "catalog refresh exists; existing SDK Session projection omits queue incarnation/environment generation. Extending that host ABI still needs backend changes. No plugin, grant or authentication state changed.",
+      "route": "dynamic plugin tools"
+    },
+    {
+      "result": "existing task-root HMAC cannot distinguish siblings; no session token minted/copied or peer/process scan introduced",
+      "route": "task Docker broker"
+    },
+    {
+      "result": "No supported own-caller provider-preserving native/backend reload established. In-place binary replacement does not load new code into existing processes; no unreviewed process restart or alternate deploy attempted.",
+      "route": "native code refresh"
+    }
+  ],
+  "broker_request_id": "f9c859f7-c0d1-480b-a571-fc269ece3380",
+  "correction": {
+    "corrected_claim": "When agent-survival is enabled, backend shutdown detaches non-passthrough standalone executions without calling StopInstance or publishing agent.stopped. Disabled survival, passthrough and other cases can terminate. Service-container recreation and current caller native-tool refresh are separate boundaries; no safe fb02 provider-preserving installation has been proved.",
+    "not_a_runtime_claim": "Current survival flag, physical caller placement and preservation across recreation are not inferred from source code or tests.",
+    "prior_claim": "StopAllAgents necessarily terminates all providers"
+  },
+  "delivery_target": {
+    "coordinator_session_id": "13d8c011-6e49-40ef-80e9-2f1445296d06",
+    "coordinator_task_id": "a68df3ae-aaf5-4591-a46d-9d73db62e46d"
+  },
+  "deployed_parent_static_sha256": {
+    "apps/backend/internal/agent/runtime/lifecycle/manager_interaction.go": "1d1c7c318652a5b85890dfcb26c2e34c458d6842204e69d29e64e1d98f101cef",
+    "apps/backend/internal/agent/runtime/lifecycle/manager_stop_detach_test.go": "1c0540d1f8e3d53ba35db1c23a0e9acfdd6b99d8eeb9c94618f64edc8fc15315",
+    "apps/backend/internal/agent/runtime/lifecycle/manager_stop_worktree_test.go": "71eb6618ed3cb6ab2f2bba4a05f1befdbdd4768d3284e210e1939df04e42a705",
+    "apps/backend/internal/backendapp/diagnostic_session_provider.go": "d699b6de53f58331c3f5a2aa66701533b05cdb3db84e34a92e84d1c81298377b",
+    "apps/backend/internal/mcp/handlers/handlers.go": "fbd2325a7eaec7bbcd6fb48505a8d6d88b5fa3159987d24ddd12cc85dea51738",
+    "apps/backend/internal/mcp/handlers/list_task_sessions.go": "84f98ad88905ff4cd8336994364b4a26d1957558be9790b9ca67c70e89357d26",
+    "apps/backend/internal/mcp/handlers/message_queue_recovery.go": "8039a6460e7599410a1afb2c8bcb23b5f8947aa92614d27dee895701529d4ae9",
+    "apps/backend/internal/mcp/server/server.go": "3fd2b9f8e2b3d9bd235a5c5a7dd7664ea3847873d241da34f59e4587352bba86",
+    "apps/backend/internal/plugins/agent_tools.go": "a3d7873ef654d54b458e0b245a04fd63338bdab38b8e595b39b24f021919d849",
+    "apps/backend/internal/task/handlers/task_environment_handlers.go": "5da295d14f7d15b65a9e05137c5c830ccd25f9535eae3351bd0018c9b203550b",
+    "apps/backend/pkg/pluginsdk/data_types.go": "d3e516f061f365bb4f82a85a3ae49651abce05865ac21476ff3e65bcd3171e34"
+  },
+  "missing_predicate": "A supported installation path that loads the patched backend and exact fb02 native MCP surface without forbidden provider/runtime lifecycle effects, with authenticated current caller/incarnation/environment preservation; topology/recovery cannot be guessed.",
+  "original_pg16_evidence_sha256": "fb02ba36a12af620c92525be0ad8f8eaa6cadd5aaa5d6e063aeb0f38222e9500",
+  "prepared_candidates_retained": {
+    "agentctl": "9731de452fabcb4389fb12537e6fb2d0bee67dd70dbbeb561338fb2274f4f16c",
+    "agentctl-linux-amd64": "061206dda525d05a39da2058f3504e5fc5bdbd5572d7c8456d8acc3bef064e32",
+    "kandev": "bf170441899c7533eb6783a121838230dd5f5a373abdfbf98a4788223f1b73fb"
+  },
+  "preservation": {
+    "accepted_caller_receipt_issued": false,
+    "fifo_counters_questions_changed": false,
+    "original_repair_receipt_and_pg16_artifacts": "unchanged",
+    "provider_runtime_or_deployment_changed": false,
+    "shared_db_credentials_accessed": false,
+    "source_product_or_git_changed": false,
+    "task_message_relayed": false
+  },
+  "previous_receipt_sha256": "181094a23a2572a2b25894ed578c927546014a98b4e91f9b0d2aec6a79d15740",
+  "reviewed_host_escalation": {
+    "automatic_review": "REJECTED",
+    "credentials_environment_or_task_process_data_requested": false,
+    "executed": false,
+    "indirect_retry_or_bypass": false,
+    "namespace_topology": "UNVERIFIED",
+    "requested_operation": "exact kandev service image/PID-namespace/init configuration only",
+    "stated_reason": "read-only Docker inspection conflicts with explicit raw Docker/host-access prohibition and was deemed unnecessary for caller-binding verifier"
+  },
+  "smallest_next_action": "Deployment owner supplies a reviewed provider-preserving installation/reload binding, or changes authorization through a scoped maintenance/preservation contract. Engineering fix itself is already authorized and retained. If validating service namespace is the chosen preflight, the exact rejected read requires reviewed approval; it does not authorize deployment or provider actions.",
+  "source_fix_commit": "9fde182148c2a186c308376cae0efa8f107d4a66",
+  "source_patch_sha256": "282e5c5749614a92cfda3becf785f1bbb1eb95a053a51075e24ebd1391b958b9",
+  "status": "BLOCKED_PROVIDER_PRESERVING_INSTALLATION_NOT_ESTABLISHED",
+  "validation": {
+    "actual_Source_or_PG16_tests": "NOT RUN",
+    "cases": [
+      "survival-enabled standalone detach without StopInstance/stopped event",
+      "survival-disabled shutdown termination",
+      "non-standalone shutdown behavior",
+      "worktree preservation on both shutdown paths",
+      "passthrough shutdown termination"
+    ],
+    "prepared_verifier_tests": "unchanged prior passing evidence; no code change required repeat",
+    "result": "PASS",
+    "targeted_synthetic_lifecycle_race_tests": 5,
+    "tests_log_sha256": "a8a42eba3c790c9671fa80b89a4b32fb7c883db566a2a19bb977c3e6b60b5cf5"
+  },
+  "version": "pg16-own-binding-escalation1/v1"
+}
