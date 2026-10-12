@@ -1,0 +1,99 @@
+{
+  "action": "mcp.verify_own_distribution_binding",
+  "auth_contract": "backend execution-stream principal, ordinary own task/session; payload cannot substitute caller; queue incarnation and environment generation read through existing repositories; durable binding rechecked after static packet/Git reads",
+  "blocked_predicate": {
+    "broker_equivalent": "ineligible: existing HMAC binds task root, not authenticated exact session",
+    "reason": "safe-deploy service recreation invokes backend stopLifecycleManager -> StopAllAgents, excluded by explicit no-provider/runtime mutation constraint",
+    "required_next_action": "deployment owner must establish a supported authenticated provider-preserving reload, or a separately scoped reviewed maintenance contract authorizing/reconciling provider lifecycle effects; engineering fix itself already authorized",
+    "supported_provider_preserving_native_reload_established": false
+  },
+  "broker_request_id": "f9c859f7-c0d1-480b-a571-fc269ece3380",
+  "candidate_binaries": {
+    "agentctl": "9731de452fabcb4389fb12537e6fb2d0bee67dd70dbbeb561338fb2274f4f16c",
+    "agentctl-linux-amd64": "061206dda525d05a39da2058f3504e5fc5bdbd5572d7c8456d8acc3bef064e32",
+    "kandev": "bf170441899c7533eb6783a121838230dd5f5a373abdfbf98a4788223f1b73fb"
+  },
+  "candidate_installed": false,
+  "corrected_recipe_sha256": "d02066eb67f36ecfae63d4bd015c08a8eb112bce4489e0d7003aedeacc066567",
+  "delivery_target": {
+    "coordinator_session_id": "13d8c011-6e49-40ef-80e9-2f1445296d06",
+    "coordinator_task_id": "a68df3ae-aaf5-4591-a46d-9d73db62e46d"
+  },
+  "deployment_performed": false,
+  "expected_output": {
+    "native_probes_run": false,
+    "product_acceptance": false,
+    "status": "own_binding_verified",
+    "version": "own-distribution-binding/v1"
+  },
+  "input": {
+    "delivery_id": "b21ff77b-0e84-4a80-983e-98e98b7bc192",
+    "manifest_sha256": "d3fb175f74039a333a463eea5583e24b8552265a493f7f9cc93c629fad9b0555",
+    "packet_path": ".kandev/diagnostics/pg16-31a2d4ae",
+    "receipt_sha256": "eb4572656cebb52deffdbd748c50a77bcbe0eb1be3ac5a87aa88691f9d0c7fba",
+    "repository_id": "a462935c-6825-463e-aff0-60b20f87f6fb"
+  },
+  "live_apparmor_observed": "kandev-codex",
+  "live_image_observed": "sha256:cee318f8d409330e9945cd958bb6c6159eec72c56e990f43cc31323debfba16f",
+  "live_restart_count_observed": 0,
+  "original_evidence_sha256": "fb02ba36a12af620c92525be0ad8f8eaa6cadd5aaa5d6e063aeb0f38222e9500",
+  "original_preservation": {
+    "git_marker_sha256": "9a0d4961b239fb2206dc4d6be0e93771896b20e3732bc2be7bbdf67e7aebee54",
+    "head": "6bd1bec2679fc71b5333a7255a70693ff4942a01",
+    "head_marker_sha256": "17824aee76f60c5448a7b2dd0fbe5dd1fd0283a63c13222bdd072eda99e3ba83",
+    "index_sha256": "d6aea5652d2b21b6ec2a23376e824b4e60609e69cb3db5618fd57d6219bbbca8",
+    "prompt_sha256": null
+  },
+  "preservation": {
+    "actual_source_caller_acceptance": "NOT RUN",
+    "fifo_questions_counters_altered": false,
+    "paired_retention_outcomes": "NOT RUN/UNKNOWN",
+    "pg_packet_or_receipts_changed": false,
+    "provider_or_runtime_mutated": false,
+    "shared_db_or_credentials_accessed": false,
+    "source_product_tests_run": false,
+    "task_files_or_git_touched": false,
+    "task_message_relayed": false
+  },
+  "previous_overlay_sha256": {
+    "agentctl": "4181384550bbe0d1c1f2f1f5157a4a819482417ed8789a8903155779292da8ec",
+    "agentctl-linux-amd64": "bc7f9d9494ff117bf2bd884fa10f6f4e0e92104fa8c75cd0063edcc81cfa7869",
+    "kandev": "75128d854c9f5ddcdebe85fd9e3c057897f460ae1d10535a67805ed9053bf57b"
+  },
+  "required_backend_binding": {
+    "branch": "feature/fix-plugin-task-prio-w7w",
+    "environment_id": "04c8fe7d-1c9e-487b-b690-3dcbe274a55c",
+    "head": "6bd1bec2679fc71b5333a7255a70693ff4942a01",
+    "ownership_generation": 1,
+    "repository_id": "a462935c-6825-463e-aff0-60b20f87f6fb",
+    "session_id": "fb02c865-374b-40c8-98b8-02c2ff19b394",
+    "session_incarnation_id": "2070b0b2-c9ea-4f79-aab7-18f2b0f82702",
+    "task_id": "e8728906-86de-4a75-960f-9da585485823",
+    "workspace_id": "2e62401b-5ffe-4050-bc1b-d49ea5d5dbcd",
+    "worktree": "/data/tasks/fix-plugin-task-prio_rksfvx9c/kdlbs-kandev",
+    "worktree_id": "d41703e1-a354-4503-a5b5-324606065e54"
+  },
+  "retained_adoption_patch_sha256": "79b787b189b8df3742d5bd67d838974232f2517c14e3bdd4ce64bab0e9274e2a",
+  "retained_frontend_hash_count": 361,
+  "socket_correction_sha256": "4df5e125b14096ccb7f494f9896e240165bda6f2df86acefa22c7cb7a537920b",
+  "source_commit": "9fde182148c2a186c308376cae0efa8f107d4a66",
+  "source_parent": "79b0e8a39b7a3ff74cf15fa611202ab558dfaa64",
+  "source_patch_sha256": "282e5c5749614a92cfda3becf785f1bbb1eb95a053a51075e24ebd1391b958b9",
+  "status": "BLOCKED_INSTALLATION",
+  "tool": "verify_own_distribution_binding_kandev",
+  "validation": {
+    "all_three_native_builds": "PASS",
+    "artifactbinding_race_suite": "PASS",
+    "foreign_caller_task_session_workspace_repo": "DENIED",
+    "full_mcp_handlers_race_suite": "PASS",
+    "full_mcp_server_race_suite": "PASS after adding exact new tool to rebuild catalog assertion",
+    "head_index_git_marker_prompt_drift": "DENIED",
+    "lint": "0 issues",
+    "matching_authenticated_synthetic_receipt": "PASS",
+    "packet_hash_symlink_escape_incomplete": "DENIED",
+    "red_tests_observed": true,
+    "replaced_incarnation_environment_generation": "DENIED",
+    "terminal_or_protected_lane": "DENIED"
+  },
+  "version": "own-distribution-binding-support/v1"
+}

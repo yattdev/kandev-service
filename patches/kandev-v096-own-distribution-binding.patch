@@ -1,0 +1,723 @@
+diff --git a/apps/backend/internal/mcp/handlers/handlers.go b/apps/backend/internal/mcp/handlers/handlers.go
+index 81e68e0d1..6e6b29357 100644
+--- a/apps/backend/internal/mcp/handlers/handlers.go
++++ b/apps/backend/internal/mcp/handlers/handlers.go
+@@ -568,6 +568,7 @@ func (h *Handlers) registerTaskPlanHandlers(d *guardedMCPDispatcher) {
+ func (h *Handlers) registerTaskQuestionHandlers(d *guardedMCPDispatcher) {
+ 	d.RegisterFunc(ws.ActionMCPAskUserQuestion, h.handleAskUserQuestion)
+ 	d.RegisterFunc(ws.ActionMCPGetOwnQuestionStatus, h.handleGetOwnQuestionStatus)
++	d.RegisterFunc("mcp.verify_own_distribution_binding", h.handleOwnDistribution)
+ 	d.RegisterFunc(ws.ActionMCPReconcileOwnQuestionAnswer, h.handleReconcileOwnAnswer)
+ 	d.RegisterFunc(ws.ActionMCPAskParentQuestion, h.handleAskParentQuestion)
+ 	d.RegisterFunc(ws.ActionMCPClarificationTimeout, h.handleClarificationTimeout)
+diff --git a/apps/backend/internal/mcp/handlers/own_distribution.go b/apps/backend/internal/mcp/handlers/own_distribution.go
+new file mode 100644
+index 000000000..1d7af3df9
+--- /dev/null
++++ b/apps/backend/internal/mcp/handlers/own_distribution.go
+@@ -0,0 +1,152 @@
++package handlers
++
++import (
++	"bytes"
++	"context"
++	"encoding/json"
++	"errors"
++	"path/filepath"
++	"reflect"
++	"strings"
++
++	mcpprofile "github.com/kandev/kandev/internal/mcp/profile"
++	mcpscope "github.com/kandev/kandev/internal/mcp/scope"
++	"github.com/kandev/kandev/internal/task/artifactbinding"
++	"github.com/kandev/kandev/internal/task/models"
++	ws "github.com/kandev/kandev/pkg/websocket"
++)
++
++type ownDistributionRequest struct {
++	TaskID       string `json:"task_id"`
++	SessionID    string `json:"session_id"`
++	PacketPath   string `json:"packet_path"`
++	DeliveryID   string `json:"delivery_id"`
++	ReceiptSHA   string `json:"receipt_sha256"`
++	ManifestSHA  string `json:"manifest_sha256"`
++	RepositoryID string `json:"repository_id"`
++}
++type distributionEnvironmentReader interface {
++	GetTaskEnvironment(context.Context, string) (*models.TaskEnvironment, error)
++}
++
++func (h *Handlers) handleOwnDistribution(ctx context.Context, msg *ws.Message) (*ws.Message, error) {
++	var req ownDistributionRequest
++	d := json.NewDecoder(bytes.NewReader(msg.Payload))
++	d.DisallowUnknownFields()
++	if d.Decode(&req) != nil {
++		return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeValidation, "exact own-distribution contract required", nil)
++	}
++	caller, err := h.authorizeOwnQuestion(ctx, ownQuestionRequest{TaskID: req.TaskID, SessionID: req.SessionID})
++	p, _ := mcpscope.PrincipalFromContext(ctx)
++	if err != nil || p.Surface != mcpprofile.SurfaceKanbanTask {
++		return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeForbidden, "authenticated ordinary own caller required", nil)
++	}
++	current, err := h.readDistributionBinding(ctx, caller, req.SessionID, req.RepositoryID)
++	if err != nil {
++		return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeConflict, "complete active own binding unavailable; preserve receipt", nil)
++	}
++	receipt, err := artifactbinding.Verify(current, req.PacketPath, req.DeliveryID, req.ReceiptSHA, req.ManifestSHA)
++	if err != nil {
++		return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeConflict, err.Error(), nil)
++	}
++	// Revalidate caller and durable ownership after static file reads.
++	caller, err = h.authorizeOwnQuestion(ctx, ownQuestionRequest{TaskID: req.TaskID, SessionID: req.SessionID})
++	if err != nil {
++		return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeConflict, "own binding changed during verification", nil)
++	}
++	final, err := h.readDistributionBinding(ctx, caller, req.SessionID, req.RepositoryID)
++	if err != nil || !reflect.DeepEqual(final, current) {
++		return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeConflict, "own binding changed during verification", nil)
++	}
++	return ws.NewResponse(msg.ID, msg.Action, receipt)
++}
++func (h *Handlers) readDistributionBinding(ctx context.Context, task *models.Task, sessionID, repoID string) (artifactbinding.Binding, error) {
++	empty := artifactbinding.Binding{}
++	if task == nil || task.ArchivedAt != nil || task.WorkflowStepID == "" {
++		return empty, errors.New("ineligible task")
++	}
++	state := strings.ToUpper(string(task.State))
++	if state == "DONE" || state == "COMPLETED" || state == "CANCELLED" || state == "FAILED" {
++		return empty, errors.New("terminal task")
++	}
++	step, err := h.taskSvc.GetWorkflowStep(ctx, task.WorkflowStepID)
++	if err != nil || step == nil || strings.NewReplacer(" ", "", "-", "").Replace(strings.ToLower(step.Name)) == "todeploy" {
++		return empty, errors.New("protected or unknown lane")
++	}
++	session, err := h.sessionRepo.GetTaskSession(ctx, sessionID)
++	if err != nil || session == nil {
++		return empty, errors.New("session unavailable")
++	}
++	reader, ok := h.sessionRepo.(distributionEnvironmentReader)
++	if !ok {
++		return empty, errors.New("environment reader unavailable")
++	}
++	env, err := reader.GetTaskEnvironment(ctx, session.TaskEnvironmentID)
++	if err != nil {
++		return empty, errors.New("environment unavailable")
++	}
++	return distributionBinding(task, session, env, repoID)
++}
++func distributionBinding(task *models.Task, s *models.TaskSession, e *models.TaskEnvironment, repoID string) (artifactbinding.Binding, error) {
++	empty := artifactbinding.Binding{}
++	if !validDistributionOwnership(task, s, e, repoID) {
++		return empty, errors.New("incomplete ownership")
++	}
++	if !distributionSessionActive(s.State) {
++		return empty, errors.New("inactive session")
++	}
++	attached := false
++	for _, r := range task.Repositories {
++		if r != nil && r.RepositoryID == repoID {
++			attached = true
++		}
++	}
++	if !attached {
++		return empty, errors.New("unregistered repository")
++	}
++	row, err := distributionRepo(e, repoID)
++	if err != nil {
++		return empty, err
++	}
++	root := filepath.Clean(e.WorkspacePath)
++	path := filepath.Clean(row.WorktreePath)
++	if !validDistributionPath(e, root, path, row.WorktreePath) {
++		return empty, errors.New("worktree binding differs")
++	}
++	return artifactbinding.Binding{TaskID: task.ID, WorkspaceID: task.WorkspaceID, RepositoryID: repoID, SessionID: s.ID, SessionIncarnationID: s.QueueIncarnationID, EnvironmentID: e.ID, OwnershipGeneration: e.OwnershipGeneration, WorktreeID: row.WorktreeID, Worktree: path, Branch: row.WorktreeBranch}, nil
++}
++func validDistributionOwnership(t *models.Task, s *models.TaskSession, e *models.TaskEnvironment, repo string) bool {
++	if t == nil || s == nil || e == nil {
++		return false
++	}
++	return repo != "" && s.TaskID == t.ID && e.TaskID == t.ID && e.ID == s.TaskEnvironmentID && e.Status == models.TaskEnvironmentStatusReady && e.OwnershipGeneration > 0 && s.QueueIncarnationID != "" && s.CompletedAt == nil
++}
++func distributionSessionActive(state models.TaskSessionState) bool {
++	switch state {
++	case models.TaskSessionStateCreated, models.TaskSessionStateStarting, models.TaskSessionStateRunning, models.TaskSessionStateWaitingForInput:
++		return true
++	default:
++		return false
++	}
++}
++func distributionRepo(e *models.TaskEnvironment, id string) (*models.TaskEnvironmentRepo, error) {
++	var row *models.TaskEnvironmentRepo
++	for _, r := range e.Repos {
++		if r != nil && r.RepositoryID == id {
++			if row != nil {
++				return nil, errors.New("ambiguous repository")
++			}
++			row = r
++		}
++	}
++	if row == nil {
++		return nil, errors.New("missing worktree")
++	}
++	if row.TaskEnvironmentID != e.ID || row.Status != "active" || row.DeletedAt != nil || row.WorktreeID == "" || row.WorktreeBranch == "" || row.ErrorMessage != "" {
++		return nil, errors.New("inactive worktree")
++	}
++	return row, nil
++}
++func validDistributionPath(e *models.TaskEnvironment, root, path, raw string) bool {
++	return filepath.IsAbs(path) && e.TaskDirName != "" && filepath.Base(root) == e.TaskDirName && filepath.Dir(path) == root && path == raw
++}
+diff --git a/apps/backend/internal/mcp/handlers/own_distribution_test.go b/apps/backend/internal/mcp/handlers/own_distribution_test.go
+new file mode 100644
+index 000000000..535b8c854
+--- /dev/null
++++ b/apps/backend/internal/mcp/handlers/own_distribution_test.go
+@@ -0,0 +1,119 @@
++package handlers
++
++import (
++	"context"
++	"crypto/sha256"
++	"encoding/hex"
++	"encoding/json"
++	mcpscope "github.com/kandev/kandev/internal/mcp/scope"
++	"github.com/kandev/kandev/internal/task/artifactbinding"
++	"github.com/kandev/kandev/internal/task/models"
++	wfmodels "github.com/kandev/kandev/internal/workflow/models"
++	ws "github.com/kandev/kandev/pkg/websocket"
++	"github.com/stretchr/testify/require"
++	"os"
++	"path/filepath"
++	"testing"
++)
++
++func TestOwnDistributionRequiresTrustedCaller(t *testing.T) {
++	h, _, ctx, _ := ownQuestionFixture(t)
++	for _, c := range []context.Context{context.Background(), mcpscope.WithPrincipal(ctx, mcpscope.Principal{CallerTaskID: "own-task", CallerSessionID: "own-session", WorkspaceID: "foreign"})} {
++		response, err := h.handleOwnDistribution(c, makeWSMessage(t, "mcp.verify_own_distribution_binding", map[string]any{"task_id": "own-task", "session_id": "own-session", "packet_path": ".kandev/diagnostics/packet", "delivery_id": "d", "receipt_sha256": "r", "manifest_sha256": "m"}))
++		require.NoError(t, err)
++		require.Equal(t, ws.MessageTypeError, response.Type)
++	}
++	response, err := h.handleOwnDistribution(ctx, makeWSMessage(t, "mcp.verify_own_distribution_binding", map[string]any{"task_id": "foreign", "session_id": "own-session"}))
++	require.NoError(t, err)
++	require.Equal(t, ws.MessageTypeError, response.Type)
++}
++func TestDistributionBindingRequiresCompleteCurrentInventory(t *testing.T) {
++	task := &models.Task{ID: "task", WorkspaceID: "ws", Repositories: []*models.TaskRepository{{RepositoryID: "repo"}}}
++	session := &models.TaskSession{ID: "session", TaskID: "task", QueueIncarnationID: "inc", TaskEnvironmentID: "env", State: models.TaskSessionStateRunning}
++	env := &models.TaskEnvironment{ID: "env", TaskID: "task", TaskDirName: "task_root", WorkspacePath: "/data/tasks/task_root", OwnershipGeneration: 1, Status: models.TaskEnvironmentStatusReady, Repos: []*models.TaskEnvironmentRepo{{RepositoryID: "repo", TaskEnvironmentID: "env", WorktreeID: "wt", WorktreePath: "/data/tasks/task_root/repo", WorktreeBranch: "feature/test", Status: "active"}}}
++	got, err := distributionBinding(task, session, env, "repo")
++	require.NoError(t, err)
++	require.Equal(t, artifactbinding.Binding{TaskID: "task", WorkspaceID: "ws", RepositoryID: "repo", SessionID: "session", SessionIncarnationID: "inc", EnvironmentID: "env", OwnershipGeneration: 1, WorktreeID: "wt", Worktree: "/data/tasks/task_root/repo", Branch: "feature/test"}, got)
++	for _, name := range []string{"terminal", "incarnation", "generation", "foreign", "inventory", "deleted", "branch", "path"} {
++		t.Run(name, func(t *testing.T) {
++			s := *session
++			e := *env
++			row := *env.Repos[0]
++			e.Repos = []*models.TaskEnvironmentRepo{&row}
++			switch name {
++			case "terminal":
++				s.State = models.TaskSessionStateCompleted
++			case "incarnation":
++				s.QueueIncarnationID = ""
++			case "generation":
++				e.OwnershipGeneration = 0
++			case "foreign":
++				e.TaskID = "foreign"
++			case "inventory":
++				e.Repos = append(e.Repos, &row)
++			case "deleted":
++				row.Status = "deleted"
++			case "branch":
++				row.WorktreeBranch = ""
++			case "path":
++				row.WorktreePath = "/data/tasks/foreign/repo"
++			}
++			_, err := distributionBinding(task, &s, &e, "repo")
++			require.Error(t, err)
++		})
++	}
++}
++
++func TestOwnDistributionAuthenticatedReceiptAndProtectedLane(t *testing.T) {
++	h, repo, ctx, _ := ownQuestionFixture(t)
++	base := t.TempDir()
++	root := filepath.Join(base, "repo")
++	admin := filepath.Join(base, "admin")
++	slot := filepath.Join(root, ".kandev/diagnostics/packet")
++	for _, dir := range []string{slot, filepath.Join(admin, "refs/heads/feature")} {
++		require.NoError(t, os.MkdirAll(dir, 0700))
++	}
++	digest := func(raw []byte) string { sum := sha256.Sum256(raw); return hex.EncodeToString(sum[:]) }
++	marker := []byte("gitdir: " + admin + "\n")
++	head := []byte("ref: refs/heads/feature/test\n")
++	index := []byte("unchanged-index")
++	commit := "1111111111111111111111111111111111111111"
++	for path, raw := range map[string][]byte{filepath.Join(root, ".git"): marker, filepath.Join(admin, "HEAD"): head, filepath.Join(admin, "index"): index, filepath.Join(admin, "refs/heads/feature/test"): []byte(commit + "\n"), filepath.Join(slot, "manifest.json"): []byte("manifest")} {
++		require.NoError(t, os.WriteFile(path, raw, 0600))
++	}
++	task, err := repo.GetTask(ctx, "own-task")
++	require.NoError(t, err)
++	task.WorkflowStepID = "own-step"
++	require.NoError(t, repo.UpdateTask(ctx, task))
++	getter := &staticWorkflowStepGetter{steps: map[string]*wfmodels.WorkflowStep{"own-step": {ID: "own-step", Name: "Source"}}}
++	h.taskSvc.SetWorkflowStepGetter(getter)
++	require.NoError(t, repo.CreateRepository(ctx, &models.Repository{ID: "repo", WorkspaceID: task.WorkspaceID, Name: "repo", SourceType: "local", LocalPath: root}))
++	require.NoError(t, repo.CreateTaskRepository(ctx, &models.TaskRepository{TaskID: task.ID, RepositoryID: "repo"}))
++	env := &models.TaskEnvironment{ID: "env", TaskID: task.ID, TaskDirName: filepath.Base(base), WorkspacePath: base, Status: models.TaskEnvironmentStatusReady, OwnershipGeneration: 1, Repos: []*models.TaskEnvironmentRepo{{ID: "env-repo", TaskEnvironmentID: "env", RepositoryID: "repo", WorktreeID: "wt", WorktreePath: root, WorktreeBranch: "feature/test", Status: "active"}}}
++	require.NoError(t, repo.CreateTaskEnvironment(ctx, env))
++	session, err := repo.GetTaskSession(ctx, "own-session")
++	require.NoError(t, err)
++	session.TaskEnvironmentID = "env"
++	require.NoError(t, repo.UpdateTaskSession(ctx, session))
++	b := artifactbinding.Binding{TaskID: task.ID, WorkspaceID: task.WorkspaceID, SessionID: session.ID, SessionIncarnationID: session.QueueIncarnationID, EnvironmentID: env.ID, OwnershipGeneration: 1, RepositoryID: "repo", WorktreeID: "wt", Worktree: root, Branch: "feature/test", Head: commit}
++	r := map[string]any{"delivery_id": "delivery", "binding": b, "manifest_sha256": digest([]byte("manifest")), "preservation": map[string]any{"head": commit, "git_marker_sha256": digest(marker), "head_marker_sha256": digest(head), "index_sha256": digest(index), "prompt_sha256": nil}}
++	raw, err := json.Marshal(r)
++	require.NoError(t, err)
++	require.NoError(t, os.WriteFile(filepath.Join(slot, "receipt.json"), raw, 0600))
++	args := map[string]any{"task_id": task.ID, "session_id": session.ID, "repository_id": "repo", "packet_path": ".kandev/diagnostics/packet", "delivery_id": "delivery", "receipt_sha256": digest(raw), "manifest_sha256": digest([]byte("manifest"))}
++	response, err := h.handleOwnDistribution(ctx, makeWSMessage(t, "mcp.verify_own_distribution_binding", args))
++	require.NoError(t, err)
++	require.Equal(t, ws.MessageTypeResponse, response.Type, string(response.Payload))
++	require.Contains(t, string(response.Payload), session.QueueIncarnationID)
++	require.Contains(t, string(response.Payload), `"product_acceptance":false`)
++	getter.steps["own-step"].Name = "To Deploy"
++	response, err = h.handleOwnDistribution(ctx, makeWSMessage(t, "mcp.verify_own_distribution_binding", args))
++	require.NoError(t, err)
++	require.Equal(t, ws.MessageTypeError, response.Type)
++	getter.steps["own-step"].Name = "Source"
++	session.State = models.TaskSessionStateCompleted
++	require.NoError(t, repo.UpdateTaskSession(ctx, session))
++	response, err = h.handleOwnDistribution(ctx, makeWSMessage(t, "mcp.verify_own_distribution_binding", args))
++	require.NoError(t, err)
++	require.Equal(t, ws.MessageTypeError, response.Type)
++}
+diff --git a/apps/backend/internal/mcp/server/own_distribution.go b/apps/backend/internal/mcp/server/own_distribution.go
+new file mode 100644
+index 000000000..967b24703
+--- /dev/null
++++ b/apps/backend/internal/mcp/server/own_distribution.go
+@@ -0,0 +1,34 @@
++package mcp
++
++import (
++	"context"
++	"github.com/mark3labs/mcp-go/mcp"
++	"github.com/mark3labs/mcp-go/server"
++)
++
++const ownDistributionToolName = "verify_own_distribution_binding_kandev"
++
++func (s *Server) registerOwnDistributionTool() {
++	options := []mcp.ToolOption{mcp.WithDescription("Read and verify this authenticated caller's exact active task/session queue incarnation, environment ownership generation and registered repository against a reviewed inert distribution receipt. Requires externally supplied immutable receipt/manifest hashes. Static receipt, branch/head, Git marker/HEAD/index and original PROMPT preservation only; no native binary, server, test, credential, queue, acknowledgement, lifecycle or product admission. Foreign, incomplete, terminal, protected or changed bindings fail closed."), mcp.WithReadOnlyHintAnnotation(true), mcp.WithDestructiveHintAnnotation(false), mcp.WithIdempotentHintAnnotation(true), mcp.WithOpenWorldHintAnnotation(false)}
++	for _, key := range []string{"repository_id", "packet_path", "delivery_id", "receipt_sha256", "manifest_sha256"} {
++		options = append(options, mcp.WithString(key, mcp.Required()))
++	}
++	s.mcpServer.AddTool(mcp.NewTool(ownDistributionToolName, options...), s.wrapSensitiveHandler(ownDistributionToolName, s.ownDistributionHandler()))
++}
++func (s *Server) ownDistributionHandler() server.ToolHandlerFunc {
++	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
++		payload := map[string]any{"task_id": s.taskID, "session_id": s.sessionID}
++		for _, key := range []string{"repository_id", "packet_path", "delivery_id", "receipt_sha256", "manifest_sha256"} {
++			value := req.GetString(key, "")
++			if value == "" {
++				return mcp.NewToolResultError("exact reviewed distribution identities/hashes required"), nil
++			}
++			payload[key] = value
++		}
++		var result map[string]interface{}
++		if s.backend.RequestPayload(ctx, "mcp.verify_own_distribution_binding", payload, &result) != nil {
++			return mcp.NewToolResultError("own distribution verification unavailable or refused; no acceptance"), nil
++		}
++		return ownQuestionToolResult(result), nil
++	}
++}
+diff --git a/apps/backend/internal/mcp/server/own_distribution_test.go b/apps/backend/internal/mcp/server/own_distribution_test.go
+new file mode 100644
+index 000000000..7afbe5a95
+--- /dev/null
++++ b/apps/backend/internal/mcp/server/own_distribution_test.go
+@@ -0,0 +1,24 @@
++package mcp
++
++import (
++	"github.com/stretchr/testify/require"
++	"testing"
++)
++
++func TestOwnDistributionCatalogAndCallerBinding(t *testing.T) {
++	backend := &testBackend{response: map[string]interface{}{"status": "own_binding_verified"}}
++	s := newTaskModeServer(t, backend, "own-task")
++	require.Contains(t, s.mcpServer.ListTools(), "verify_own_distribution_binding_kandev")
++	args := map[string]interface{}{"repository_id": "repo", "packet_path": ".kandev/diagnostics/packet", "delivery_id": "delivery", "receipt_sha256": "hash", "manifest_sha256": "hash"}
++	result := callTool(t, s, "verify_own_distribution_binding_kandev", args)
++	require.False(t, result.IsError)
++	payload := backend.lastPayload.(map[string]interface{})
++	require.Equal(t, s.sessionID, payload["session_id"])
++	require.Equal(t, "own-task", payload["task_id"])
++	args["session_id"] = "foreign"
++	require.True(t, callTool(t, s, "verify_own_distribution_binding_kandev", args).IsError)
++	for _, mode := range []string{ModeExternal, ModeConfig, ModeAutomation, ModeOffice} {
++		restricted := New(&testBackend{}, "s", "t", 10005, newTestLogger(t), "", false, mode)
++		require.NotContains(t, restricted.mcpServer.ListTools(), "verify_own_distribution_binding_kandev")
++	}
++}
+diff --git a/apps/backend/internal/mcp/server/server.go b/apps/backend/internal/mcp/server/server.go
+index 68504b9d9..3136217b0 100644
+--- a/apps/backend/internal/mcp/server/server.go
++++ b/apps/backend/internal/mcp/server/server.go
+@@ -1899,6 +1899,7 @@ func (s *Server) registerInteractionTools() {
+ 	s.registerOwnQuestionStatusTool()
+ 	if s.mode == ModeTask {
+ 		s.registerOwnAnswerTool()
++		s.registerOwnDistributionTool()
+ 	}
+ 	s.mcpServer.AddTool(
+ 		mcp.NewTool("ask_user_question_kandev",
+diff --git a/apps/backend/internal/mcp/server/server_test.go b/apps/backend/internal/mcp/server/server_test.go
+index ae855d889..fd415a90d 100644
+--- a/apps/backend/internal/mcp/server/server_test.go
++++ b/apps/backend/internal/mcp/server/server_test.go
+@@ -811,7 +811,8 @@ drained:
+ 	// as in TestServerModeTask_ToolCount and
+ 	// TestRegisterTools_LoggedCountMatchesRegisteredTools (list_task_sessions_test.go),
+ 	// which pin the per-mode registration rather than this SetProviders rebuild.
+-	require.Len(t, tools, 50, "final registry should contain the complete GitLab-only task tool set")
++	require.Len(t, tools, 51, "final registry should contain the complete GitLab-only task tool set")
++	require.Contains(t, tools, ownDistributionToolName)
+ 	require.Contains(t, tools, ownAnswerToolName)
+ 	assert.Contains(t, tools, "get_task_change_requests_kandev")
+ 	assert.Contains(t, tools, "manage_task_change_request_kandev")
+@@ -1005,7 +1006,8 @@ func TestServerModeTask_ToolCount(t *testing.T) {
+ 	assert.Contains(t, tools, "remove_task_dependency_kandev")
+ 	assert.Contains(t, tools, "show_rich_output_kandev", "native rich output must be registered in task mode")
+ 	assert.Contains(t, tools, ownAnswerToolName)
+-	assert.Equal(t, 51, len(tools))
++	assert.Contains(t, tools, ownDistributionToolName)
++	assert.Equal(t, 52, len(tools))
+ }
+ 
+ func TestServerStepCompleteTool_TaskAndOfficeOnlyAndDiscoverable(t *testing.T) {
+diff --git a/apps/backend/internal/task/artifactbinding/binding.go b/apps/backend/internal/task/artifactbinding/binding.go
+new file mode 100644
+index 000000000..b3472bb55
+--- /dev/null
++++ b/apps/backend/internal/task/artifactbinding/binding.go
+@@ -0,0 +1,227 @@
++// Package artifactbinding verifies a caller-owned inert distribution receipt.
++package artifactbinding
++
++import (
++	"bytes"
++	"crypto/sha256"
++	"encoding/hex"
++	"encoding/json"
++	"errors"
++	"io"
++	"os"
++	"path/filepath"
++	"reflect"
++	"regexp"
++	"strings"
++)
++
++var errBinding = errors.New("own distribution binding or preservation differs; no acceptance")
++var digestPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
++var headPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
++
++type Binding struct {
++	TaskID               string `json:"task_id"`
++	WorkspaceID          string `json:"workspace_id"`
++	RepositoryID         string `json:"repository_id"`
++	SessionID            string `json:"session_id"`
++	SessionIncarnationID string `json:"session_incarnation_id"`
++	EnvironmentID        string `json:"environment_id"`
++	OwnershipGeneration  int64  `json:"ownership_generation"`
++	WorktreeID           string `json:"worktree_id"`
++	Worktree             string `json:"worktree"`
++	Branch               string `json:"branch"`
++	Head                 string `json:"head"`
++}
++type preservation struct {
++	Head       string  `json:"head"`
++	GitMarker  string  `json:"git_marker_sha256"`
++	HeadMarker string  `json:"head_marker_sha256"`
++	Index      string  `json:"index_sha256"`
++	Prompt     *string `json:"prompt_sha256"`
++}
++type packetReceipt struct {
++	DeliveryID   string       `json:"delivery_id"`
++	Binding      Binding      `json:"binding"`
++	ManifestSHA  string       `json:"manifest_sha256"`
++	Preservation preservation `json:"preservation"`
++}
++type Receipt struct {
++	Version           string       `json:"version"`
++	Status            string       `json:"status"`
++	Binding           Binding      `json:"binding"`
++	DeliveryID        string       `json:"delivery_id"`
++	ReceiptSHA        string       `json:"receipt_sha256"`
++	ManifestSHA       string       `json:"manifest_sha256"`
++	PacketPath        string       `json:"packet_path"`
++	Preservation      preservation `json:"preservation"`
++	NativeProbesRun   bool         `json:"native_probes_run"`
++	ProductAcceptance bool         `json:"product_acceptance"`
++}
++
++func validBinding(b Binding) bool {
++	return b.TaskID != "" && b.WorkspaceID != "" && b.RepositoryID != "" && b.SessionID != "" && b.SessionIncarnationID != "" && b.EnvironmentID != "" && b.OwnershipGeneration > 0 && b.WorktreeID != "" && filepath.IsAbs(b.Worktree) && b.Branch != "" && !strings.Contains(b.Branch, "..") && !strings.HasPrefix(b.Branch, "/") && !strings.ContainsAny(b.Branch, "\\\n\r\x00")
++}
++func hash(raw []byte) string { h := sha256.Sum256(raw); return hex.EncodeToString(h[:]) }
++
++// Verify performs only static reads. Identity comes from the authenticated backend,
++// while expected digests come from the reviewed delivery contract, never the packet.
++func Verify(current Binding, slot, delivery, receiptSHA, manifestSHA string) (*Receipt, error) {
++	if !validBinding(current) || !validSlot(slot, delivery, receiptSHA, manifestSHA) {
++		return nil, errBinding
++	}
++	root := filepath.Join(current.Worktree, slot)
++	pinned, raw, err := readPinned(root, delivery, receiptSHA, manifestSHA)
++	if err != nil {
++		return nil, errBinding
++	}
++	current.Head = pinned.Binding.Head
++	if !reflect.DeepEqual(pinned.Binding, current) {
++		return nil, errBinding
++	}
++	if verifyGit(current, pinned.Preservation) != nil {
++		return nil, errBinding
++	}
++	again, err := readStatic(filepath.Join(root, "receipt.json"), true)
++	if err != nil || !bytes.Equal(again, raw) || !matchesFile(filepath.Join(root, "manifest.json"), manifestSHA, true) {
++		return nil, errBinding
++	}
++	return &Receipt{Version: "own-distribution-binding/v1", Status: "own_binding_verified", Binding: current, DeliveryID: delivery, ReceiptSHA: receiptSHA, ManifestSHA: manifestSHA, PacketPath: slot, Preservation: pinned.Preservation}, nil
++}
++func validSlot(slot, delivery, receiptSHA, manifestSHA string) bool {
++	return digestPattern.MatchString(receiptSHA) && digestPattern.MatchString(manifestSHA) && delivery != "" && filepath.Clean(slot) == slot && strings.HasPrefix(slot, ".kandev/diagnostics/") && !strings.Contains(slot, "..") && !strings.ContainsAny(slot, "\\\x00")
++}
++func readPinned(root, delivery, receiptSHA, manifestSHA string) (packetReceipt, []byte, error) {
++	var pinned packetReceipt
++	raw, err := readStatic(filepath.Join(root, "receipt.json"), true)
++	if err != nil || hash(raw) != receiptSHA {
++		return pinned, nil, errBinding
++	}
++	if json.Unmarshal(raw, &pinned) != nil || pinned.DeliveryID != delivery || pinned.ManifestSHA != manifestSHA || !headPattern.MatchString(pinned.Binding.Head) {
++		return pinned, nil, errBinding
++	}
++	if !matchesFile(filepath.Join(root, "manifest.json"), manifestSHA, true) {
++		return pinned, nil, errBinding
++	}
++	return pinned, raw, nil
++}
++func matchesFile(path, digest string, private bool) bool {
++	raw, err := readStatic(path, private)
++	return err == nil && hash(raw) == digest
++}
++
++func verifyGit(b Binding, p preservation) error {
++	if p.Head != b.Head || !validPreservation(p) {
++		return errBinding
++	}
++	admin, err := gitAdmin(b.Worktree, p.GitMarker)
++	if err != nil {
++		return errBinding
++	}
++	if !matchesFile(filepath.Join(admin, "HEAD"), p.HeadMarker, false) || !matchesFile(filepath.Join(admin, "index"), p.Index, false) {
++		return errBinding
++	}
++	head, err := readStatic(filepath.Join(admin, "HEAD"), false)
++	if err != nil || string(head) != "ref: refs/heads/"+b.Branch+"\n" {
++		return errBinding
++	}
++	if verifyRef(admin, b) != nil || verifyPrompt(b.Worktree, p.Prompt) != nil {
++		return errBinding
++	}
++	if !matchesFile(filepath.Join(admin, "index"), p.Index, false) || !matchesFile(filepath.Join(admin, "HEAD"), p.HeadMarker, false) || !matchesFile(filepath.Join(b.Worktree, ".git"), p.GitMarker, false) {
++		return errBinding
++	}
++	return nil
++}
++func validPreservation(p preservation) bool {
++	return digestPattern.MatchString(p.GitMarker) && digestPattern.MatchString(p.HeadMarker) && digestPattern.MatchString(p.Index)
++}
++func gitAdmin(root, digest string) (string, error) {
++	marker, err := readStatic(filepath.Join(root, ".git"), false)
++	if err != nil || hash(marker) != digest || !bytes.HasPrefix(marker, []byte("gitdir: ")) {
++		return "", errBinding
++	}
++	admin := strings.TrimSpace(strings.TrimPrefix(string(marker), "gitdir: "))
++	if !filepath.IsAbs(admin) {
++		admin = filepath.Join(root, admin)
++	}
++	return filepath.Clean(admin), nil
++}
++func verifyRef(admin string, b Binding) error {
++	common := admin
++	if raw, err := readStatic(filepath.Join(admin, "commondir"), false); err == nil {
++		common = strings.TrimSpace(string(raw))
++		if !filepath.IsAbs(common) {
++			common = filepath.Join(admin, common)
++		}
++	} else if !os.IsNotExist(err) {
++		return errBinding
++	}
++	ref, err := readStatic(filepath.Join(common, "refs", "heads", b.Branch), false)
++	if err != nil || strings.TrimSpace(string(ref)) != b.Head {
++		return errBinding
++	}
++	return nil
++}
++func verifyPrompt(root string, pinned *string) error {
++	prompt, err := readStatic(filepath.Join(root, "PROMPT.md"), false)
++	if pinned == nil {
++		if !os.IsNotExist(err) {
++			return errBinding
++		}
++		return nil
++	}
++	if err != nil || !digestPattern.MatchString(*pinned) || hash(prompt) != *pinned {
++		return errBinding
++	}
++	return nil
++}
++
++// readStatic rejects symbolic links throughout a path and bounds memory use.
++func readStatic(path string, private bool) ([]byte, error) {
++	path = filepath.Clean(path)
++	if checkParents(path, private) != nil {
++		return nil, errBinding
++	}
++	before, err := os.Lstat(path)
++	if err != nil {
++		return nil, err
++	}
++	if !before.Mode().IsRegular() || before.Size() > 2*1024*1024 || (private && before.Mode().Perm()&0077 != 0) {
++		return nil, errBinding
++	}
++	f, err := os.Open(path)
++	if err != nil {
++		return nil, err
++	}
++	defer func() { _ = f.Close() }()
++	opened, err := f.Stat()
++	if err != nil || !os.SameFile(before, opened) {
++		return nil, errBinding
++	}
++	raw, err := io.ReadAll(io.LimitReader(f, 2*1024*1024+1))
++	if err != nil || len(raw) > 2*1024*1024 || !unchangedFile(path, before) {
++		return nil, errBinding
++	}
++	return raw, nil
++}
++func checkParents(path string, private bool) error {
++	for dir := filepath.Dir(path); ; dir = filepath.Dir(dir) {
++		info, err := os.Lstat(dir)
++		if err != nil {
++			return err
++		}
++		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
++			return errBinding
++		}
++		if private && dir == filepath.Dir(path) && info.Mode().Perm()&0077 != 0 {
++			return errBinding
++		}
++		if filepath.Dir(dir) == dir {
++			return nil
++		}
++	}
++}
++func unchangedFile(path string, before os.FileInfo) bool {
++	after, err := os.Lstat(path)
++	return err == nil && os.SameFile(before, after) && before.Size() == after.Size() && before.ModTime().Equal(after.ModTime())
++}
+diff --git a/apps/backend/internal/task/artifactbinding/binding_test.go b/apps/backend/internal/task/artifactbinding/binding_test.go
+new file mode 100644
+index 000000000..ce0478ca1
+--- /dev/null
++++ b/apps/backend/internal/task/artifactbinding/binding_test.go
+@@ -0,0 +1,83 @@
++package artifactbinding
++
++import (
++	"crypto/sha256"
++	"encoding/hex"
++	"encoding/json"
++	"github.com/stretchr/testify/require"
++	"os"
++	"path/filepath"
++	"testing"
++)
++
++func sum(raw []byte) string { h := sha256.Sum256(raw); return hex.EncodeToString(h[:]) }
++func fixture(t *testing.T) (Binding, string, string, string) {
++	t.Helper()
++	root := t.TempDir()
++	admin := filepath.Join(root, ".admin")
++	slot := filepath.Join(root, ".kandev", "diagnostics", "packet")
++	require.NoError(t, os.MkdirAll(admin, 0700))
++	require.NoError(t, os.MkdirAll(slot, 0700))
++	marker := []byte("gitdir: " + admin + "\n")
++	head := []byte("ref: refs/heads/feature/test\n")
++	index := []byte("synthetic index")
++	for path, raw := range map[string][]byte{filepath.Join(root, ".git"): marker, filepath.Join(admin, "HEAD"): head, filepath.Join(admin, "index"): index} {
++		require.NoError(t, os.WriteFile(path, raw, 0600))
++	}
++	require.NoError(t, os.MkdirAll(filepath.Join(admin, "refs", "heads", "feature"), 0700))
++	require.NoError(t, os.WriteFile(filepath.Join(admin, "refs", "heads", "feature", "test"), []byte("1111111111111111111111111111111111111111\n"), 0600))
++	b := Binding{TaskID: "task", WorkspaceID: "ws", RepositoryID: "repo", SessionID: "session", SessionIncarnationID: "inc", EnvironmentID: "env", OwnershipGeneration: 1, WorktreeID: "wt", Worktree: root, Branch: "feature/test"}
++	r := map[string]any{"delivery_id": "delivery", "binding": b, "manifest_sha256": sum([]byte("manifest")), "preservation": map[string]any{"head": "1111111111111111111111111111111111111111", "git_marker_sha256": sum(marker), "head_marker_sha256": sum(head), "index_sha256": sum(index), "prompt_sha256": nil}}
++	var rb map[string]any
++	raw, _ := json.Marshal(r)
++	require.NoError(t, json.Unmarshal(raw, &rb))
++	rb["binding"].(map[string]any)["head"] = "1111111111111111111111111111111111111111"
++	raw, _ = json.Marshal(rb)
++	require.NoError(t, os.WriteFile(filepath.Join(slot, "receipt.json"), raw, 0600))
++	require.NoError(t, os.WriteFile(filepath.Join(slot, "manifest.json"), []byte("manifest"), 0600))
++	return b, ".kandev/diagnostics/packet", sum(raw), sum([]byte("manifest"))
++}
++func TestVerifyOwnBinding(t *testing.T) {
++	b, slot, r, m := fixture(t)
++	result, err := Verify(b, slot, "delivery", r, m)
++	require.NoError(t, err)
++	require.Equal(t, "own_binding_verified", result.Status)
++	require.Equal(t, "inc", result.Binding.SessionIncarnationID)
++	require.Equal(t, int64(1), result.Binding.OwnershipGeneration)
++	for _, mutate := range []func(*Binding){func(b *Binding) { b.TaskID = "foreign" }, func(b *Binding) { b.WorkspaceID = "foreign" }, func(b *Binding) { b.SessionID = "foreign" }, func(b *Binding) { b.SessionIncarnationID = "replacement" }, func(b *Binding) { b.OwnershipGeneration++ }, func(b *Binding) { b.EnvironmentID = "replacement" }, func(b *Binding) { b.RepositoryID = "foreign" }, func(b *Binding) { b.Branch = "foreign" }, func(b *Binding) { b.WorktreeID = "replacement" }} {
++		other := b
++		mutate(&other)
++		_, err = Verify(other, slot, "delivery", r, m)
++		require.Error(t, err)
++	}
++}
++func TestVerifyPreservationAndNoEscape(t *testing.T) {
++	for _, name := range []string{"head", "index", "marker", "prompt", "receipt", "manifest", "symlink", "escape", "incomplete"} {
++		t.Run(name, func(t *testing.T) {
++			b, slot, r, m := fixture(t)
++			switch name {
++			case "head":
++				require.NoError(t, os.WriteFile(filepath.Join(b.Worktree, ".admin/refs/heads/feature/test"), []byte("2222222222222222222222222222222222222222\n"), 0600))
++			case "index":
++				require.NoError(t, os.WriteFile(filepath.Join(b.Worktree, ".admin/index"), []byte("drift"), 0600))
++			case "marker":
++				require.NoError(t, os.WriteFile(filepath.Join(b.Worktree, ".git"), []byte("foreign"), 0600))
++			case "prompt":
++				require.NoError(t, os.WriteFile(filepath.Join(b.Worktree, "PROMPT.md"), []byte("drift"), 0600))
++			case "receipt":
++				r = sum([]byte("wrong"))
++			case "manifest":
++				m = sum([]byte("wrong"))
++			case "symlink":
++				require.NoError(t, os.Rename(filepath.Join(b.Worktree, slot), filepath.Join(b.Worktree, "moved")))
++				require.NoError(t, os.Symlink(filepath.Join(b.Worktree, "moved"), filepath.Join(b.Worktree, slot)))
++			case "escape":
++				slot = ".kandev/diagnostics/../../../outside"
++			case "incomplete":
++				b.SessionIncarnationID = ""
++			}
++			_, err := Verify(b, slot, "delivery", r, m)
++			require.Error(t, err)
++		})
++	}
++}
