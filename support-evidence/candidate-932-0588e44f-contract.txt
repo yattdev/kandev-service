@@ -31,7 +31,8 @@ ref replacement, prefix-preserving reflog append and newly added loose objects
 verified by content/OID and reachability from that new tip are attributable.
 Existing object edits/removals, pack changes, other refs or unrelated entries
 remain blocking. Full inventory remains retained and classified, never ignored.
-Actual adoption must freshly anchor both policy refs and preserve any completed
+Actual adoption must freshly anchor eligible refs and excluded owner bindings,
+and preserve any completed
 approved owner progress, rather than require source owners to stop or roll back.
 After adoption, own RUNNING/idle and monotonic usage progress may change; identity,
 execution/process incarnation, budgets/limits and other writer fences stay pinned.

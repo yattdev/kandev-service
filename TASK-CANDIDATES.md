@@ -414,10 +414,10 @@ never authenticates an event, accepts a checkpoint or grants writes itself.
 
 `support-evidence/candidate-932-0588e44f-proposal.json` is the complete canonical
 sanitized body, UTF-8 with no final newline. Its SHA-256 is
-`35c9f09ddc89fc96b1e9e3522fad8633a0f1b5b8fb23867b8754c12a417818d3`.
+`13263a5a7b3ba34cefbce132ff288e73fa7a9be82d5f4baca406396c3e5b89db`.
 The complete contract is its `contract` string and the byte-exact companion
 `candidate-932-0588e44f-contract.txt`; contract SHA-256 is
-`332ffef30a88b8459ae172b0c4190324b0c5b958573c7992b2bf3cc1444e889e`.
+`3d5da0e7af860b785d7f31d040271f161e4d74e2d2770d5f5aa14ed8f9ac6889`.
 Current and static evidence are retained separately and linked by external
 digests; compacting repeated config declarations does not discard blockers.
 Historical aggregate differences remain unresolved and explicitly unproven.
@@ -439,3 +439,8 @@ review, finite owner/incarnation binding, different-common-Git denial, deletion/
 rewrite/pack/unknown-object denial, full inventory completeness and canonical
 packet provenance. Existing preservation, transfer and v1 approval regressions
 remain mandatory and unchanged.
+
+The v2 contract anchors only eligible same-common-Git refs. Excluded owner
+bindings are revalidated without reading their unrelated refs or worktrees.
+The initial preparation remains in commit `a6ae65c`; this clarification does
+not replace any historical candidate receipt or v1 artifact.
