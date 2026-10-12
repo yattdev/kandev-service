@@ -373,3 +373,69 @@ redaction, safe remote identities, non-followed includes, unexecuted hooks,
 symlink denial, exact approval bindings, unresolved authority, historical-gap
 acknowledgement, expiry and proposal-only behavior. The retained actual packet
 also fails the approval gate while any authority blocker remains.
+
+### Closed semantic review revision (review only, request 0588e44f)
+
+`scripts/kandev-candidate-checkpoint-v2.py` is an additive review control. The
+v1 packet, contract, installed candidate/transfer helpers and every receipt are
+unchanged. The new control neither adopts a baseline nor verifies an accepted
+caller. Its closed classifiers cover exact trust/maintenance registration
+scopes, bounded GC integers, Git booleans, display/tag/GitHub-role enums,
+credential-free remote identities and commit references resolved only in the
+selected repository. Unknown paths, includes, executable configuration and
+credentials stay held. A push URL token that looks like "disabled" still
+selects a relative filesystem destination in Git; it is not classified as
+disabled authority.
+
+The retained current review and subsequent static-only trace are separate
+artifacts. Static tracing hashes the two original wrappers, interpreter and
+original hook config without executing hooks or importing their runtime.
+The config permits bash/python3/node dispatch; six original script targets
+were byte-pinned. Python package resolution, PATH fallback, child tools,
+imports/sourced files and complete configuration semantics remain unproved.
+Lexical YAML projection is explicitly not full parsing or executable proof.
+Both hook closures therefore remain held. Two hidden unregistered path scopes
+and two relative local push destinations also remain held: six blockers total.
+The known system-wide ownership-trust setting is visible as a material existing
+scope, not a new grant. Adoption cannot clear unknown authority by boolean.
+
+Only the two named Source owners were evaluated through registered metadata
+and source-administration device/inode comparison; their task worktrees were
+not accessed. Owner 9349b6e5 shares the selected common Git; owner d28be44c
+uses different administration and needs no mutable-ref exception. Neither
+Source owner is paused by this proposal. Candidate932 gets no authority to
+write either owner's ref. The finite rule requires full task/session/execution/
+binding/ref identity, exact old/new commits with proved fast-forward ancestry,
+authenticated Root/own-guard operation receipts and every inventory difference.
+Only exact ref replacement, prefix-preserving reflog append and verified newly
+reachable loose objects may be attributed. Pack changes, rewrites/deletion,
+other writers, unrelated or omitted entries stay blocking. This format gate
+never authenticates an event, accepts a checkpoint or grants writes itself.
+
+`support-evidence/candidate-932-0588e44f-proposal.json` is the complete canonical
+sanitized body, UTF-8 with no final newline. Its SHA-256 is
+`35c9f09ddc89fc96b1e9e3522fad8633a0f1b5b8fb23867b8754c12a417818d3`.
+The complete contract is its `contract` string and the byte-exact companion
+`candidate-932-0588e44f-contract.txt`; contract SHA-256 is
+`332ffef30a88b8459ae172b0c4190324b0c5b958573c7992b2bf3cc1444e889e`.
+Current and static evidence are retained separately and linked by external
+digests; compacting repeated config declarations does not discard blockers.
+Historical aggregate differences remain unresolved and explicitly unproven.
+Fresh adoption revalidation and separately authenticated review are mandatory.
+
+The safe alternatives are exact repository-scope attestations and a complete
+owner-reviewed executable/config/runtime closure, or separate review of an
+inert capability-only Git subprocess contract that proves it excludes the
+hidden authority. Such a contract would suppress global/system configuration,
+hooks and credential helpers and limit administration to the exact independent
+candidate. This proposal does not implement that alternative, alter shared
+configuration, waive historical evidence or authorize Source. Root reviews
+ordinary aspects and the material historical-boundary decision only after the
+remaining authority is reviewable.
+
+`python3 tests/test-candidate-checkpoint-v2.py` exercises enum/bound/reference
+denials, credential redaction, scope classification, nonexecuting static code
+review, finite owner/incarnation binding, different-common-Git denial, deletion/
+rewrite/pack/unknown-object denial, full inventory completeness and canonical
+packet provenance. Existing preservation, transfer and v1 approval regressions
+remain mandatory and unchanged.

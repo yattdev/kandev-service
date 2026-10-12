@@ -1,0 +1,43 @@
+Candidate prospective checkpoint contract, version 2; review only.
+The unproven shared-config/inventory interval from the immutable v1 transfer
+until any future adoption remains explicitly unproven. Historical hashes,
+failures, v1 proposal, receipts, helpers and markers remain unchanged.
+No adoption, baseline installation, Source admission or caller acceptance occurs.
+Required approval fields are exact proposal/contract/config/preflight digests,
+identity, lineage, finite mutable-ref policy, reviewer and authenticated Root,
+repository/config and historical-preservation decision receipts, explicit new-
+boundary and historical-gap acknowledgement, expiry and single-use nonce.
+JSON or an approval boolean cannot authenticate authority or clear unknown code.
+Before separately authorized adoption, revalidate original files/PROMPT/admin/
+backlink/branch/head, failed-attempt ref, clean independent candidate head/base/
+branch, all parent hashes, exact binding and retired predecessor, sole successor
+session/execution/provider ancestry and incarnation, protected accounting and
+limits, and empty FIFO. Preserve new input; no replay, disposal or counter reset.
+Retain complete per-entry content/presence and size/mtime_ns/mode/inode maps
+from one stable adoption snapshot, including object content hashes. Pin manifest
+and scope digests in new append-only lineage; never claim retrospective proof.
+Protect original932/candidate, config, HEAD, packed-refs, helper/receipt/marker
+bytes and all non-authorized entries. Unknown includes, executable/config/code
+targets, credential-bearing semantics and unclassified changes deny adoption.
+Only exact task/session/execution/ref bindings marked same-common-Git in this
+proposal's two-owner evaluation may produce authenticated owner operations.
+An owner on different Git administration needs no exception and is not frozen.
+This grants
+candidate932 no foreign-ref write authority and does not pause independent work.
+Each event needs exact old/new OIDs, verified commit ancestry without deletion
+or rewrite, live registered same-common-Git owner/binding, authenticated Root
+operation and owner guard receipts, and a complete per-entry delta. Only exact
+ref replacement, prefix-preserving reflog append and newly added loose objects
+verified by content/OID and reachability from that new tip are attributable.
+Existing object edits/removals, pack changes, other refs or unrelated entries
+remain blocking. Full inventory remains retained and classified, never ignored.
+Actual adoption must freshly anchor both policy refs and preserve any completed
+approved owner progress, rather than require source owners to stop or roll back.
+After adoption, own RUNNING/idle and monotonic usage progress may change; identity,
+execution/process incarnation, budgets/limits and other writer fences stay pinned.
+Only the actual successor guard may authenticate its own IDs and ancestry.
+Old revival, foreign candidate writer, stale binding/incarnation, expired/reused
+approval, new FIFO input or unmatched delta denies. No accepted caller command
+exists until separately reviewed implementation/adoption and actual acceptance.
+Root retains separate Source admission. Unknown hook closure stays held; a
+scoped byte-pinned executable/config closure must be reviewed without running it.
