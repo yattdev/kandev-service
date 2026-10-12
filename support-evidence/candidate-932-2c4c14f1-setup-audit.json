@@ -1,0 +1,22 @@
+{
+  "audit_sha256": "4bdf0cbb93ae09f6de3c06674af315aad99087209d6a01577dc9382c51891c1b",
+  "broker_request": "2c4c14f1-0b0a-47a6-9e7e-be9866fb881d",
+  "classification": "negative bounded historical search; not actor attribution or proof that no write occurred",
+  "counts": {
+    "config_events": 0,
+    "parseable_payloads": 602,
+    "source_setup_events": 0,
+    "window_lines": 602
+  },
+  "events": [],
+  "historical_window": "2026-10-12T09:52:00Z..09:54:59Z",
+  "prior_report_sha256": "904bbf9d376e7a23fbd136f139bc77fe62660e005b1f6b075a7b7b6b1c2fab48",
+  "retained_config_before_after_manifest_found": false,
+  "source_inspection": {
+    "limitation": "possible setup code paths do not identify the executed actor or retain a complete historical config/inventory manifest",
+    "shared_config_writer_examples": [
+      "apps/backend/internal/worktree/gitcrypt.go:205",
+      "apps/backend/internal/worktree/manager_contribution.go:104"
+    ]
+  }
+}

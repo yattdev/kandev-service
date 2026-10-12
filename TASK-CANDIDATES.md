@@ -288,6 +288,11 @@ Known ref changes remain informational rather than a blanket aggregate
 approval. Scope grant/revocation audit events are not per-file config-write
 audit events.
 
+The additive `support-evidence/candidate-932-2c4c14f1-setup-audit.json`
+records the bounded historical setup-log search during escalation. Its negative
+result does not identify a writer or prove that no config write occurred, and
+does not replace the original evidence/report or recover either manifest.
+
 If those historical maps cannot be recovered, the smallest recovery alternative
 is a separately reviewed **new preservation epoch**, not a successful correction
 of the old receipt. The repository owner must review the intended shared config
