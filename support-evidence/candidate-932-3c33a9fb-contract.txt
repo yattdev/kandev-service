@@ -1,0 +1,81 @@
+Candidate capability-only execution boundary, version 1; preparation only.
+1. This is a proposed prospective boundary, not an installed capability or
+   retrospective proof. Parent proposal, old aggregate failures, reservation,
+   retirement, transfer, helpers, markers, original/PROMPT and candidate history
+   remain immutable. The shared historical interval remains explicitly unproven.
+2. Two independent controls are required: a kernel Source write boundary and a
+   trusted candidate Git mediator. An optional CLI wrapper alone is insufficient.
+   The current wide Source provider is not made safe by nesting only its shell.
+3. A future trusted lifecycle must contain the entire exact successor/provider
+   and all tool/child processes in the candidate profile, with no surviving
+   wider writer, writable inherited descriptor, writable ancestor or alternative
+   namespace route. Validate actual mounts, ancestry, PID start time, binding,
+   session/execution incarnation and absence of bypass paths. Existing 882/9af
+   stays paused and unchanged now. If its current incarnation cannot acquire
+   that boundary, deny adoption; any replacement/incarnation transition needs
+   separate exact lifecycle authorization and append-only old/new evidence.
+4. Source may write only the candidate worktree and separately approved scratch.
+   Original checkout, shared Git and independent candidate Git administration
+   are read-only or hidden to Source. Bind administration read-only after its
+   writable parent; protect the mountpoint against rename, unlink and symlinks.
+   No raw host/socket/path/credential authority, provider bypass or extra grant.
+5. A separately isolated mediator is the only candidate-administration writer.
+   It has no shared/original write mount and no other repository/ref authority.
+   Authenticate the actual caller by kernel peer/launch identity and live backend
+   binding, never supplied IDs alone or a copied token. Private PID namespace,
+   separate security identity and descriptor isolation must prevent same-UID
+   procfs/ptrace/fd access. Recheck authority before every operation; serialize
+   candidate writes with a bounded lease. No generic shell/argv endpoint.
+6. Git uses exact pinned independent admin/worktree identities and a reviewed
+   read-only binary/dependency image, never PATH lookup or agent-supplied tools.
+   Start from a fresh environment and empty private HOME/XDG. Suppress system,
+   global and worktree config; accept only byte-pinned closed candidate config.
+   Reject includes, aliases, filters, fsmonitor, SSH/proxy commands, credential
+   helpers, push URLs, signing programs or new extensions/unknown keys. No
+   inherited GIT_CONFIG/SSH/ASKPASS/loader/proxy/PATH customization. Independently
+   reject commondir, alternates, linked admin and all path/symlink substitutions.
+   Trusted invocation disables automatic GC/maintenance and optional locks for
+   inspection; these are administration controls, not hook/signature waivers.
+7. The pinned candidate has no hooks. Require that absence at operation time and
+   keep hook/admin configuration unwritable to Source. Never select shared hooks
+   or packages, and never disable a REQUIRED policy/signature gate to commit.
+   No core.hooksPath override or blanket SKIP/HUSKY/signing bypass is approved.
+8. Initially only typed local inspection and anonymous read-only advertisement
+   of named upstream main are proposed. Use the explicit credential-free HTTPS
+   identity, HTTPS-only protocol, no redirects/proxy/credential prompts/netrc,
+   pinned transport helpers/TLS trust and bounded output/time. No fetch, push,
+   local destination, SSH/helper selection, ref update or credential acquisition.
+   Worktree attributes, diff drivers, textconv and filters must not execute code.
+9. Future staging/local commit remains HELD. Policy-owner review must identify
+   every applicable commit-message, formatting, lint, test and signature gate.
+   Unknown or required-unsatisfied gates deny commit. A reviewed hermetic gate
+   service may supply authenticated tree/parent/message/tool/policy-bound evidence
+   without invoking unknown shared hooks. It must preserve required semantics,
+   reject stale evidence and report reformatted-tree changes, never quietly waive
+   a gate. Required signing without an approved signing boundary stays held.
+   A later separately authorized implementation may write only the leased
+   candidate branch/index/objects/reflog with exact before/after manifests.
+10. Protect all original files, PROMPT, heads/base, marker/helper/receipt bytes,
+    config, HEAD, packed-refs and non-authorized entries. Preserve FIFO, accounting
+    and limits. Retain complete same-snapshot per-entry content/stat inventories;
+    new checkpoint begins only at explicitly approved prospective adoption.
+    Unknown/missing/removed/symlinked entries, old revival, foreign candidate
+    writer, stale bindings/caller/incarnation, new FIFO or counter reset deny.
+11. Retain the parent's finite sibling-owner observation rule: only the named
+    same-common-Git 9349 owner/ref may yield authenticated proven fast-forward
+    ref replacement, prefix-only reflog append and verified new reachable loose
+    objects. Classify the entire inventory delta. No pack rewrite, deletion,
+    other owner/ref or omitted entry. Candidate cannot write that ref. The d28
+    owner uses different Git administration and is excluded without being paused.
+    Revalidate eligible binding/ref and excluded binding; preserve legitimate
+    independently approved progress without fabricating a stable shared snapshot.
+12. All six parent blockers remain historically unresolved. Their authority is
+    excluded only conditionally from this future isolated Git/Source write path;
+    no boolean proves exclusion or adopts a baseline. Required future decisions:
+    exact contract/proposal and namespace/mediator design approval, repository
+    gate-equivalence policy, explicit unproven-historical-boundary decision,
+    exact lifecycle route if needed, and separately reviewed implementation,
+    enforcement tests, immutable adoption receipt and actual own-caller acceptance.
+    Authentication, single-use expiry/nonce, physical enforcement proof and fresh
+    inventories are mandatory outside this inert model. Root separately owns
+    Source admission. This request authorizes none of those future operations.

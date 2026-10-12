@@ -444,3 +444,69 @@ The v2 contract anchors only eligible same-common-Git refs. Excluded owner
 bindings are revalidated without reading their unrelated refs or worktrees.
 The initial preparation remains in commit `a6ae65c`; this clarification does
 not replace any historical candidate receipt or v1 artifact.
+
+### Candidate-only execution boundary (preparation only, request 3c33a9fb)
+
+The complete canonical review packet is
+`support-evidence/candidate-932-3c33a9fb-proposal.json` (UTF-8, no final newline),
+SHA-256 `1d04c4f882fefff053a989848ddc0f3bd2d18785208cd44b00fd9d049b628b6b`.
+Its complete contract is the `contract` string and companion
+`candidate-932-3c33a9fb-contract.txt`, SHA-256
+`a0119d496184f232bc6169611e53415d76a4aa2be1f9c7a4aa9d7673213cbe0f`.
+The previous proposal and every original receipt/helper remain unchanged.
+
+`scripts/kandev-candidate-boundary-review.py` is only an inert review model;
+it performs no Git, launch, adoption, authentication or write operation. Its
+closed local-config, environment, topology, caller and gate schemas allow
+meaningful synthetic denial tests without creating a live broker. Even matching
+model inputs never prove enforcement or enable a commit. No installed helper,
+guard, config, checkpoint or task runtime is changed by this preparation.
+
+One bounded static read of the exact candidate confirmed the retained local
+config digest, absent hooks and absent worktree config/commondir/alternates.
+No hook, package or Git command was invoked by that read. Candidate policy
+guidance still references commitlint, pre-commit formatting/lint and i18n checks;
+its mention of signing does not establish a Git-signature requirement. Unknown
+or required-unsatisfied gates keep future commits held. Shared hook suppression
+cannot quietly become a waiver of a required check. The proposed alternative
+is owner-reviewed equivalent hermetic gate evidence, bound to exact tree,
+parent, message, policy and toolchain. Signing needs an approved boundary if
+required; no signing override is proposed.
+
+The six unknown shared/global authorities are conditionally excluded from a
+future candidate-only Git execution path by empty external config origins,
+strict byte-pinned local config, pinned absent local hooks, fixed anonymous
+upstream HTTPS transport and no push action. They remain unresolved in the
+historical record. No safe-exclusion boolean can adopt the old preservation
+gap or establish a physical boundary.
+
+An optional CLI allowlist is insufficient: the current guard's broad writable
+task root and common Git permit Source to bypass it. The smallest proposed
+enforced write boundary combines a whole-provider candidate-only namespace
+with read-only candidate Git administration and a separately isolated,
+authenticated narrow Git mediator. It must protect original/shared resources,
+mountpoints, descriptors and procfs/ptrace routes. The mediator alone may write
+independent candidate administration after appropriate gate/lease checks.
+Read-only inspection is the initial operation set; staging/commit remains held.
+
+The entire successor/provider/tool process tree must be confined. Nesting a
+shell below a still-writable provider is insufficient. A future lifecycle route
+must prove the absence of wider writers and revalidate exact incarnation,
+binding, FIFO and counters. If the existing incarnation cannot acquire this
+boundary, adoption fails; replacement or incarnation transition needs separate
+exact authorization and append-only migration evidence. This request permits
+no such operation. Existing 882/9af and all other executors remain untouched.
+
+The packet retains finite authenticated same-common-Git sibling progress and
+full inventory classification; it excludes the separately administered d28
+owner without freezing its work. Root still must review the actual design,
+repository gate equivalence and the material unproven historical interval,
+then separately authorize implementation, physical enforcement tests, adoption
+and actual own-caller acceptance. Source admission remains a separate decision.
+
+`python3 tests/test-candidate-boundary-review.py` covers executable/unknown config,
+include/alias/filter/helper/SSH/push/hook injection, environment/PATH/loader
+authority, missing whole-provider enforcement, symlink/foreign administration,
+wrong caller/incarnation, forbidden operations, required gate/signing waiver,
+stale gate evidence, complete inventory and finite sibling progress. Existing
+candidate, preservation and proposal regressions remain unchanged.
