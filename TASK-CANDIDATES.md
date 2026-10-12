@@ -320,3 +320,56 @@ entry reporting, missing inventory statistics, scope/incarnation mismatches and
 nonmutating CLI behavior. Candidate regressions also cover a successor RUNNING
 verification with usage progress, foreign writers, real original-file drift
 and old execution revival.
+
+### Concrete prospective checkpoint proposal (preparation only)
+
+`scripts/kandev-candidate-checkpoint.py review` prepares version
+`candidate-prospective-checkpoint/1` through the existing exact-task guard.
+There is no adoption/install operation. It verifies the pinned original and
+clean independent candidate, immutable reservation/retirement/transfer markers
+and helpers, exact binding and successor execution/process reference, paused
+successor, unchanged protected writer/accounting fence, and empty FIFO in a
+read-only database snapshot. It does not rescan the shared inventory or attempt
+historical reconstruction.
+
+The bounded current review hashes shared config bytes and examines system,
+user/XDG, original worktree and candidate config separately with
+`git config --no-includes`. It never executes aliases, hooks, credential helpers
+or filters, follows includes, or exposes configured credentials. Unknown
+semantics are withheld and block adoption. Included authority remains unresolved
+and blocking, rather than being assumed absent. Executable shared hook code is
+hashed without executing or exposing it; unresolved semantics block adoption.
+Private row commitments use HMAC with a per-review ephemeral key that is never
+persisted or delivered. Source admission does not follow from the capability's
+own safe Git overrides.
+
+Request `380833bd` retained the complete sanitized proposal and byte-exact
+contract in `support-evidence/candidate-932-380833bd-proposal.json` and
+`support-evidence/candidate-932-380833bd-contract.txt`. Canonical proposal digest:
+`e4fcdeef114bdfa321b629037c9767f4bb76c7a05e6c2d10aa112f97a952e352`.
+Contract text digest:
+`a22e2adb6e694da22232ce573c6f51838470a2286916b70047ce50b5838a25df`.
+The packet is reviewable but has unresolved adoption blockers. No new baseline,
+checkpoint receipt, helper installation, accepted caller command or Source
+admission has occurred.
+
+`approval_shape` is offline format validation only: it requires trusted reviewed
+authentication supplied outside JSON, exact proposal/config/identity/lineage/
+preflight/ref-policy bindings, an explicit historical-gap decision, named
+repository and preservation review receipts, expiry and single-use nonce.
+Hidden authority cannot be approved merely by a boolean. Actual approval
+consumption, single-use enforcement, live adoption and owner acceptance require
+a separately authorized implementation; this helper performs none of them.
+
+The existing project-artifact delivery route is Coordinator-only and requires
+operator registration installed through a reviewed image deployment. It is not
+a general Support upload route. This preparation request authorizes neither
+registration/deployment nor Support impersonating the Coordinator. Therefore
+the proactive Support result supplies the full nonsecret contract text, hashes
+and assessment rather than claiming broker delivery or creating a task inbox.
+
+`python3 tests/test-candidate-checkpoint.py` checks credential/header/key
+redaction, safe remote identities, non-followed includes, unexecuted hooks,
+symlink denial, exact approval bindings, unresolved authority, historical-gap
+acknowledgement, expiry and proposal-only behavior. The retained actual packet
+also fails the approval gate while any authority blocker remains.

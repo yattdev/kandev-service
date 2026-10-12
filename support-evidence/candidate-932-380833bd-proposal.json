@@ -1,0 +1,1736 @@
+{
+  "adoption_authorized": false,
+  "adoption_blockers": [
+    {
+      "classification": "redacted",
+      "key": "safe.directory",
+      "origin": "system"
+    },
+    {
+      "classification": "redacted",
+      "key": "maintenance.repo",
+      "origin": "user"
+    },
+    {
+      "classification": "redacted",
+      "key": "safe.directory",
+      "origin": "user"
+    },
+    {
+      "classification": "redacted",
+      "key": "color.ui",
+      "origin": "user"
+    },
+    {
+      "classification": "redacted",
+      "key": "remote.upstream.gh-resolved",
+      "origin": "shared"
+    },
+    {
+      "classification": "redacted",
+      "key": "branch.feature/scope-gitlab-mr-auto-ty5.vscode-merge-base",
+      "origin": "shared"
+    },
+    {
+      "classification": "redacted",
+      "key": "remote.compare-f6ecde248306.tagopt",
+      "origin": "shared"
+    },
+    {
+      "classification": "redacted",
+      "key": "remote.compare-f6ecde248306.pushurl",
+      "origin": "shared"
+    },
+    {
+      "classification": "redacted",
+      "key": "gc.auto",
+      "origin": "shared"
+    },
+    {
+      "classification": "redacted",
+      "key": "maintenance.auto",
+      "origin": "shared"
+    },
+    {
+      "classification": "redacted",
+      "key": "remote.compare-2624060e5b5a.tagopt",
+      "origin": "shared"
+    },
+    {
+      "classification": "redacted",
+      "key": "remote.compare-2624060e5b5a.pushurl",
+      "origin": "shared"
+    },
+    {
+      "classification": "unreviewed_hook_code",
+      "hook": "commit-msg",
+      "origin": "shared.default_hooks"
+    },
+    {
+      "classification": "unreviewed_hook_code",
+      "hook": "pre-commit",
+      "origin": "shared.default_hooks"
+    }
+  ],
+  "baseline_status": "not_created; complete maps required only in separately approved adoption",
+  "caller_acceptance": "not_run",
+  "config_assessment": {
+    "adoption_eligible": false,
+    "blockers": [
+      {
+        "classification": "redacted",
+        "key": "safe.directory",
+        "origin": "system"
+      },
+      {
+        "classification": "redacted",
+        "key": "maintenance.repo",
+        "origin": "user"
+      },
+      {
+        "classification": "redacted",
+        "key": "safe.directory",
+        "origin": "user"
+      },
+      {
+        "classification": "redacted",
+        "key": "color.ui",
+        "origin": "user"
+      },
+      {
+        "classification": "redacted",
+        "key": "remote.upstream.gh-resolved",
+        "origin": "shared"
+      },
+      {
+        "classification": "redacted",
+        "key": "branch.feature/scope-gitlab-mr-auto-ty5.vscode-merge-base",
+        "origin": "shared"
+      },
+      {
+        "classification": "redacted",
+        "key": "remote.compare-f6ecde248306.tagopt",
+        "origin": "shared"
+      },
+      {
+        "classification": "redacted",
+        "key": "remote.compare-f6ecde248306.pushurl",
+        "origin": "shared"
+      },
+      {
+        "classification": "redacted",
+        "key": "gc.auto",
+        "origin": "shared"
+      },
+      {
+        "classification": "redacted",
+        "key": "maintenance.auto",
+        "origin": "shared"
+      },
+      {
+        "classification": "redacted",
+        "key": "remote.compare-2624060e5b5a.tagopt",
+        "origin": "shared"
+      },
+      {
+        "classification": "redacted",
+        "key": "remote.compare-2624060e5b5a.pushurl",
+        "origin": "shared"
+      },
+      {
+        "classification": "unreviewed_hook_code",
+        "hook": "commit-msg",
+        "origin": "shared.default_hooks"
+      },
+      {
+        "classification": "unreviewed_hook_code",
+        "hook": "pre-commit",
+        "origin": "shared.default_hooks"
+      }
+    ],
+    "capability_git_overrides": {
+      "credential_helper": "disabled",
+      "fsmonitor": false,
+      "hooks_path": "/dev/null",
+      "system_and_user_config": "disabled"
+    },
+    "conclusions": [
+      "read-only parser executed no hook/helper/filter and followed no include",
+      "authority blockers must be resolved through reviewable semantics before adoption"
+    ],
+    "config_environment": "GIT_* removed; system/user/local examined separately; includes never followed",
+    "hooks": {
+      "entries": [
+        {
+          "adoption_blocker": true,
+          "bytes_sha256": "bae3834dc9c39fd24091e8489a34778e13bc0fb1f30a312fa7eac3faa65e6efc",
+          "executable": true,
+          "name": "commit-msg",
+          "private_name_commitment": "49a3c69731ab0e4d4d879470ddbf0efcc7adfbbc02a99a1a34774c8c1de44b8f",
+          "semantics": "<code not exposed or executed>"
+        },
+        {
+          "adoption_blocker": true,
+          "bytes_sha256": "5539e9d3d64329b4f49ed104400c1817edd9f1b87379a27594039172e9ca6259",
+          "executable": true,
+          "name": "pre-commit",
+          "private_name_commitment": "f72eaca77fda713fe9837b41ae797747c4ed8ba861a62943493c0a732c15372f",
+          "semantics": "<code not exposed or executed>"
+        }
+      ],
+      "origin": "shared.default_hooks",
+      "presence": "present"
+    },
+    "limitations": [
+      "ambient GIT_* overrides and executable code are not adopted by this proposal",
+      "no historical config attribution or inventory reconstructed",
+      "Source commands are not admitted by capability Git overrides",
+      "configured custom hook locations are withheld/unresolved; never traversed"
+    ],
+    "private_commitments": "HMAC-SHA256; per-review undisclosed ephemeral key; no credential values retained",
+    "shared_config_sha256": "9a3eee14b1b2b1b10c7da94157f9592b52fd0f8304c5f242940b7d763fe042f9",
+    "sources": [
+      {
+        "bytes_sha256": "eed1e84cd180c2cf31d8c15a41d95cf1090cb1fa8eb6a496b8c604ed1189f518",
+        "entries": [
+          {
+            "adoption_blocker": true,
+            "classification": "redacted",
+            "key": "safe.directory",
+            "private_commitment": "31d96fae40038f8365645824befec858d81396cb373f9cf3afe6e7689361f2a7",
+            "reason": "outside closed safe-semantic allowlist",
+            "value": "<withheld>"
+          }
+        ],
+        "includes_followed": false,
+        "origin": "system",
+        "parser": "git config --no-includes; no helper/hook/filter execution",
+        "presence": "present"
+      },
+      {
+        "entries": [],
+        "origin": "user.xdg",
+        "presence": "absent"
+      },
+      {
+        "bytes_sha256": "4073caeb8c9e7405c5efc83f0d5178e7a69efada5ec2fdc929b6a4e3ca7dfc62",
+        "entries": [
+          {
+            "adoption_blocker": true,
+            "classification": "redacted",
+            "key": "maintenance.repo",
+            "private_commitment": "076bf36add5e320a4d1c99f93038c1d57fefa5e4b0a7836aa299981e6891f536",
+            "reason": "outside closed safe-semantic allowlist",
+            "value": "<withheld>"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "identity_withheld",
+            "key": "user.name",
+            "private_commitment": "dc3580991aae3b007653c1db47dfc8b0300cc5023295024d191e898e9735d89a",
+            "reason": "non-authority personal identity withheld",
+            "value": "<withheld>"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "identity_withheld",
+            "key": "user.email",
+            "private_commitment": "9ae13d70d00833d16f4903e10187d92bb74062a4f7c868e85fcbd0f7557a6f97",
+            "reason": "non-authority personal identity withheld",
+            "value": "<withheld>"
+          },
+          {
+            "adoption_blocker": true,
+            "classification": "redacted",
+            "key": "safe.directory",
+            "private_commitment": "4cbb3d69495b6e7ffbf3f80bdfee9b17bdb8cda1399e8b5de8f28bd50bbab7d8",
+            "reason": "outside closed safe-semantic allowlist",
+            "value": "<withheld>"
+          },
+          {
+            "adoption_blocker": true,
+            "classification": "redacted",
+            "key": "color.ui",
+            "private_commitment": "6a9c80cce7472f49265f30062f6e4548f4330755bdf79dee38834f8e7ae04c16",
+            "reason": "outside closed safe-semantic allowlist",
+            "value": "<withheld>"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_scalar",
+            "key": "core.filemode",
+            "private_commitment": "5a2d8e6a01fd931e8af0bc75c93404fd83db496d9f4154ce8fc3799997b21bdc",
+            "value": "false"
+          }
+        ],
+        "includes_followed": false,
+        "origin": "user",
+        "parser": "git config --no-includes; no helper/hook/filter execution",
+        "presence": "present"
+      },
+      {
+        "bytes_sha256": "9a3eee14b1b2b1b10c7da94157f9592b52fd0f8304c5f242940b7d763fe042f9",
+        "entries": [
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_scalar",
+            "key": "core.repositoryformatversion",
+            "private_commitment": "6e07c04ec7db8aba575ab74e923cc029de83cd400c461172f1c29cc935c11fb2",
+            "value": "0"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_scalar",
+            "key": "core.filemode",
+            "private_commitment": "23079348c7da6661e93c2aeeaddf0946c066942a881b1732be004a6c94bd3086",
+            "value": "true"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_scalar",
+            "key": "core.bare",
+            "private_commitment": "cbafb5e61248fd736f4fa138399a02ce9c0132eee1f8bd3ef80f3ef218e53b8d",
+            "value": "false"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_scalar",
+            "key": "core.logallrefupdates",
+            "private_commitment": "5eb1d749cbfd99405262afe04b261d9a1e8bcd4da718c00cbfc9ecd983d1bec9",
+            "value": "true"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "credential_free_remote",
+            "key": "remote.origin.url",
+            "private_commitment": "3f58c5e0e146aa35aaee3eadaeb4c70e41a9ddfc31670bf6470bbef0cf860a6f",
+            "value": {
+              "host": "github.com",
+              "repository": "yattdev/kandev.git",
+              "service_user": "git",
+              "transport": "ssh"
+            }
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_refspec",
+            "key": "remote.origin.fetch",
+            "private_commitment": "7a5cd5ca987e838e738b45e1ba02b2d19ec68744168748c9f52f6440a017c8d8",
+            "value": "+refs/heads/*:refs/remotes/origin/*"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.main.remote",
+            "private_commitment": "26723b51db2c520052681451049380736865926ff7e268c1a0e9391bdaaf8137",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.main.merge",
+            "private_commitment": "b49c7b425bc780555d3cfdd3072f20166ae4957a79347c386a4c2897c6a6375f",
+            "value": "refs/heads/main"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/bug-the-click-copy-b-kko.remote",
+            "private_commitment": "ddda8846190d7b04bd1f6a1a06426e6e9c02309c6ccc1f010ba2c8fc14ba0bf7",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/bug-the-click-copy-b-kko.merge",
+            "private_commitment": "f5839e5b5ae1b4614b09f03a8a189f42d295d0e91cfbd0d5d07d03b1308046f4",
+            "value": "refs/heads/feature/bug-the-click-copy-b-kko"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/improve-the-docs-abo-11a.remote",
+            "private_commitment": "afdffe0b9b268a8f2efbdae8363036a77e2338e93810ea223bb8d2e293589e92",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/improve-the-docs-abo-11a.merge",
+            "private_commitment": "2aa49fd1b628c1cda133590e3c2b2c94c6dadc52ab5edc3d9d0d224520abe90a",
+            "value": "refs/heads/feature/improve-the-docs-abo-11a"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.extract/task-notes-panel-4dl.remote",
+            "private_commitment": "ad644fcc2ea82c2c6e7d80bc865141a912ecc12bcf8dcc60d580b735f26fe73c",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.extract/task-notes-panel-4dl.merge",
+            "private_commitment": "e2011405cc77eaf9972e67d386619874190ddd9ffbb71ced9eda664ecb85b7a6",
+            "value": "refs/heads/extract/task-notes-panel-4dl"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "credential_free_remote",
+            "key": "remote.upstream.url",
+            "private_commitment": "49586b2df1b91a4145df1c2b97640f42b6dc4ca9aaa14cb8fc075630a73c42a1",
+            "value": {
+              "host": "github.com",
+              "port": null,
+              "repository": "kdlbs/kandev.git",
+              "service_user": null,
+              "transport": "https"
+            }
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_refspec",
+            "key": "remote.upstream.fetch",
+            "private_commitment": "f82bd11c0b29e4c77ce25cc4c5bc690fbd2526918e26f8238acb1aed04e42074",
+            "value": "+refs/heads/*:refs/remotes/upstream/*"
+          },
+          {
+            "adoption_blocker": true,
+            "classification": "redacted",
+            "key": "remote.upstream.gh-resolved",
+            "private_commitment": "bf1f3e753475006d5338ccb2a9a5d046691a61e3927295418d063bfbeae26901",
+            "reason": "outside closed safe-semantic allowlist",
+            "value": "<withheld>"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/feature-allow-user-t-n3q.remote",
+            "private_commitment": "ea5825026e83a6f821e9473224ef223d471385ea8b61d3eae698852d3341c80d",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/feature-allow-user-t-n3q.merge",
+            "private_commitment": "cedc7ae9936f0257af569691f44eb414f5e4c2e2fdb54a4d31d98bec846db347",
+            "value": "refs/heads/feature/feature-allow-user-t-n3q"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/fix-auto-link-gitlab-2gg.remote",
+            "private_commitment": "ca024c3d6abeda0457e28d37bce0f28a8746c17f9908a2b42fa6ae8f0dbcee56",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/fix-auto-link-gitlab-2gg.merge",
+            "private_commitment": "8dc27ad186c44c8431c9de1f7139a8f681095b5b660a12219e0f45e86561d8fa",
+            "value": "refs/heads/feature/fix-auto-link-gitlab-2gg"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/feature-allow-user-t-fv5.remote",
+            "private_commitment": "a7baf0f068065ba523f588ddbb1e9ab8fb07d5da1d62428d1a1a6925c7d4fa06",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/feature-allow-user-t-fv5.merge",
+            "private_commitment": "4025908584b2171f50adc7d5c73caa330e8687268e51676d15929ca44d3b8eda",
+            "value": "refs/heads/feature/feature-allow-user-t-fv5"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/feat-gitlab-2125-aut-v1p.remote",
+            "private_commitment": "89a3c04a257c5d9fc4bbc33ed8fef3302daee92ca3728b012406e1d1e459630d",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/feat-gitlab-2125-aut-v1p.merge",
+            "private_commitment": "2e44dfa2e2287113ca4d079170e8b708c7954f613463ab784acbd437724a79d1",
+            "value": "refs/heads/feature/feat-gitlab-2125-aut-v1p"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/fix-stale-plugin-hoo-54w.remote",
+            "private_commitment": "ebf5bc7cbb95cf79aeafcb9dec17762685d04f2cec494056e24b11336c63876d",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/fix-stale-plugin-hoo-54w.merge",
+            "private_commitment": "64a5434649ae3ceb9b3d1f0a61a226a438bf5518721214f55cd6db14fd20746e",
+            "value": "refs/heads/feature/fix-stale-plugin-hoo-54w"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/tags-plugin-registry-listing.remote",
+            "private_commitment": "2ef9ca2f3333e0a9be796f4296827a0d6639d2bdb44bb2f238021141bd49098c",
+            "value": "upstream"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/tags-plugin-registry-listing.merge",
+            "private_commitment": "a23fddaabce3f1502a66872b10ecc32147d517456892f18af2b5160d664ed435",
+            "value": "refs/heads/main"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/tags-plugin-primary-menu-filter.remote",
+            "private_commitment": "934688657f0ce1d1924158c4cbc234a627072f56496a80c924e0613974609256",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/tags-plugin-primary-menu-filter.merge",
+            "private_commitment": "651acb62a2f1555cb4e3671c3b4a4ab2c3302779f0ab36adef5b59573d1896f4",
+            "value": "refs/heads/feature/tags-plugin-primary-menu-filter"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.add-notes-plugin-registry-entry.remote",
+            "private_commitment": "1a2df4a976a21ca4688fc1fc9a9426cb280f5bbd8aa6ba840da18b8b78879b81",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.add-notes-plugin-registry-entry.merge",
+            "private_commitment": "e1621a965f70ab47f693e0376beb89881d374b4e4396ed10c433f89c81ff8330",
+            "value": "refs/heads/add-notes-plugin-registry-entry"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/plugin-host-surface-expansion.remote",
+            "private_commitment": "13fba7cc888fd1c842c04102735a41a28ee64cda4ecf14f84f7d18132e10b595",
+            "value": "upstream"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/plugin-host-surface-expansion.merge",
+            "private_commitment": "17059bd51ba4ddc43f9c064e89d6b5741562f31878c50af589b859a61a0b7c4b",
+            "value": "refs/heads/feature/plugin-host-surface-expansion"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/fix-tag-creation-and-e18.remote",
+            "private_commitment": "3b40e036faa09a7f4effaf1077fe238306a851b879cd2f7af88dd683b9be9d27",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/fix-tag-creation-and-e18.merge",
+            "private_commitment": "fb55f7978efc71e705016243037e49d597d68d0dc29b26add7b9cefd02413128",
+            "value": "refs/heads/feature/fix-tag-creation-and-e18"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/scope-pr-automation-982.remote",
+            "private_commitment": "c319c809c219c8be3f3a1e71afcbe9001e20ae5836df6cabf583cdbcf85670e0",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/scope-pr-automation-982.merge",
+            "private_commitment": "6ae55affecc1869a28ea421d4d3fe7d8160cc19c350ac1ceea1968113c554a5d",
+            "value": "refs/heads/feature/scope-pr-automation-982"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/fix-tag-display-and-e00.remote",
+            "private_commitment": "5a18f7228a4e4942ac041af2e8cf545f04ea6c9165e98359495bd7c3dbe11ad7",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/fix-tag-display-and-e00.merge",
+            "private_commitment": "cafcf781866e0ffc9a9ec8d7fbb4c3df18b7e2c59fce202e79a3e3eaad0505ef",
+            "value": "refs/heads/feature/fix-tag-display-and-e00"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/per-workspace-notes-ac1.remote",
+            "private_commitment": "dc3c9798a933146299cf98105bc1cd4509854251eb4d98c77674d19d924846d3",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/per-workspace-notes-ac1.merge",
+            "private_commitment": "6deb878fd35a94997c4d268b3a4528e893becbf851a51cf52fbb6e82deae39d9",
+            "value": "refs/heads/feature/per-workspace-notes-ac1"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/rich-hover-previews-279.remote",
+            "private_commitment": "67ef111610d948d89ae1f6052d0f94a0ebde86235b760c01f597ccf815a2a387",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/rich-hover-previews-279.merge",
+            "private_commitment": "331de77aefc464e18475081865085542a7cd9e751845c2ccfd5ac1dbbdce05a6",
+            "value": "refs/heads/feature/rich-hover-previews-279"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/require-auth-for-plu-67e.remote",
+            "private_commitment": "0da44e9916e99f262b32348d13b6f4dcb0de1bb5f31a6c158782a60506d64446",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/require-auth-for-plu-67e.merge",
+            "private_commitment": "f8d228a24c5b14bce149f92bac492c2971447e87e74bbd929c33eb4aaa74c169",
+            "value": "refs/heads/feature/require-auth-for-plu-67e"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/scope-gitlab-mr-auto-ty5.remote",
+            "private_commitment": "af58e2b2e5e52f3ea7127fb362bcc3dcb3b0a2743002d7bb55dfdda0b9da2e44",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/scope-gitlab-mr-auto-ty5.merge",
+            "private_commitment": "d624247480319dd3534e8c822f4749be08498ad572383536931312ee5854e699",
+            "value": "refs/heads/feature/scope-gitlab-mr-auto-ty5"
+          },
+          {
+            "adoption_blocker": true,
+            "classification": "redacted",
+            "key": "branch.feature/scope-gitlab-mr-auto-ty5.vscode-merge-base",
+            "private_commitment": "60052570e90f69268ca8f4e10b8856036b5a4fd104a82e299e18050da8c34ca1",
+            "reason": "outside closed safe-semantic allowlist",
+            "value": "<withheld>"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/fix-mobile-workspace-729.remote",
+            "private_commitment": "2b6bbf90c483017b15f3afb636b3a456cef925dabada2480f7ed16b68741da84",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/fix-mobile-workspace-729.merge",
+            "private_commitment": "dae54bc718b44c1926def44dcce31c90d0d1217f01fcc5203aad2764a5508985",
+            "value": "refs/heads/feature/fix-mobile-workspace-729"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/hydrator-wholesale-r-eqo.remote",
+            "private_commitment": "cbaa16df9d42d4a86bdcc2b235883b03b5a73a35adfbc26f818b60ae7b99bd2c",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/hydrator-wholesale-r-eqo.merge",
+            "private_commitment": "5106e973c01fe56fc479290125a948fcc307da23d98cf04f9e11fd352f7d3973",
+            "value": "refs/heads/feature/hydrator-wholesale-r-eqo"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/redmine-plugin-build-i3m.remote",
+            "private_commitment": "1d94e09c2234cfa859b497109c0b5c398c22614301abaa6bf6e7cbc9146e8a8e",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/redmine-plugin-build-i3m.merge",
+            "private_commitment": "38637e9b7cf1893bf78062826db4ff3df38f66ed2938469f3015002585bda232",
+            "value": "refs/heads/feature/redmine-plugin-build-i3m"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/feat-implement-redmi-kc1.remote",
+            "private_commitment": "87316e78cd1e0a0943fae49fa8d24cf34ef207f0d6656d1f8010ac3c765467b1",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/feat-implement-redmi-kc1.merge",
+            "private_commitment": "f432c22cba339cda6fb7a690c7ccb8d1ad81ce4609fe3afe9ac8f3e740c8a73f",
+            "value": "refs/heads/feature/feat-implement-redmi-kc1"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/create-a-plugin-that-kch.remote",
+            "private_commitment": "cc8dab092433ed88037d314e9838d5b237d9be13c0cd9b70004c336e2808d848",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/create-a-plugin-that-kch.merge",
+            "private_commitment": "1ac8b2262801665862b64cf494835d12f2305f24d2d647b2a12ec46c38534687",
+            "value": "refs/heads/feature/create-a-plugin-that-kch"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/fix-6-deterministica-followup.remote",
+            "private_commitment": "29a1f5572437bf2e66f505cb3c2900060bcc5034580b24552133215c106a1ee2",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/fix-6-deterministica-followup.merge",
+            "private_commitment": "de08e634f3accb3400bcc1e6c8623e70581fba0951d6f6868f8705513cd4959e",
+            "value": "refs/heads/feature/fix-6-deterministica-followup"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/allow-coordinator-re-wxo.remote",
+            "private_commitment": "43c8d610777188347b99be7f32078dd3db29949e479fe8e1e5fdfdd08a333fd5",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/allow-coordinator-re-wxo.merge",
+            "private_commitment": "28126994319656a013965df15e68f0c1139190b8c9b8c9a2b80e506802a845ac",
+            "value": "refs/heads/feature/allow-coordinator-re-wxo"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/allow-parent-workspa-f6k.remote",
+            "private_commitment": "4076dc1fa0e5757b01b5a811b88d8dc184a98097aad3edada56dcd8c95365c38",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/allow-parent-workspa-f6k.merge",
+            "private_commitment": "b405032fddbcda430475d82cca56c9a839ddef757eb0ad5a71e29a8ebfa5a498",
+            "value": "refs/heads/feature/allow-parent-workspa-f6k"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/reuse-workspace-for-c69.remote",
+            "private_commitment": "235c423ef5196f35b86a5d4a192cb9e4da5f3cb32c514984f6e70871a6405659",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/reuse-workspace-for-c69.merge",
+            "private_commitment": "6d8c8995684293c911e5e9d7bcc33db02e06615f31c05ce71a3bf030d273622f",
+            "value": "refs/heads/feature/reuse-workspace-for-c69"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/make-managed-task-wo-sgn.remote",
+            "private_commitment": "cf69003376549a90a6f81b50c4882a7965014d64882119570c526542c3d57675",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/make-managed-task-wo-sgn.merge",
+            "private_commitment": "fe7d7469d5408b13bcdd7e6da589e7b6cf9ae15ad75f609d14beabb506638847",
+            "value": "refs/heads/feature/make-managed-task-wo-sgn"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/fix-improve-task-pan-fff.remote",
+            "private_commitment": "b2cdd94f80dd372346e05d8a31d26d3a8bba0dcfdfbaeebddd8cc9db19da7d63",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/fix-improve-task-pan-fff.merge",
+            "private_commitment": "5ba760431754cbae4c032eef964f1717cba2deaf99e97a4e8c7894587fc6e9cd",
+            "value": "refs/heads/feature/fix-improve-task-pan-fff"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/clean-plugin-task-wr-4t2.remote",
+            "private_commitment": "b6160645ae3b6cd7441a593afe580fef31e4dfb7e5767a39122f08763c1b6c9e",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/clean-plugin-task-wr-4t2.merge",
+            "private_commitment": "4a991fdaab5ccd4faf0a1fe609d379f64d2d38638e50aca0671d698ebefa14a8",
+            "value": "refs/heads/feature/clean-plugin-task-wr-4t2"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/implement-host-agent-oav.remote",
+            "private_commitment": "40310351aa341ed16388b5b52d40fb55e3f22ed7d43d16ca6becaa6630ed6d63",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/implement-host-agent-oav.merge",
+            "private_commitment": "a5cc993ccd0e4084acdbab358fe07ba938a47be684a04be74ab99587b1460268",
+            "value": "refs/heads/feature/implement-host-agent-oav"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.fix/e2e-direct-docker-project.remote",
+            "private_commitment": "d43c5cc598f40051bdc6a1e4cc0997a3da4f3c23f17e66f8c8c2d4445d504368",
+            "value": "upstream"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.fix/e2e-direct-docker-project.merge",
+            "private_commitment": "0434f01373ced8e118285e76805bb0c943140b476c1d3579fc69aaefefdb4692",
+            "value": "refs/heads/main"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.ci-pr2793-fix.remote",
+            "private_commitment": "9796765c6936740d58ea85e7c252677c9a277eda1b5608249b0ea7ec3a3f09db",
+            "value": "upstream"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.ci-pr2793-fix.merge",
+            "private_commitment": "98cefb09b54727ebb0b92be7dc33dc8171ab1056a38e6f88d4614eb4658d9375",
+            "value": "refs/heads/pr/2793"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "credential_free_remote",
+            "key": "remote.compare-f6ecde248306.url",
+            "private_commitment": "afc08175bf25110bf99f1a2190acef429a076664f835da88df9b1e3ddf611dea",
+            "value": {
+              "host": "github.com",
+              "repository": "kdlbs/kandev.git",
+              "service_user": "git",
+              "transport": "ssh"
+            }
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_refspec",
+            "key": "remote.compare-f6ecde248306.fetch",
+            "private_commitment": "c9cfe438660c22da562d664c204d38de15fca3811dc918b78a45b942cab591a9",
+            "value": "+refs/heads/*:refs/remotes/compare-f6ecde248306/*"
+          },
+          {
+            "adoption_blocker": true,
+            "classification": "redacted",
+            "key": "remote.compare-f6ecde248306.tagopt",
+            "private_commitment": "c1c89a3f1f651677a8ff76507189d7a3b8c6061066d20c2cb2309a7577e55bd9",
+            "reason": "outside closed safe-semantic allowlist",
+            "value": "<withheld>"
+          },
+          {
+            "adoption_blocker": true,
+            "classification": "redacted",
+            "key": "remote.compare-f6ecde248306.pushurl",
+            "private_commitment": "6ac6b65aec4a75a4d9cfb057c369e8e495c73bef10844081e74d4a9e8ce70127",
+            "reason": "remote identity or credentials unreviewable",
+            "value": "<withheld>"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/fix-workflow-sync-gi-d0x.remote",
+            "private_commitment": "d0158c05afb162a8c8474f7587431cb4d36fdff205872745c268fca6c17aff59",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/fix-workflow-sync-gi-d0x.merge",
+            "private_commitment": "7e56213c45234425a29580682a226c50a681c1fe24326d92d561aeb6310450ac",
+            "value": "refs/heads/feature/fix-workflow-sync-gi-d0x"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/recover-missing-link-wm4.remote",
+            "private_commitment": "be97eac13b8208db6cbffd7f18360b8b998ecdeb5431ea5f64c4098c44b553d0",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/recover-missing-link-wm4.merge",
+            "private_commitment": "3ad02db41f1e1de483e08446a3e827b7900dbb6a47714db5ec5ac8d63d4f4f92",
+            "value": "refs/heads/feature/recover-missing-link-wm4"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.reconcile/executor-containers-nll-pr2937.remote",
+            "private_commitment": "75d4071578a5903eaed8ebbb2d0aa0640af580590bc57b59f872ca186f4ec0af",
+            "value": "upstream"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.reconcile/executor-containers-nll-pr2937.merge",
+            "private_commitment": "7a9f45c0ec7de3da9fab9cef9b9cd9be3a0a86f245675cb67831b950b2bb705b",
+            "value": "refs/heads/main"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/bound-plugin-registr-x1v.remote",
+            "private_commitment": "70a029268ed8fc50d77b4c15bea9c7d01a1ba5cdb769bfb0f6a6deff0ac96914",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/bound-plugin-registr-x1v.merge",
+            "private_commitment": "896c8ed65124b202338216eb98ff56eb32cad35d37963e220a48c67516b19537",
+            "value": "refs/heads/feature/bound-plugin-registr-x1v"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.fix/atomic-terminal-routing.remote",
+            "private_commitment": "b9425720cbbf87b9202e710f7d3e3a3c6153a1831f320e0abcbd1336e944e4f0",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.fix/atomic-terminal-routing.merge",
+            "private_commitment": "e6fc21a90e9a932a48ffd890554ab99f44b0955158f09551df5e4d6639a41546",
+            "value": "refs/heads/fix/atomic-terminal-routing"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/allow-scoped-fresh-c-0k2.remote",
+            "private_commitment": "73718659360b48cd1b4e519d08b942580ef2a164fdd9a8bd8afee43c60890562",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/allow-scoped-fresh-c-0k2.merge",
+            "private_commitment": "a9cb1824b07730796025e3d50999df6847884ad867c819f62fa99620d6c22cbf",
+            "value": "refs/heads/feature/allow-scoped-fresh-c-0k2"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.reconcile/managed-task-git-metadata.remote",
+            "private_commitment": "2bf420bd3ebc161aaecb0014ba548b622b23227993d4b810e9561927cb702a59",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.reconcile/managed-task-git-metadata.merge",
+            "private_commitment": "548635f865f67f2b55ffd7026161b091999274f79960d8300f3760ae950212bd",
+            "value": "refs/heads/reconcile/managed-task-git-metadata"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/recover-workspace-repair.remote",
+            "private_commitment": "33880fc6397af558f9fc8019ad7f3fabb5b8ea2f260499e89e9767b3af74c27d",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/recover-workspace-repair.merge",
+            "private_commitment": "d93e08b7fab99b57353e565ad5ff922cfc3ce64e95f4120273eab6d8062422b9",
+            "value": "refs/heads/feature/recover-workspace-repair"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.ci-fix/clean-plugin-task-wr-4t2-2872.remote",
+            "private_commitment": "8c2f1701f2b78732cb0b11684a143678d11cd614f7e540e22fde183ad121dbfd",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.ci-fix/clean-plugin-task-wr-4t2-2872.merge",
+            "private_commitment": "6cdb8819843961caba665bf7209be0f6bfa9af2694a89e706b119cf31b107035",
+            "value": "refs/heads/ci-fix/clean-plugin-task-wr-4t2-2872"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/fix-pr-watch-amplifi-u6z.remote",
+            "private_commitment": "ce6d8486fefd91966c6693d68805e0af66527ab34c3f66d3ee9c752a779685ff",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/fix-pr-watch-amplifi-u6z.merge",
+            "private_commitment": "2f048212a6fd3ee7a54e4d10da75b3d85cf1d51af920d47848954ddf9b2df81d",
+            "value": "refs/heads/feature/fix-pr-watch-amplifi-u6z"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.terminal-queue-snapshot-825e8aff.remote",
+            "private_commitment": "25e9337e2e22a2c6965e286066faed59377ed55c13f7d36cce777e53f23aabf6",
+            "value": "upstream"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.terminal-queue-snapshot-825e8aff.merge",
+            "private_commitment": "2f71a60c7a9c6cf3985d0905299a9bb20cc148912452ff6a812cbdf152c43a57",
+            "value": "refs/heads/main"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/grant-coordinator-ma-nnw.remote",
+            "private_commitment": "36c698e2842aeb9c687dc7c6e32d2dc5259d98a6984651512f57366550f2f42d",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/grant-coordinator-ma-nnw.merge",
+            "private_commitment": "90a62ed81db434c42d392ffe2c60fec53a072787324501f748b04a4fae98ed85",
+            "value": "refs/heads/feature/grant-coordinator-ma-nnw"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/bound-github-actions-u2g.remote",
+            "private_commitment": "b6b16a55cbd257efc94a7fcedff5b453e6add108f86a78d9b9695e7ffdbea1de",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/bound-github-actions-u2g.merge",
+            "private_commitment": "a15875a5fffc23f0c55e0b895af3b0634a659ce4fcbbc16fe6fafd38b2d79c9e",
+            "value": "refs/heads/feature/bound-github-actions-u2g"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.active-task-multirepo-808d887b.remote",
+            "private_commitment": "cb3c38a3890c121a879157125c07638d17ebe48aee3589b767ec066c30cf7a3f",
+            "value": "upstream"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.active-task-multirepo-808d887b.merge",
+            "private_commitment": "c442833ec038a44bcd11540e7661a06bd7809bba6102a00557bfcd7d8a977c62",
+            "value": "refs/heads/main"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.support/exact-profile-a335c345.remote",
+            "private_commitment": "65dc32f4034863bfe056c024898f10981173fc54e1e7134e66eb5649f7a3cb56",
+            "value": "upstream"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.support/exact-profile-a335c345.merge",
+            "private_commitment": "5690af7e7172de934c2c99be45c18617d7d3cfb9573a1738023a4797512b0b87",
+            "value": "refs/heads/pr-3473"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/fix-repository-provi-bdm.remote",
+            "private_commitment": "3567ba72e2a04db90a6b4835f0080c101d31b7f5783be5b81466b249f8634152",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/fix-repository-provi-bdm.merge",
+            "private_commitment": "acb3b3515fa414c3062650cf6720c92f9143307de07a1eaea39e7e3eb76b69fb",
+            "value": "refs/heads/feature/fix-repository-provi-bdm"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/manage-task-pr-and-m-e6i.remote",
+            "private_commitment": "11622e2c73908d988491d604563c9ed596db3d70109a38a9f2a1398efa5fa809",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/manage-task-pr-and-m-e6i.merge",
+            "private_commitment": "3906b5b99496d050dde5ddf763515a378b315ec51e7b7b67a46f9c4e6de7c455",
+            "value": "refs/heads/feature/manage-task-pr-and-m-e6i"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/harden-env-read-guar-uw9.remote",
+            "private_commitment": "16db583d2a945d7a08b069133eaf8eb7d703e7b06288ef3ef1d8a58ab8b990d9",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/harden-env-read-guar-uw9.merge",
+            "private_commitment": "52e957d58d39b228bf32858bb8b9cf79dd933e7800c8a0af01f0aadee9220cde",
+            "value": "refs/heads/feature/harden-env-read-guar-uw9"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "identity_withheld",
+            "key": "user.name",
+            "private_commitment": "dc3580991aae3b007653c1db47dfc8b0300cc5023295024d191e898e9735d89a",
+            "reason": "non-authority personal identity withheld",
+            "value": "<withheld>"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "identity_withheld",
+            "key": "user.email",
+            "private_commitment": "9ae13d70d00833d16f4903e10187d92bb74062a4f7c868e85fcbd0f7557a6f97",
+            "reason": "non-authority personal identity withheld",
+            "value": "<withheld>"
+          },
+          {
+            "adoption_blocker": true,
+            "classification": "redacted",
+            "key": "gc.auto",
+            "private_commitment": "f1737d2e5d4b4bd9f83a00f5b8517d5d213f555a04dcecf781bd769c659a44cf",
+            "reason": "outside closed safe-semantic allowlist",
+            "value": "<withheld>"
+          },
+          {
+            "adoption_blocker": true,
+            "classification": "redacted",
+            "key": "maintenance.auto",
+            "private_commitment": "3b3119c3ccb5da32fe5580d952f45448152451bbf9bb86ef0b4590a705b05a6a",
+            "reason": "outside closed safe-semantic allowlist",
+            "value": "<withheld>"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/repair-docker-address-pool-pr.remote",
+            "private_commitment": "51995cdf9ec2a4e72203e7e20e6fe16d6427d1e9db0e74a31b9aebf56bd9682a",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/repair-docker-address-pool-pr.merge",
+            "private_commitment": "122633e4877903ddbffc2c6c75810999aa89f08bea003e2f110e2b147b3be61b",
+            "value": "refs/heads/feature/repair-docker-address-pool-pr"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/adopt-exact-profile-9cd.remote",
+            "private_commitment": "27156252d60e75de7c612ca47ca11f6a4bd007701f6a93f03088575fc8e44695",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/adopt-exact-profile-9cd.merge",
+            "private_commitment": "5d1aff2bf20ed8f6645e047c8855aa59cb26543abd39195d7ff0bb9d553bfe12",
+            "value": "refs/heads/feature/adopt-exact-profile-9cd"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/configurable-agent-tab-close.remote",
+            "private_commitment": "cf80fbe47c92dacdfe6015e7b1e3fc80331adc2914bf4606942896de7ac09648",
+            "value": "upstream"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/configurable-agent-tab-close.merge",
+            "private_commitment": "75d82b456d2f7d30117af63db0bd174509b390aaa15e9b1c037520ff9f4dd9a2",
+            "value": "refs/heads/main"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "credential_free_remote",
+            "key": "remote.compare-2624060e5b5a.url",
+            "private_commitment": "7e16097ef4fca08dab152e3d52be0b7ae1c4eeda831c038d85aa28d7e82b16b6",
+            "value": {
+              "host": "github.com",
+              "repository": "kdlbs/kandev.git",
+              "service_user": "git",
+              "transport": "ssh"
+            }
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_refspec",
+            "key": "remote.compare-2624060e5b5a.fetch",
+            "private_commitment": "a2f540eaa52a15372b32027b2cadd6c43ae04101f6d288f718e31ac38f9c5386",
+            "value": "+refs/heads/*:refs/remotes/compare-2624060e5b5a/*"
+          },
+          {
+            "adoption_blocker": true,
+            "classification": "redacted",
+            "key": "remote.compare-2624060e5b5a.tagopt",
+            "private_commitment": "0469e1808072056929db8271f2e70bf7d5e3c4ff4ab0044693de48231fd4d814",
+            "reason": "outside closed safe-semantic allowlist",
+            "value": "<withheld>"
+          },
+          {
+            "adoption_blocker": true,
+            "classification": "redacted",
+            "key": "remote.compare-2624060e5b5a.pushurl",
+            "private_commitment": "d57405176336d74158946c2f2a0471ba6c8c6483a75c7d848454958afe07410b",
+            "reason": "remote identity or credentials unreviewable",
+            "value": "<withheld>"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/implement-task-envir-eh5.remote",
+            "private_commitment": "087cb04d2a81122d6d0f9728ff1f4d211b45103c7dd1607861732eb4df77edbc",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/implement-task-envir-eh5.merge",
+            "private_commitment": "4d71d8cd9bdf890d771d8ce04ef3b875a652ee20a6bcd5228d3aa4f96c5b1c0d",
+            "value": "refs/heads/feature/implement-task-envir-eh5"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.recovery/pr-2909-ci-fixup.remote",
+            "private_commitment": "3234f3f20ebb6d93a2ff1b4d63d239d6b08932724fb9026d1f955ffe627cbc66",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.recovery/pr-2909-ci-fixup.merge",
+            "private_commitment": "585b98e4ad65c9d032f989c96fd6bddb2c4223b7a15d270b464dad7e3551714a",
+            "value": "refs/heads/pr-2909"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.support/terminal-retention-924f.remote",
+            "private_commitment": "543b02ae44250e233da95fb31cb537c663aa64a338be287e03ad9aa265cc90be",
+            "value": "upstream"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.support/terminal-retention-924f.merge",
+            "private_commitment": "265856d3758904f1325daa747ff2a1567b0f3761ee1730d97f0f9a04c279bbfc",
+            "value": "refs/heads/main"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.support/terminal-routing-4596.remote",
+            "private_commitment": "b1acc70383898b3d0621f5d7d2278100e936026ba543e6fd04d27d5575307150",
+            "value": "upstream"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.support/terminal-routing-4596.merge",
+            "private_commitment": "8d8e340cdeb211745516fd29ea80549878d878fb0b88f0f7e673bd69356ed0bd",
+            "value": "refs/heads/main"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/record-task-scoped-s-ihq.remote",
+            "private_commitment": "e70b9d0c46dbf0967e9cfb5b298fb23a934054a819e88abdf705a58d087cc619",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/record-task-scoped-s-ihq.merge",
+            "private_commitment": "185bada705d7da5b5e4efad7b24248f8c74bd3c175fc8794a7e4fba9887cf3cc",
+            "value": "refs/heads/feature/record-task-scoped-s-ihq"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.support/pr-url-association-3896.remote",
+            "private_commitment": "2d3c0edf10b0de5b8a9d6e92ebb1d4c8dfef690cebb6b41bf46c1b6b7162b484",
+            "value": "upstream"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.support/pr-url-association-3896.merge",
+            "private_commitment": "8a5ea5f0a3f2b919bbb71bd2a018caf5b417cb0a36f80ba54eb6cfd4232d4aa9",
+            "value": "refs/heads/main"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/continue-docker-reconcile-nw7.remote",
+            "private_commitment": "559124333761df18b1290bbd9ceda763fde3a0b9cf98cdfa7185939662f25149",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/continue-docker-reconcile-nw7.merge",
+            "private_commitment": "3fa0eda88e091bbfb300883828c560c8efed5467dbf6be029426aad634a97d12",
+            "value": "refs/heads/feature/repair-docker-address-pool-pr"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.support/notes-source-materialization-e0a3.remote",
+            "private_commitment": "848bd3d9a49d112e4e719008ba1cabb25433458f2da254296747851310fc6787",
+            "value": "upstream"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.support/notes-source-materialization-e0a3.merge",
+            "private_commitment": "71959c7a0e54b49a0fe991fef20ccfe28e970ae5cbfecb44aeadd40277ddc1c2",
+            "value": "refs/heads/main"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.recovery/exact-profile-1805.remote",
+            "private_commitment": "79f5dbcac314309e98641058c5990cbfa4f1c307ec6273e82193a561f6f62481",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.recovery/exact-profile-1805.merge",
+            "private_commitment": "560ffc7e4f5fe0955631e7e2eb2cdf325eeac59c81f264adb9cd8e716efca6cc",
+            "value": "refs/heads/recovery/exact-profile-1805"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/publish-terminal-ret-gim-stack.remote",
+            "private_commitment": "5027ce0b17c59a519a0ecb1ee69184c393e929f332fe329b6f4901948ad11190",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/publish-terminal-ret-gim-stack.merge",
+            "private_commitment": "6a9719d572467e77fd2de3aef389e85b59a397f72dea604109dd8a36f4ec06e1",
+            "value": "refs/heads/feature/publish-terminal-ret-gim-stack"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/fix-flaky-kubernetes-pno.remote",
+            "private_commitment": "e70b0826e4952699b9f0e11c788d579beb00b8c332ada933e1fc7bf230862987",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/fix-flaky-kubernetes-pno.merge",
+            "private_commitment": "dfa93fbcc9860fd443cafc892a4ed15d724fb62d55b9ebd2c512218641abbf7d",
+            "value": "refs/heads/feature/fix-flaky-kubernetes-pno"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.recovery/resolve-pr-2909-base-conflict.remote",
+            "private_commitment": "0d7b0008630d7b3a437c85f60f1f38c52257a1adb25aaedf473a3a714f9e09ff",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.recovery/resolve-pr-2909-base-conflict.merge",
+            "private_commitment": "daf0439a7f7d9c4d4ad851b90e56c9f7b010534db05e2dad0fc8109836fa274a",
+            "value": "refs/heads/pr-2909-source"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.recovery/pr-2909-step-race.remote",
+            "private_commitment": "ee1890ae82a51b9b77492c262a4133e08bf4ce043cc85c8c551c53a76e81a882",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.recovery/pr-2909-step-race.merge",
+            "private_commitment": "0003487e02db70b7e7e2ac36ee2b4809d4410f2af7806d24a1020ad449a3cde2",
+            "value": "refs/heads/feature/prevent-stale-sessio-7n1"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/provider-access-host-fork.remote",
+            "private_commitment": "5d6aefc0b9648f80376589f8540befec0e6a2c7a04786bdd0b76c17096bc04d5",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/provider-access-host-fork.merge",
+            "private_commitment": "ce26bef9d24386e7c8d15fa9ce3d8e931403ff4340868aceb110da190967ef50",
+            "value": "refs/heads/feature/provider-access-host-fork"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/implement-exact-coor-wo8.remote",
+            "private_commitment": "892a33b6ab70fd15432c8cfb7d7fb4c2e7851c2005eed9e2d11f8188daa63545",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/implement-exact-coor-wo8.merge",
+            "private_commitment": "4adb31e19bac7fab6c5e3d9f6b7b8e68139458644503ecad8dc0f3da83e0a825",
+            "value": "refs/heads/feature/implement-exact-coor-wo8"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/feat-add-capability-grs.remote",
+            "private_commitment": "0004430656bbc165231c460bf33a8c933f7aeaa38508845bcb5493827a0d4b30",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/feat-add-capability-grs.merge",
+            "private_commitment": "e34f121bbb5203235043262c0f1eb2245695f0fb3f2434148ed2277de3020e1e",
+            "value": "refs/heads/feature/feat-add-capability-grs"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.support/ci-session-4013.remote",
+            "private_commitment": "e7260f48cbbe3d32457f69913500aa5bd1a2596b93164fb9e47abb902f5dc96e",
+            "value": "upstream"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.support/ci-session-4013.merge",
+            "private_commitment": "14903f35ca7ee989c245c70ef0e67de78dded52cafc8edc4681a8ee3b672de09",
+            "value": "refs/heads/main"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.fix/reject-qa-transition-gate-8693.remote",
+            "private_commitment": "c71c1a9e1e13eb44f140dffc7c1c5ecbb2ca6b12ca96dd9f06bbf53161abd5c0",
+            "value": "upstream"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.fix/reject-qa-transition-gate-8693.merge",
+            "private_commitment": "2172e591a2d8d41a8d591c6038d0c1eb3f360239bb5ecccfad9ad11bf924f665",
+            "value": "refs/heads/main"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.support/spawn-distinct-9e0f.remote",
+            "private_commitment": "6f0d7f445648e3aefbdb9ee67f09c3784cbdf755bcd3bdcfd307deb8e1805c7b",
+            "value": "upstream"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.support/spawn-distinct-9e0f.merge",
+            "private_commitment": "9fabb60a6e22db8679cd4fbcf9abf33a856e9d9c2fec5085670cbb865ed1151f",
+            "value": "refs/heads/main"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/fix-missing-managed-538.remote",
+            "private_commitment": "ca2c7722f8815164a108915de87913fb30bcda69f338fb5c14659beb9a57c565",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/fix-missing-managed-538.merge",
+            "private_commitment": "d51aa419f2e6d301458b20cf788ffeb66907dda36b0840be7b6ddc3927f49b4b",
+            "value": "refs/heads/feature/fix-missing-managed-538"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/fix-ci-fixup-prepare-h9x.remote",
+            "private_commitment": "c27418a9c6574a369c72679ccdf65b85676b8e4d05f7a63ef01cf5a6f02313df",
+            "value": "origin"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.feature/fix-ci-fixup-prepare-h9x.merge",
+            "private_commitment": "9af42c56fd063949cbb58fb950ecb386e7028a704b443ca815fd08569d670f23",
+            "value": "refs/heads/feature/fix-ci-fixup-prepare-h9x"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.hqa/admission-current-main-93236820.remote",
+            "private_commitment": "c67499af8712c5e8237ab5fb1b4b19e4af65f8c3266cc16ee3c1240f557a11f0",
+            "value": "upstream"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.hqa/admission-current-main-93236820.merge",
+            "private_commitment": "3492b0a86c42937ca190258336e510b8598a69109cf3a3f7c4127a48456d4859",
+            "value": "refs/heads/main"
+          }
+        ],
+        "includes_followed": false,
+        "origin": "shared",
+        "parser": "git config --no-includes; no helper/hook/filter execution",
+        "presence": "present"
+      },
+      {
+        "entries": [],
+        "origin": "original.worktree",
+        "presence": "absent"
+      },
+      {
+        "bytes_sha256": "b8bf91476663506a6985c393a3b0c95f7cf8ab16e7bab938eb1a57b83d0c37d0",
+        "entries": [
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_scalar",
+            "key": "core.repositoryformatversion",
+            "private_commitment": "6e07c04ec7db8aba575ab74e923cc029de83cd400c461172f1c29cc935c11fb2",
+            "value": "0"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_scalar",
+            "key": "core.filemode",
+            "private_commitment": "23079348c7da6661e93c2aeeaddf0946c066942a881b1732be004a6c94bd3086",
+            "value": "true"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_scalar",
+            "key": "core.bare",
+            "private_commitment": "cbafb5e61248fd736f4fa138399a02ce9c0132eee1f8bd3ef80f3ef218e53b8d",
+            "value": "false"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_scalar",
+            "key": "core.logallrefupdates",
+            "private_commitment": "5eb1d749cbfd99405262afe04b261d9a1e8bcd4da718c00cbfc9ecd983d1bec9",
+            "value": "true"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "credential_free_remote",
+            "key": "remote.upstream.url",
+            "private_commitment": "49586b2df1b91a4145df1c2b97640f42b6dc4ca9aaa14cb8fc075630a73c42a1",
+            "value": {
+              "host": "github.com",
+              "port": null,
+              "repository": "kdlbs/kandev.git",
+              "service_user": null,
+              "transport": "https"
+            }
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_refspec",
+            "key": "remote.upstream.fetch",
+            "private_commitment": "546fb7a4de2f64323602e2ba0eb9cb6e3c3ab5d7788ba12f049294bfdf27eb39",
+            "value": "+refs/heads/main:refs/remotes/upstream/main"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.main.remote",
+            "private_commitment": "5f2f4cab8aac0fa26dae90e2aaa6d06a4c12fd6f17091e869bffcc5df732b8ea",
+            "value": "upstream"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.main.merge",
+            "private_commitment": "b49c7b425bc780555d3cfdd3072f20166ae4957a79347c386a4c2897c6a6375f",
+            "value": "refs/heads/main"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.hqa/admission-current-main-93236820.remote",
+            "private_commitment": "c67499af8712c5e8237ab5fb1b4b19e4af65f8c3266cc16ee3c1240f557a11f0",
+            "value": "upstream"
+          },
+          {
+            "adoption_blocker": false,
+            "classification": "reviewable_branch_routing",
+            "key": "branch.hqa/admission-current-main-93236820.merge",
+            "private_commitment": "3492b0a86c42937ca190258336e510b8598a69109cf3a3f7c4127a48456d4859",
+            "value": "refs/heads/main"
+          }
+        ],
+        "includes_followed": false,
+        "origin": "candidate",
+        "parser": "git config --no-includes; no helper/hook/filter execution",
+        "presence": "present"
+      }
+    ]
+  },
+  "contract": "Candidate prospective checkpoint contract, version 1 (proposal only)\n1. This creates a prospective preservation boundary, not historical correction.\n   The interval from transfer preparation until approved adoption is unproven\n   for shared config and inventory. Old aggregate failures remain recorded.\n2. Reservation, retirement, transfer, historical report and setup-audit UUIDs\n   and digests remain immutable parents. No receipt, helper, marker or history\n   is replaced, deleted, restored or silently re-pinned.\n3. Root must approve this exact proposal and contract digest, task/workspace/\n   repo, original and candidate heads/base/branch, successor session/execution,\n   binding and physical process incarnation. Repository-owner review must approve\n   the exact shared-config byte digest and sanitized assessment. Unreviewable\n   authority-bearing values, unresolved includes or executable code block adoption.\n4. Required approval fields: proposal_sha256, contract_sha256, shared_config_sha256,\n   identity, lineage, preflight_sha256, approve_new_boundary=true,\n   acknowledge_unproven_interval=true, approve_config_assessment=true,\n   mutable_ref_policy, reviewer_id, review_receipt, repository_review_receipt,\n   preservation_decision_receipt, expires_at and single_use_nonce. Approval must\n   arrive through authenticated reviewed controls; JSON alone is not authority.\n5. Before adoption, a separate reviewed operation revalidates the exact original\n   tracked/untracked files including PROMPT, linked Git marker/admin/backlink,\n   original branch/head, failed-attempt branch, clean independent candidate at\n   its exact authorized head/base/branch, all old helper/receipt hashes, exact\n   live binding and retired predecessor. No provider action or shared Git write.\n6. It also requires the same sole eligible successor and pinned physical provider\n   ancestry/incarnation, old authority still revoked, no foreign active executor,\n   unchanged protected sessions/executions and limits, and an empty FIFO. New\n   input is preserved and invalidates adoption; no replay, disposal or counter reset.\n7. Adoption retains complete per-entry content/presence and inventory-stat maps\n   collected and hashed from the same stable snapshot; manifest and scope digests\n   enter a new append-only receipt. Baseline starts at adoption, never retroactively.\n   Failed preparation/adoption artifacts remain for reconciliation, not cleanup.\n8. Protected entries include original admin/files/marker, selected original and\n   failed-attempt refs, pinned canonical base, shared config/HEAD/packed-refs and\n   all non-authorized refs. Any change denies subsequent verification. Missing,\n   added, symlinked, renamed or unreadable protected entries deny verification.\n9. Only refs/heads/feature/allow-coordinator-re-wxo may advance prospectively.\n   Each advance needs exact old/new OIDs, verified ancestry (no deletion/rewrite),\n   same-workspace owner and Root operation receipt. No other ref permission.\n   Associated ref/reflog replacements and newly appended reachable Git objects\n   need a complete per-entry delta bound to that operation. Unrelated changes,\n   pre-existing object mutation/removal or pack rewriting remain blocking.\n   The original full inventory remains evidence; it is not simply ignored.\n10. Successor RUNNING/idle transitions and monotonically increasing own usage\n    are permitted; ownership, execution/process incarnation and budget/limit\n    fields remain pinned. Other writer fences and accounting remain unchanged.\n11. After approved adoption, only the authenticated successor's own guard can\n    verify its launch IDs and ancestry against the append-only receipt. Root or\n    Support cannot substitute the caller. Changed binding/provider, old revival,\n    foreign writer, stale/expired/reused approval or any unclassified drift denies.\n12. Preparation issues no accepted caller command, Source admission, lane/model/\n    primary/grant change or runtime authority. Adoption requires separately\n    reviewed implementation and tests. Root retains separate Source admission.\n",
+  "contract_sha256": "a22e2adb6e694da22232ce573c6f51838470a2286916b70047ce50b5838a25df",
+  "identity": {
+    "base": "bc0d3b90477078bb5e002e1a18d5e7fbe9c91f71",
+    "branch": "hqa/admission-current-main-93236820",
+    "head": "3744b794fba8a141e26ff0e0b702b186941af37e",
+    "original": "/data/tasks/implement-task-envir_4ue4el8l/kandev-source",
+    "original_head": "d1ca72f6f34f855eadc64a41c299dfe31df2f777",
+    "repo": "b86ec283-13cd-4cee-baec-1b88457ec06b",
+    "slot": "admission-current-main",
+    "successor": "8825279c-8704-4f6a-8e61-dc059d8bfd69",
+    "successor_execution": "9af6533d-089b-4f08-9b13-5d008e961fb6",
+    "task": "93236820-c21f-43db-95b7-3078f2dfeae8",
+    "workspace": "2e62401b-5ffe-4050-bc1b-d49ea5d5dbcd"
+  },
+  "installed": false,
+  "lineage": {
+    "historical_report_sha256": "904bbf9d376e7a23fbd136f139bc77fe62660e005b1f6b075a7b7b6b1c2fab48",
+    "reservation": "89192e49-4e27-4e4c-a6c5-c8fb7c93155d",
+    "reservation_sha256": "170df33cda166ff394285ffb556ed4898c86341eea4f3a1c07fe12ff95e4e2c8",
+    "retirement": "9dcc61a8-c608-467d-9b05-e2d041028d60",
+    "retirement_sha256": "379d2809717fb59183303642a6c61792e944b4e83b25c2d6451ecdfb58c32a32",
+    "setup_audit_sha256": "4bdf0cbb93ae09f6de3c06674af315aad99087209d6a01577dc9382c51891c1b",
+    "transfer": "1aa5282a-131f-475c-a672-647b5ecd7514",
+    "transfer_sha256": "47c5a5e97bc885b334d3f6bd919a39e2831be9ea2b17a5d259bb865205d39c1a"
+  },
+  "mode": "proposal_only",
+  "mutable_ref_policy": {
+    "mode": "reviewed_fast_forward_only",
+    "ref": "refs/heads/feature/allow-coordinator-re-wxo",
+    "unclassified_delta": "deny"
+  },
+  "preflight": {
+    "binding": {
+      "binding_id": "a1bcc956-8e53-4e70-8b62-847fb4d710e5",
+      "binding_updated_at": "2026-10-12 08:31:10.553086558+00:00",
+      "environment_id": "af5c3248-068d-4f93-8222-98717ec2c049",
+      "source": "/data/home/Code/kandev-source",
+      "task_dir_name": "implement-task-envir_4ue4el8l",
+      "workspace_id": "2e62401b-5ffe-4050-bc1b-d49ea5d5dbcd",
+      "worktree_branch": "feature/implement-task-envir-eh5",
+      "worktree_id": "64d61a4c-90b8-436d-b0d1-ced31eebe2e8",
+      "worktree_path": "/data/tasks/implement-task-envir_4ue4el8l/kandev-source"
+    },
+    "counters": {
+      "cost_subcents": 222,
+      "tokens_cached_in": 143360,
+      "tokens_in": 2799,
+      "tokens_out": 240
+    },
+    "executions_sha256": "d36fb4c9066863b888b1834e208ed7a1c4c770900f110391d4f8e86bb4e74adf",
+    "fences_sha256": "2a2297378637b28ba0fc99cd720dd48afb16258cead4cdd0bc901e11ba93da65",
+    "fifo_count": 0,
+    "fifo_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+    "files_sha256": "51103fe927791325c5abe0d3abe4beb3110949db67ebae14acc06b29e651d656",
+    "head": "3744b794fba8a141e26ff0e0b702b186941af37e",
+    "marker_sha256": "c0e435e0f12977bdd4a2b62af434ad6af5926aa3ed873073d0a38ce402c72069",
+    "original_head": "d1ca72f6f34f855eadc64a41c299dfe31df2f777",
+    "prompt_sha256": "3cdb66d483b298a12a4644515a1c8c5d1baa5dcaffdfd5d20b0a95ceb11b64d5",
+    "retired": {
+      "execution": "0f222aa3-8ee2-431e-ac7e-4e5cc0841091",
+      "session": "d6670d73-da9c-41e8-a58d-be096544bae0",
+      "status": "stopped",
+      "updated_at": "2026-10-12 09:16:08.385691866+00:00"
+    },
+    "sessions_sha256": "e7af0fb32759835fc0836ee0f01be111a1375bcde41dc8dbfd3a1aa34f3b0853",
+    "successor_process": {
+      "cwd": "/data/tasks/implement-task-envir_4ue4el8l/kandev-source",
+      "ids": {
+        "KANDEV_INSTANCE_ID": "9af6533d-089b-4f08-9b13-5d008e961fb6",
+        "KANDEV_SESSION_ID": "8825279c-8704-4f6a-8e61-dc059d8bfd69",
+        "KANDEV_TASK_ID": "93236820-c21f-43db-95b7-3078f2dfeae8"
+      },
+      "pgid": 83808,
+      "pid": 83945,
+      "ppid": 83938,
+      "sid": 83808,
+      "starttime": "93030470",
+      "state": "live"
+    },
+    "successor_state": "WAITING_FOR_INPUT"
+  },
+  "preflight_sha256": "ca0faa19c5abb571ad0c6b9085fb6769778296455903b75c5729cba7e37c6546",
+  "proposal_sha256": "e4fcdeef114bdfa321b629037c9767f4bb76c7a05e6c2d10aa112f97a952e352",
+  "review_helper_sha256": "7c32db93b243becf513c102259d801545695daf05a185091560bb13074783b39",
+  "source_admitted": false,
+  "version": "candidate-prospective-checkpoint/1"
+}

@@ -1,0 +1,52 @@
+Candidate prospective checkpoint contract, version 1 (proposal only)
+1. This creates a prospective preservation boundary, not historical correction.
+   The interval from transfer preparation until approved adoption is unproven
+   for shared config and inventory. Old aggregate failures remain recorded.
+2. Reservation, retirement, transfer, historical report and setup-audit UUIDs
+   and digests remain immutable parents. No receipt, helper, marker or history
+   is replaced, deleted, restored or silently re-pinned.
+3. Root must approve this exact proposal and contract digest, task/workspace/
+   repo, original and candidate heads/base/branch, successor session/execution,
+   binding and physical process incarnation. Repository-owner review must approve
+   the exact shared-config byte digest and sanitized assessment. Unreviewable
+   authority-bearing values, unresolved includes or executable code block adoption.
+4. Required approval fields: proposal_sha256, contract_sha256, shared_config_sha256,
+   identity, lineage, preflight_sha256, approve_new_boundary=true,
+   acknowledge_unproven_interval=true, approve_config_assessment=true,
+   mutable_ref_policy, reviewer_id, review_receipt, repository_review_receipt,
+   preservation_decision_receipt, expires_at and single_use_nonce. Approval must
+   arrive through authenticated reviewed controls; JSON alone is not authority.
+5. Before adoption, a separate reviewed operation revalidates the exact original
+   tracked/untracked files including PROMPT, linked Git marker/admin/backlink,
+   original branch/head, failed-attempt branch, clean independent candidate at
+   its exact authorized head/base/branch, all old helper/receipt hashes, exact
+   live binding and retired predecessor. No provider action or shared Git write.
+6. It also requires the same sole eligible successor and pinned physical provider
+   ancestry/incarnation, old authority still revoked, no foreign active executor,
+   unchanged protected sessions/executions and limits, and an empty FIFO. New
+   input is preserved and invalidates adoption; no replay, disposal or counter reset.
+7. Adoption retains complete per-entry content/presence and inventory-stat maps
+   collected and hashed from the same stable snapshot; manifest and scope digests
+   enter a new append-only receipt. Baseline starts at adoption, never retroactively.
+   Failed preparation/adoption artifacts remain for reconciliation, not cleanup.
+8. Protected entries include original admin/files/marker, selected original and
+   failed-attempt refs, pinned canonical base, shared config/HEAD/packed-refs and
+   all non-authorized refs. Any change denies subsequent verification. Missing,
+   added, symlinked, renamed or unreadable protected entries deny verification.
+9. Only refs/heads/feature/allow-coordinator-re-wxo may advance prospectively.
+   Each advance needs exact old/new OIDs, verified ancestry (no deletion/rewrite),
+   same-workspace owner and Root operation receipt. No other ref permission.
+   Associated ref/reflog replacements and newly appended reachable Git objects
+   need a complete per-entry delta bound to that operation. Unrelated changes,
+   pre-existing object mutation/removal or pack rewriting remain blocking.
+   The original full inventory remains evidence; it is not simply ignored.
+10. Successor RUNNING/idle transitions and monotonically increasing own usage
+    are permitted; ownership, execution/process incarnation and budget/limit
+    fields remain pinned. Other writer fences and accounting remain unchanged.
+11. After approved adoption, only the authenticated successor's own guard can
+    verify its launch IDs and ancestry against the append-only receipt. Root or
+    Support cannot substitute the caller. Changed binding/provider, old revival,
+    foreign writer, stale/expired/reused approval or any unclassified drift denies.
+12. Preparation issues no accepted caller command, Source admission, lane/model/
+    primary/grant change or runtime authority. Adoption requires separately
+    reviewed implementation and tests. Root retains separate Source admission.
