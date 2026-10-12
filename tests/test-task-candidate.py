@@ -139,6 +139,7 @@ with tempfile.TemporaryDirectory() as temporary:
             db.execute("UPDATE task_sessions SET state='FAILED' WHERE id='hqa'")
             db.execute("INSERT INTO task_sessions VALUES ('successor','task','repo','env',?,'WAITING_FOR_INPUT')", (str(original),))
             db.execute("INSERT INTO executors_running VALUES ('successor','task','successor','ready',123,0,'new-execution','live')")
+            db.execute('ALTER TABLE task_sessions ADD COLUMN total_tokens INTEGER DEFAULT 0')
             db.commit()
             run(candidate, 'config', 'user.name', 'Synthetic')
             run(candidate, 'config', 'user.email', 'synthetic@example.invalid')
@@ -196,8 +197,22 @@ with tempfile.TemporaryDirectory() as temporary:
                 transfer_args.receipt = transferred['receipt']
                 transfer_args.receipt_sha256 = transferred['receipt_sha256']
                 with patch.dict(os.environ, KANDEV_TASK_ID='task', KANDEV_SESSION_ID='successor', KANDEV_INSTANCE_ID='new-execution'):
+                    # The real successor resumes a turn and accrues usage; neither
+                    # changes its writer/process incarnation or other fences.
+                    db.execute("UPDATE task_sessions SET state='RUNNING',total_tokens=42 WHERE id='successor'")
+                    db.execute("UPDATE executors_running SET status='running' WHERE id='successor'")
+                    db.commit()
                     with contextlib.redirect_stdout(io.StringIO()):
                         t.operate(transfer_args, transfer_source.read_bytes())
+                    db.execute("INSERT INTO executors_running VALUES ('foreign','task','foreign','ready',456,0,'foreign-execution','live')")
+                    db.commit()
+                    denied(lambda: t.operate(transfer_args, transfer_source.read_bytes()))
+                    db.execute("DELETE FROM executors_running WHERE id='foreign'")
+                    db.commit()
+                    preserved_file = (original / 'file').read_bytes()
+                    (original / 'file').write_text('real file drift\n')
+                    denied(lambda: t.operate(transfer_args, transfer_source.read_bytes()))
+                    (original / 'file').write_bytes(preserved_file)
                     with patch.object(t, 'process_identity', lambda pid: dict(pid=pid, ppid=1)):
                         denied(lambda: t.caller_anchor(successor_process))
                     transfer_args.receipt_sha256 = 'stale'

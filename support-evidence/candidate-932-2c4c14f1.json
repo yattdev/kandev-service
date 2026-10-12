@@ -1,0 +1,132 @@
+{
+  "after": null,
+  "authorizations": [],
+  "before": null,
+  "broker_request": "2c4c14f1-0b0a-47a6-9e7e-be9866fb881d",
+  "documented_root_ref_provenance": [
+    {
+      "commit": "e237ee8b60e7449360b636fb6187c3ae23dec4d9",
+      "utc": "2026-10-12T09:52:18Z"
+    },
+    {
+      "commit": "cf07b84287e367dbb35b3f8c46f2f07e3726fd6e",
+      "parent": "554192f8c408b930af1b61e482f3dcaf76c8e20b",
+      "utc": "2026-10-12T10:45:25Z"
+    },
+    {
+      "commit": "441f57e6ff216baa662aa8a328283f80c099bc21",
+      "parent": "cf07b84287e367dbb35b3f8c46f2f07e3726fd6e",
+      "utc": "2026-10-12T11:02:10Z"
+    }
+  ],
+  "historical_entries": [
+    {
+      "actor_session": "48815ef5-da33-466b-9da8-fb0f2b2b6a82",
+      "actor_task": "9349b6e5-a167-4d88-af14-cb355015e3dd",
+      "after": {
+        "present": true,
+        "value": "c0c8a381f276d1b9323bbb311c0eef741958cb7a966d4185813771ce31a87045"
+      },
+      "attribution": "Root approves documented non-rewriting ref changes only; aggregate completeness not proven",
+      "before": {
+        "present": true,
+        "value": "7fab9b2bf8df3cbdec54cd201ae9c4872c36de5eb255a38a9139f4e8ec9d0172"
+      },
+      "collection": "git_metadata_sha256",
+      "evidence_sha256": "804d44fef9df7c6edf0779193bd146fc18914dee319595449edb8da8b3ab50e9",
+      "historical_before_ref": "7bbe8e2a57eca71eb1364b4e721ce6e19c3207dc",
+      "owner_receipt": "0654dd80-3608-4795-8639-3d215b9953ab",
+      "path": "/data/home/Code/kandev-source/.git/refs/heads/feature/allow-coordinator-re-wxo",
+      "recorded_after_ref": "cf07b84287e367dbb35b3f8c46f2f07e3726fd6e"
+    }
+  ],
+  "identity": {
+    "base": "bc0d3b90477078bb5e002e1a18d5e7fbe9c91f71",
+    "branch": "hqa/admission-current-main-93236820",
+    "head": "3744b794fba8a141e26ff0e0b702b186941af37e",
+    "original": "/data/tasks/implement-task-envir_4ue4el8l/kandev-source",
+    "original_head": "d1ca72f6f34f855eadc64a41c299dfe31df2f777",
+    "repo": "b86ec283-13cd-4cee-baec-1b88457ec06b",
+    "slot": "admission-current-main",
+    "successor": "8825279c-8704-4f6a-8e61-dc059d8bfd69",
+    "successor_execution": "9af6533d-089b-4f08-9b13-5d008e961fb6",
+    "task": "93236820-c21f-43db-95b7-3078f2dfeae8",
+    "workspace": "2e62401b-5ffe-4050-bc1b-d49ea5d5dbcd"
+  },
+  "recorded_observed": {
+    "git_metadata_sha256": "c833787f96eccb0a9ceba73d2f152357558021ed73561745242fc3845d9d206a",
+    "shared_inventory_sha256": "2e854dbe1860ebe300e5fa4ce109fdf13833cbb78bf7bd222228b57786d0c094"
+  },
+  "retained_evidence": {
+    "historical_config_copies_in_shared_administration": [],
+    "historical_ref_events": [
+      {
+        "current": "7bbe8e2a57eca71eb1364b4e721ce6e19c3207dc",
+        "epoch": 1791786390,
+        "kind": "commit",
+        "previous": "8a9419b162ecdaac2999f3dffbd544287da3a66b",
+        "utc": "2026-10-12T06:26:30+00:00"
+      },
+      {
+        "current": "e237ee8b60e7449360b636fb6187c3ae23dec4d9",
+        "epoch": 1791798738,
+        "kind": "commit",
+        "previous": "7bbe8e2a57eca71eb1364b4e721ce6e19c3207dc",
+        "utc": "2026-10-12T09:52:18+00:00"
+      },
+      {
+        "current": "554192f8c408b930af1b61e482f3dcaf76c8e20b",
+        "epoch": 1791800143,
+        "kind": "commit",
+        "previous": "e237ee8b60e7449360b636fb6187c3ae23dec4d9",
+        "utc": "2026-10-12T10:15:43+00:00"
+      },
+      {
+        "current": "cf07b84287e367dbb35b3f8c46f2f07e3726fd6e",
+        "epoch": 1791801925,
+        "kind": "commit",
+        "previous": "554192f8c408b930af1b61e482f3dcaf76c8e20b",
+        "utc": "2026-10-12T10:45:25+00:00"
+      },
+      {
+        "current": "441f57e6ff216baa662aa8a328283f80c099bc21",
+        "epoch": 1791802930,
+        "kind": "commit",
+        "previous": "cf07b84287e367dbb35b3f8c46f2f07e3726fd6e",
+        "utc": "2026-10-12T11:02:10+00:00"
+      }
+    ],
+    "retirement_preflight_keys": [
+      "checkpoint",
+      "fifo_count",
+      "fifo_sha256",
+      "protected_executions_sha256",
+      "protected_sessions_sha256",
+      "task_sha256",
+      "topology"
+    ],
+    "setup_audit_limitation": "existing guard audits scope grants/revocations, not individual shared config writes",
+    "transfer_has_per_entry_maps": false
+  },
+  "root_approved_packets": [
+    "VISIBILITY-FULL-SNAPSHOT-REMAINDER-20261012T1025Z",
+    "VISIBILITY-SNAPSHOT-PERMANENT-PROOF-20261012T1055Z"
+  ],
+  "schema": 1,
+  "unknowns": [
+    {
+      "path": "/data/home/Code/kandev-source/.git/config",
+      "predicate": "historical_config_bytes_and_attribution",
+      "recorded_content_sha256": "9a3eee14b1b2b1b10c7da94157f9592b52fd0f8304c5f242940b7d763fe042f9",
+      "recorded_mtime": "2026-10-12T09:53:25.575587+00:00"
+    },
+    {
+      "predicate": "historical_inventory_entry_set_and_statistics",
+      "reason": "no retained before/after maps; reflogs do not retain size/mtime_ns/mode/inode"
+    },
+    {
+      "predicate": "complete_delta_authorization",
+      "reason": "Root approves specific ref operations, not unknown config or extra aggregate changes"
+    }
+  ]
+}

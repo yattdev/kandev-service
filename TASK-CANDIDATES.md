@@ -223,3 +223,95 @@ stale binding or different successor process incarnation denies acceptance.
 Regression checks are `python3 tests/test-support-exact-stop.py` and
 `python3 tests/test-task-candidate.py`. They use synthetic Git/metadata/process
 fixtures and fake pidfds; they do not signal live processes or run product tests.
+
+### Offline per-entry preservation reconciliation
+
+`scripts/kandev-candidate-preservation.py` analyzes retained JSON evidence only.
+It does not traverse Git, read the database, install a helper, write a receipt,
+or accept a caller. Pin the original transfer's canonical JSON digest outside
+the evidence file:
+
+```sh
+python3 scripts/kandev-candidate-preservation.py \
+  --transfer '<retained-transfer-body.json>' \
+  --transfer-sha256 '<original-transfer-canonical-SHA256>' \
+  --evidence '<reviewed-retained-evidence.json>'
+```
+
+The transfer body excludes response-only `status` and `receipt_sha256` fields.
+Evidence schema 1 binds the task/workspace/repository, original/candidate
+checkpoint, successor execution and reservation context through that transfer.
+`recorded_observed` contains the two aggregate hashes from a retained diagnostic.
+`before` and `after` are complete per-entry manifests, or explicit `null` when
+unavailable. Partial `historical_entries` retain content hashes, presence,
+provenance and reconstructed ref values, but always remain `aggregate_proven:
+false`; they cannot substitute for complete manifest proof.
+
+A manifest contains `schema`, `identity`, `entries` and `aggregates`.
+`git_metadata_sha256` maps the exact original administration and shared
+refs/config/HEAD/packed-refs/marker paths to their content hashes (or the legacy
+null value for absent fixed files). `shared_inventory_sha256` maps every entry
+in the legacy shared inventory, excluding all worktree administration, to its
+exact `[size, mtime_ns, mode, inode]` tuple. The exact original administration
+path must match the original marker hash; foreign administration is rejected.
+Canonical JSON hashing must reproduce both original transfer aggregates and
+both recorded diagnostic aggregates. A plausible before-state that does not
+reproduce those hashes is rejected, even if its ref provenance is authorized.
+
+Only then does the control enumerate every added, removed or changed entry.
+Each delta needs an exact collection/path/before/after authorization with actor,
+operation, external review receipt and evidence digest. A ref-byte approval
+does not approve config changes, object writes, reflog changes or inode/mtime
+changes. Unknowns stay blocking even when maps are complete. Exit 78 reports
+missing evidence/authority. Exit 0, `offline_delta_proven`, proves only the
+reviewed offline delta: it never grants Source access or issues a correction.
+Any subsequent correction still needs the existing live guard's exact caller,
+binding, retirement, process incarnation, FIFO and immutable artifact checks,
+with a separately reviewed append-only receipt and helper lineage.
+
+For future reviewed preparation, retain the exact `metadata` and
+`shared_inventory` dictionaries in `original_snapshot` before discarding them
+after hashing. Package them with `prospective_manifest(identity, entries)`,
+and pin the manifest digest in the new append-only receipt. Retain matching
+before/after manifests under Support control. Collection and hashing must use
+the same maps, not separate traversals, and preserve a stable preparation
+checkpoint. The existing installed helper and receipts are unchanged; this
+prospective packaging function cannot retroactively recover an old manifest.
+Deployment of that collection change requires its own reviewed lineage.
+
+The evidence for request `2c4c14f1` is retained in
+`support-evidence/candidate-932-2c4c14f1.json`. Reflog history supports candidate
+before ref bytes `7bbe8e2a…\n` and recorded diagnostic after ref bytes
+`cf07b842…\n`, matching the recorded ref content hash. It does not recover the
+missing complete maps, historical config hash or historical inventory tuples.
+Known ref changes remain informational rather than a blanket aggregate
+approval. Scope grant/revocation audit events are not per-file config-write
+audit events.
+
+If those historical maps cannot be recovered, the smallest recovery alternative
+is a separately reviewed **new preservation epoch**, not a successful correction
+of the old receipt. The repository owner must review the intended shared config
+and explicitly approve its exact state; Root must decide whether the remaining
+unattributed historical interval is acceptable for this candidate. That decision
+must name the missing evidence and exact bounded entries/scope; a general
+"refresh hashes" approval is insufficient. Unknown historical config operations
+can have materially changed repository behavior, so ref provenance alone cannot
+make that decision.
+
+An authorized epoch would retain every original receipt/helper and the failed
+historical comparison; append a new contract/helper/manifest lineage; preserve
+the exact original files/PROMPT/branch, candidate commit/history/base, reservation,
+retired predecessor and live successor incarnation; and retain the FIFO,
+counter, other-writer and shared-write restrictions. It would acknowledge the
+unproven historical shared-metadata interval rather than claim it was proven
+harmless. It needs no provider restart, second candidate, cleanup or shared Git
+write. Root still owns actual successor acceptance and separate Source admission.
+The current request does not authorize this decision, and this control contains
+no epoch override or mechanism to ignore the existing comparisons.
+
+`python3 tests/test-candidate-preservation.py` covers aggregate reconstruction,
+partial history, exact authorization, unknown config, complete added/removed
+entry reporting, missing inventory statistics, scope/incarnation mismatches and
+nonmutating CLI behavior. Candidate regressions also cover a successor RUNNING
+verification with usage progress, foreign writers, real original-file drift
+and old execution revival.

@@ -1,0 +1,80 @@
+{
+  "aggregates": {
+    "git_metadata_sha256": {
+      "observed": "c833787f96eccb0a9ceba73d2f152357558021ed73561745242fc3845d9d206a",
+      "pinned": "47e81438059f9fbb1b43660f751c80e6fcb417d26bf545409cab35c99083793e"
+    },
+    "shared_inventory_sha256": {
+      "observed": "2e854dbe1860ebe300e5fa4ce109fdf13833cbb78bf7bd222228b57786d0c094",
+      "pinned": "bc3fc90a4a7ffd0d50afcb395ab52bac49d8c4e472a47c604c83eedfa23f4504"
+    }
+  },
+  "blockers": [
+    {
+      "path": "/data/home/Code/kandev-source/.git/config",
+      "predicate": "historical_config_bytes_and_attribution",
+      "recorded_content_sha256": "9a3eee14b1b2b1b10c7da94157f9592b52fd0f8304c5f242940b7d763fe042f9",
+      "recorded_mtime": "2026-10-12T09:53:25.575587+00:00"
+    },
+    {
+      "predicate": "historical_inventory_entry_set_and_statistics",
+      "reason": "no retained before/after maps; reflogs do not retain size/mtime_ns/mode/inode"
+    },
+    {
+      "predicate": "complete_delta_authorization",
+      "reason": "Root approves specific ref operations, not unknown config or extra aggregate changes"
+    },
+    {
+      "predicate": "complete_before_manifest",
+      "reason": "missing per-entry evidence; history cannot substitute aggregate proof"
+    },
+    {
+      "predicate": "complete_after_manifest",
+      "reason": "missing per-entry evidence; history cannot substitute aggregate proof"
+    }
+  ],
+  "correction_issued": false,
+  "deltas": [],
+  "evidence_sha256": "f44cf633819fe9e881668148bc42c3cb58099a3c325b008e65c280700d5066e2",
+  "historical_entries": [
+    {
+      "actor_session": "48815ef5-da33-466b-9da8-fb0f2b2b6a82",
+      "actor_task": "9349b6e5-a167-4d88-af14-cb355015e3dd",
+      "after": {
+        "present": true,
+        "value": "c0c8a381f276d1b9323bbb311c0eef741958cb7a966d4185813771ce31a87045"
+      },
+      "aggregate_proven": false,
+      "attribution": "Root approves documented non-rewriting ref changes only; aggregate completeness not proven",
+      "before": {
+        "present": true,
+        "value": "7fab9b2bf8df3cbdec54cd201ae9c4872c36de5eb255a38a9139f4e8ec9d0172"
+      },
+      "collection": "git_metadata_sha256",
+      "evidence_sha256": "804d44fef9df7c6edf0779193bd146fc18914dee319595449edb8da8b3ab50e9",
+      "historical_before_ref": "7bbe8e2a57eca71eb1364b4e721ce6e19c3207dc",
+      "owner_receipt": "0654dd80-3608-4795-8639-3d215b9953ab",
+      "path": "/data/home/Code/kandev-source/.git/refs/heads/feature/allow-coordinator-re-wxo",
+      "recorded_after_ref": "cf07b84287e367dbb35b3f8c46f2f07e3726fd6e"
+    }
+  ],
+  "identity": {
+    "base": "bc0d3b90477078bb5e002e1a18d5e7fbe9c91f71",
+    "branch": "hqa/admission-current-main-93236820",
+    "head": "3744b794fba8a141e26ff0e0b702b186941af37e",
+    "original": "/data/tasks/implement-task-envir_4ue4el8l/kandev-source",
+    "original_head": "d1ca72f6f34f855eadc64a41c299dfe31df2f777",
+    "repo": "b86ec283-13cd-4cee-baec-1b88457ec06b",
+    "slot": "admission-current-main",
+    "successor": "8825279c-8704-4f6a-8e61-dc059d8bfd69",
+    "successor_execution": "9af6533d-089b-4f08-9b13-5d008e961fb6",
+    "task": "93236820-c21f-43db-95b7-3078f2dfeae8",
+    "workspace": "2e62401b-5ffe-4050-bc1b-d49ea5d5dbcd"
+  },
+  "report_sha256": "904bbf9d376e7a23fbd136f139bc77fe62660e005b1f6b075a7b7b6b1c2fab48",
+  "schema": 1,
+  "source_access_granted": false,
+  "status": "blocked",
+  "transfer": "1aa5282a-131f-475c-a672-647b5ecd7514",
+  "transfer_sha256": "47c5a5e97bc885b334d3f6bd919a39e2831be9ea2b17a5d259bb865205d39c1a"
+}
