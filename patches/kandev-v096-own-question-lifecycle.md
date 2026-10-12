@@ -1,5 +1,10 @@
 # Exact own-question lifecycle and publication receipts
 
+The mixed-batch reader contract and its acceptance follow-up are corrected in
+[the mixed-batch repair record](kandev-v096-own-question-mixed-batch.md).
+That record supersedes the incomplete-identity and multiple-bundle reader
+restrictions below; those restrictions remain required for ask retries.
+
 Support request `292e71d2-00d0-49fc-bb37-c9cb95de1785`;
 dedup key `coordinator-own-ask-lifecycle-20261012`.
 

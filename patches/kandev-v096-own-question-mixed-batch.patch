@@ -1,0 +1,329 @@
+diff --git a/apps/backend/internal/mcp/handlers/own_question.go b/apps/backend/internal/mcp/handlers/own_question.go
+index 5d00d4ce87..c8dcb20579 100644
+--- a/apps/backend/internal/mcp/handlers/own_question.go
++++ b/apps/backend/internal/mcp/handlers/own_question.go
+@@ -34,13 +34,15 @@ type ownQuestionRequest struct {
+ 
+ type ownQuestionItem struct {
+ 	QuestionID        string                `json:"question_id"`
+-	MessageID         string                `json:"message_id"`
+-	TurnID            string                `json:"requesting_turn_id"`
++	PendingID         string                `json:"pending_id,omitempty"`
++	RetryAllowed      bool                  `json:"retry_allowed"`
++	MessageID         string                `json:"message_id,omitempty"`
++	TurnID            string                `json:"requesting_turn_id,omitempty"`
+ 	Status            string                `json:"status"`
+-	CreatedAt         time.Time             `json:"created_at"`
+-	UpdatedAt         time.Time             `json:"updated_at"`
+-	AgentDisconnected bool                  `json:"agent_disconnected"`
+-	QuestionSHA256    string                `json:"question_sha256"`
++	CreatedAt         time.Time             `json:"created_at,omitzero"`
++	UpdatedAt         time.Time             `json:"updated_at,omitzero"`
++	AgentDisconnected bool                  `json:"agent_disconnected,omitempty"`
++	QuestionSHA256    string                `json:"question_sha256,omitempty"`
+ 	Answer            *clarification.Answer `json:"answer,omitempty"`
+ }
+ 
+@@ -112,34 +114,56 @@ func (h *Handlers) readOwnQuestion(ctx context.Context, taskID, sessionID string
+ 		return nil, nil, err
+ 	}
+ 	receipt := &ownQuestionReceipt{TaskID: taskID, SessionID: sessionID, Status: "not_created", RetryAllowed: true, Questions: []ownQuestionItem{}}
+-	if len(messages) == 0 {
+-		return receipt, messages, nil
+-	}
+-	receipt.RetryAllowed = false
+ 	seen := map[string]bool{}
++	for _, id := range ids {
++		seen[id] = false
++	}
+ 	for _, m := range messages {
+ 		if err := addOwnQuestionItem(receipt, m, seen, taskID, sessionID); err != nil {
+ 			return nil, nil, err
+ 		}
+ 	}
+-	if len(seen) != len(ids) {
+-		return nil, nil, errors.New("incomplete question identity")
+-	}
+-	receipt.Status = ownBundleStatus(receipt.Questions)
++	completeOwnQuestionBatch(receipt, ids)
+ 	return receipt, messages, nil
+ }
+ 
++// Every requested ID has one result, in caller order. A missing ID has no
++// durable identity; existing IDs retain their own immutable bundle identity.
++func completeOwnQuestionBatch(r *ownQuestionReceipt, ids []string) {
++	byID := make(map[string]ownQuestionItem, len(r.Questions))
++	bundles := map[string]bool{}
++	for _, item := range r.Questions {
++		byID[item.QuestionID] = item
++		bundles[item.PendingID] = true
++	}
++	r.Questions = make([]ownQuestionItem, 0, len(ids))
++	for _, id := range ids {
++		item, exists := byID[id]
++		if !exists {
++			item = ownQuestionItem{QuestionID: id, Status: "not_created", RetryAllowed: true}
++		} else {
++			r.RetryAllowed = false
++		}
++		r.Questions = append(r.Questions, item)
++	}
++	if len(bundles) == 1 {
++		for pending := range bundles {
++			r.PendingID = pending
++		}
++	}
++	r.Status = ownBundleStatus(r.Questions)
++}
++
+ func addOwnQuestionItem(r *ownQuestionReceipt, m *models.Message, seen map[string]bool, taskID, sessionID string) error {
+ 	if m.TaskID != taskID || m.TaskSessionID != sessionID || m.Type != models.MessageTypeClarificationRequest || m.AuthorType != models.MessageAuthorAgent {
+ 		return errors.New("question scope mismatch")
+ 	}
+ 	id, _ := m.Metadata["question_id"].(string)
+ 	pending, _ := m.Metadata["pending_id"].(string)
+-	if id == "" || pending == "" || seen[id] || (r.PendingID != "" && r.PendingID != pending) {
++	if _, requested := seen[id]; !requested || id == "" || pending == "" || seen[id] {
+ 		return errors.New("ambiguous question identity")
+ 	}
+ 	seen[id] = true
+-	r.PendingID = pending
+ 	raw, err := json.Marshal(m.Metadata)
+ 	if err != nil || len(raw) > 65536 {
+ 		return errors.New("question metadata exceeds bound")
+@@ -151,7 +175,7 @@ func addOwnQuestionItem(r *ownQuestionReceipt, m *models.Message, seen map[strin
+ 	digest := sha256.Sum256(question)
+ 	status, _ := m.Metadata["status"].(string)
+ 	disconnected, _ := m.Metadata["agent_disconnected"].(bool)
+-	item := ownQuestionItem{QuestionID: id, MessageID: m.ID, TurnID: m.TurnID, Status: status, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt, AgentDisconnected: disconnected, QuestionSHA256: hex.EncodeToString(digest[:])}
++	item := ownQuestionItem{QuestionID: id, PendingID: pending, MessageID: m.ID, TurnID: m.TurnID, Status: status, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt, AgentDisconnected: disconnected, QuestionSHA256: hex.EncodeToString(digest[:])}
+ 	item.Answer, item.Status, err = projectOwnAnswer(status, m.Metadata["response"], id)
+ 	if err != nil {
+ 		return err
+@@ -161,18 +185,10 @@ func addOwnQuestionItem(r *ownQuestionReceipt, m *models.Message, seen map[strin
+ }
+ 
+ func ownBundleStatus(items []ownQuestionItem) string {
+-	status := string(clarification.StatusAnswered)
++	status := items[0].Status
+ 	for _, item := range items {
+-		switch item.Status {
+-		case string(clarification.StatusRejected):
+-			return string(clarification.StatusRejected)
+-		case string(clarification.StatusPending), "":
+-			status = string(clarification.StatusPending)
+-		case string(clarification.StatusAnswered):
+-		case string(clarification.StatusExpired), string(clarification.StatusCancelled):
+-			return item.Status
+-		default:
+-			return "unknown"
++		if item.Status != status {
++			return "mixed"
+ 		}
+ 	}
+ 	return status
+@@ -195,6 +211,9 @@ func (h *Handlers) prepareOwnQuestion(ctx context.Context, taskID, sessionID str
+ 		return "", nil, err
+ 	}
+ 	if len(messages) > 0 {
++		if len(messages) != len(ids) || receipt.PendingID == "" {
++			return "", nil, errors.New("incomplete or distinct question request identities")
++		}
+ 		if err := matchOwnQuestionRetry(messages, questions, questionContext); err != nil {
+ 			return "", nil, err
+ 		}
+@@ -320,6 +339,11 @@ func projectOwnAnswer(status string, raw any, id string) (*clarification.Answer,
+ 	if status == "" {
+ 		status = string(clarification.StatusPending)
+ 	}
++	switch status {
++	case string(clarification.StatusPending), string(clarification.StatusAnswered), string(clarification.StatusRejected), string(clarification.StatusExpired), string(clarification.StatusCancelled):
++	default:
++		status = "unknown"
++	}
+ 	if status != string(clarification.StatusAnswered) {
+ 		return nil, status, nil
+ 	}
+diff --git a/apps/backend/internal/mcp/handlers/own_question_batch_test.go b/apps/backend/internal/mcp/handlers/own_question_batch_test.go
+new file mode 100644
+index 0000000000..ad8f69e38a
+--- /dev/null
++++ b/apps/backend/internal/mcp/handlers/own_question_batch_test.go
+@@ -0,0 +1,102 @@
++package handlers
++
++import (
++	"testing"
++
++	"github.com/kandev/kandev/internal/clarification"
++	ws "github.com/kandev/kandev/pkg/websocket"
++	"github.com/stretchr/testify/require"
++)
++
++func TestOwnQuestionBatchReadback(t *testing.T) {
++	h, repo, ctx, q := ownQuestionFixture(t)
++	read := func(ids ...string) ownQuestionReceipt {
++		response, err := h.handleGetOwnQuestionStatus(ctx, makeWSMessage(t, ws.ActionMCPGetOwnQuestionStatus, map[string]any{"session_id": "own-session", "question_ids": ids}))
++		require.NoError(t, err)
++		return ownReceipt(t, response)
++	}
++	missing := read("missing-a", "missing-b")
++	require.Len(t, missing.Questions, 2)
++	require.True(t, missing.RetryAllowed)
++	for _, item := range missing.Questions {
++		require.Equal(t, "not_created", item.Status)
++		require.True(t, item.RetryAllowed)
++		require.Empty(t, item.MessageID)
++	}
++	pending, _, err := h.prepareOwnQuestion(ctx, "own-task", "own-session", q, "", false)
++	require.NoError(t, err)
++	original := read(q[0].ID)
++	require.Equal(t, pending, original.Questions[0].PendingID)
++	require.False(t, original.Questions[0].RetryAllowed)
++	for _, ids := range [][]string{{q[0].ID, "missing-a"}, {"missing-a", q[0].ID}} {
++		mixed := read(ids...)
++		require.Equal(t, "mixed", mixed.Status)
++		require.False(t, mixed.RetryAllowed)
++		require.Equal(t, pending, mixed.PendingID)
++		for i, id := range ids {
++			require.Equal(t, id, mixed.Questions[i].QuestionID)
++			if id == q[0].ID {
++				require.Equal(t, original.Questions[0], mixed.Questions[i])
++			} else {
++				require.True(t, mixed.Questions[i].RetryAllowed)
++			}
++		}
++		require.Equal(t, mixed, read(ids...), "readback must be idempotent")
++	}
++	messages, err := repo.FindOwnClarificationMessages(ctx, "own-task", "own-session", []string{q[0].ID})
++	require.NoError(t, err)
++	require.Len(t, messages, 1)
++	m := messages[0]
++	for _, status := range []string{"answered", "rejected"} {
++		m.Metadata["status"] = status
++		m.Metadata["response"] = clarification.Answer{QuestionID: q[0].ID, SelectedOptions: []string{"A"}}
++		require.NoError(t, repo.UpdateMessage(ctx, m))
++		result := read("missing-a", q[0].ID)
++		require.Equal(t, "mixed", result.Status)
++		require.Equal(t, status, result.Questions[1].Status)
++		require.Equal(t, m.ID, result.Questions[1].MessageID)
++		require.False(t, result.Questions[1].RetryAllowed)
++		if status == "answered" {
++			require.Equal(t, []string{"A"}, result.Questions[1].Answer.SelectedOptions)
++		} else {
++			require.Nil(t, result.Questions[1].Answer)
++		}
++	}
++}
++
++func TestOwnQuestionBatchRetryRejectsPartialAndSeparateRequests(t *testing.T) {
++	h, repo, ctx, q := ownQuestionFixture(t)
++	first, _, err := h.prepareOwnQuestion(ctx, "own-task", "own-session", q, "", false)
++	require.NoError(t, err)
++	second := q[0]
++	second.ID = "second-own-q"
++	combined := []clarification.Question{q[0], second}
++	_, _, err = h.prepareOwnQuestion(ctx, "own-task", "own-session", combined, "", false)
++	require.Error(t, err, "partial existing identity must not publish or return a partial retry")
++	rows, err := repo.FindOwnClarificationMessages(ctx, "own-task", "own-session", []string{second.ID})
++	require.NoError(t, err)
++	require.Empty(t, rows)
++	next, _, err := h.prepareOwnQuestion(ctx, "own-task", "own-session", []clarification.Question{second}, "", false)
++	require.NoError(t, err)
++	require.NotEqual(t, first, next)
++	receipt, _, err := h.readOwnQuestion(ctx, "own-task", "own-session", []string{q[0].ID, second.ID})
++	require.NoError(t, err, "reader permits separate own requests")
++	require.Empty(t, receipt.PendingID, "no single bundle identity may be implied")
++	require.Equal(t, first, receipt.Questions[0].PendingID)
++	require.Equal(t, next, receipt.Questions[1].PendingID)
++	receipt, _, err = h.readOwnQuestion(ctx, "own-task", "own-session", []string{"missing-a", q[0].ID, "missing-b", second.ID})
++	require.NoError(t, err)
++	require.Len(t, receipt.Questions, 4)
++	require.Equal(t, "mixed", receipt.Status)
++	require.True(t, receipt.Questions[0].RetryAllowed)
++	require.False(t, receipt.Questions[1].RetryAllowed)
++	require.True(t, receipt.Questions[2].RetryAllowed)
++	require.False(t, receipt.Questions[3].RetryAllowed)
++	_, _, err = h.prepareOwnQuestion(ctx, "own-task", "own-session", combined, "", false)
++	require.Error(t, err, "ask retry cannot merge distinct requests")
++	for _, question := range combined {
++		_, original, err := h.prepareOwnQuestion(ctx, "own-task", "own-session", []clarification.Question{question}, "", false)
++		require.NoError(t, err)
++		require.Len(t, original.Questions, 1)
++	}
++}
+diff --git a/apps/backend/internal/mcp/server/own_question.go b/apps/backend/internal/mcp/server/own_question.go
+index 9d93b40cb3..5dba686f55 100644
+--- a/apps/backend/internal/mcp/server/own_question.go
++++ b/apps/backend/internal/mcp/server/own_question.go
+@@ -15,16 +15,26 @@ const ownQuestionReceiptOutputSchema = `{
+  "properties":{
+   "task_id":{"type":"string"},"session_id":{"type":"string"},
+   "pending_id":{"type":"string"},
+-  "status":{"type":"string","enum":["not_created","pending","answered","rejected","expired","cancelled","unknown"]},
++  "status":{"type":"string","enum":["not_created","pending","answered","rejected","expired","cancelled","unknown","mixed"]},
+   "retry_allowed":{"type":"boolean"},
+-  "questions":{"type":"array","maxItems":4,"items":{"type":"object"}}
++  "questions":{"type":"array","minItems":1,"maxItems":4,"items":{
++   "type":"object","required":["question_id","status","retry_allowed"],
++   "properties":{
++    "question_id":{"type":"string"},"pending_id":{"type":"string"},
++    "message_id":{"type":"string"},"requesting_turn_id":{"type":"string"},
++    "status":{"type":"string","enum":["not_created","pending","answered","rejected","expired","cancelled","unknown"]},
++    "retry_allowed":{"type":"boolean"},"created_at":{"type":"string"},
++    "updated_at":{"type":"string"},"agent_disconnected":{"type":"boolean"},
++    "question_sha256":{"type":"string"},"answer":{"type":"object"}
++   },"additionalProperties":false
++  }}
+  },
+  "additionalProperties":false
+ }`
+ 
+ func (s *Server) registerOwnQuestionStatusTool() {
+ 	s.mcpServer.AddTool(mcp.NewTool("get_own_question_status_kandev",
+-		mcp.WithDescription("Read durable lifecycle metadata and recorded answers for 1-4 exact stable question IDs on this caller's own active task/session. Returns not_created, pending, answered, rejected, expired, cancelled, or unknown. No question prompts, other messages, acknowledgement, retry, or policy change. Correlate the original ID before retry; an existing identity cannot be recreated."),
++		mcp.WithDescription("Read durable lifecycle metadata and recorded answers for 1-4 exact stable question IDs on this caller's own active task/session. Each ID returns its status and retry_allowed; only not_created permits retry. Batch status is mixed when statuses differ; batch retry_allowed requires every ID to be absent. No question prompts, other messages, acknowledgement, retry, or policy change. Correlate the original ID before retry; an existing identity cannot be recreated."),
+ 		mcp.WithRawOutputSchema(json.RawMessage(ownQuestionReceiptOutputSchema)),
+ 		mcp.WithReadOnlyHintAnnotation(true), mcp.WithDestructiveHintAnnotation(false), mcp.WithIdempotentHintAnnotation(true), mcp.WithOpenWorldHintAnnotation(false),
+ 		mcp.WithArray("question_ids", mcp.Required(), mcp.MinItems(1), mcp.MaxItems(4), mcp.Items(map[string]any{"type": "string", "minLength": 1, "maxLength": 128}))),
+diff --git a/apps/backend/internal/mcp/server/own_question_test.go b/apps/backend/internal/mcp/server/own_question_test.go
+index 92e9b316d3..a3b025d227 100644
+--- a/apps/backend/internal/mcp/server/own_question_test.go
++++ b/apps/backend/internal/mcp/server/own_question_test.go
+@@ -1,12 +1,36 @@
+ package mcp
+ 
+ import (
++	"encoding/json"
+ 	"testing"
+ 
+ 	ws "github.com/kandev/kandev/pkg/websocket"
+ 	"github.com/stretchr/testify/require"
+ )
+ 
++func TestOwnQuestionMixedBatchSchemaAndForwarding(t *testing.T) {
++	batch := map[string]interface{}{
++		"task_id": "own-task", "session_id": "own-session", "status": "mixed", "retry_allowed": false,
++		"questions": []any{
++			map[string]any{"question_id": "original", "pending_id": "original-pending", "message_id": "original-message", "status": "pending", "retry_allowed": false},
++			map[string]any{"question_id": "missing", "status": "not_created", "retry_allowed": true},
++		},
++	}
++	backend := &testBackend{response: batch}
++	s := newTaskModeServer(t, backend, "own-task")
++	result := callTool(t, s, "get_own_question_status_kandev", map[string]interface{}{"question_ids": []string{"original", "missing"}})
++	require.False(t, result.IsError)
++	require.Equal(t, batch, result.StructuredContent)
++	require.Equal(t, []string{"original", "missing"}, backend.lastPayload.(map[string]interface{})["question_ids"])
++	var schema map[string]any
++	require.NoError(t, json.Unmarshal(s.mcpServer.ListTools()["get_own_question_status_kandev"].Tool.RawOutputSchema, &schema))
++	properties := schema["properties"].(map[string]any)
++	require.Contains(t, properties["status"].(map[string]any)["enum"], "mixed")
++	items := properties["questions"].(map[string]any)["items"].(map[string]any)
++	require.Contains(t, items["required"], "retry_allowed")
++	require.Contains(t, items["properties"], "pending_id")
++}
++
+ func TestOwnQuestionReceiptSchemaForwardingAndStatus(t *testing.T) {
+ 	backend := &testBackend{response: map[string]interface{}{"status": "pending", "pending_id": "synthetic-pending", "retry_allowed": false, "questions": []any{}}}
+ 	s := newTaskModeServer(t, backend, "own-task")

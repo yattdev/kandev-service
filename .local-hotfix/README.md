@@ -259,3 +259,10 @@ hotfix lineage and all frontend assets. See
 [the contract, source patch, and deployment record](../patches/kandev-v096-own-question-lifecycle.md)
 for the current trio's provenance, acceptance recipe, and original-question
 correlation. The new route never answers a question or disposes of Human input.
+
+Support follow-up `8bd69fe8-3ee2-4dc9-a037-1a4b4111a8b4` repairs mixed
+existing/missing own-question batches with explicit per-ID lifecycle and retry
+permission. It preserves strict complete single-request ask retry correlation.
+See [the mixed-batch contract and deployment record](../patches/kandev-v096-own-question-mixed-batch.md)
+for the updated source, trio provenance, synthetic acceptance, and read-only
+Coordinator recipe.
