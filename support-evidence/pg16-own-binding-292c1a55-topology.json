@@ -1,0 +1,87 @@
+{
+  "approval": {
+    "answered_at": "2026-10-13T00:36:52.753057377Z",
+    "installation_authorized": false,
+    "provenance": "answered native Human question supplied by reviewed broker; not independently queried by Support",
+    "question_id": "7ee2601c-15f8-4b34-be20-9a5efd6ef1af",
+    "question_message_id": "2f95ea31-4755-40f1-93f2-036888515605",
+    "question_sha256": "413b90242d5490cf8035dd799bd794ae295829e6d6db2de2a3887c3c0390458a",
+    "scope": "exact command and four fields only",
+    "selected_options": [
+      "q1_opt1"
+    ],
+    "stable_question": "coordinator_f9_topology_read_20261013"
+  },
+  "approved_read": {
+    "automatic_review": "APPROVED",
+    "command": "docker inspect kandev --format 'image={{.Image}} pid_mode={{json .HostConfig.PidMode}} init={{json .HostConfig.Init}} restart_count={{.RestartCount}}'",
+    "executions": 1,
+    "exit_code": 0,
+    "fields": {
+      "image": "sha256:cee318f8d409330e9945cd958bb6c6159eec72c56e990f43cc31323debfba16f",
+      "init": null,
+      "pid_mode": "",
+      "restart_count": 0
+    },
+    "stdout": "image=sha256:cee318f8d409330e9945cd958bb6c6159eec72c56e990f43cc31323debfba16f pid_mode=\"\" init=null restart_count=0\n"
+  },
+  "assessment": {
+    "backend_detach": "conditional survivable non-passthrough standalone path; actual fb02 eligibility UNKNOWN",
+    "image_matches_retained_evidence": true,
+    "init": "unspecified Docker init setting; supervisor topology UNKNOWN",
+    "native_reload": "no supported provider-preserving backend/native MCP code-load path established",
+    "pid_mode": "default container PID namespace configuration; fb02 placement UNKNOWN",
+    "restart_count": "counter for this container; recreation history/provider survival UNKNOWN",
+    "service_recreation": "distinct physical preservation boundary; HTTP readiness is insufficient"
+  },
+  "broker_request_id": "292c1a55-0dbb-486f-8d02-3c236a07cbb3",
+  "candidate_sha256": {
+    "agentctl": "9731de452fabcb4389fb12537e6fb2d0bee67dd70dbbeb561338fb2274f4f16c",
+    "agentctl-linux-amd64": "061206dda525d05a39da2058f3504e5fc5bdbd5572d7c8456d8acc3bef064e32",
+    "kandev": "bf170441899c7533eb6783a121838230dd5f5a373abdfbf98a4788223f1b73fb"
+  },
+  "delivery_target_session": "13d8c011-6e49-40ef-80e9-2f1445296d06",
+  "document_sha256": "0763b2e7f56912b5b93d0fe45e21cb6bc2f502165fc4995e5bd85d372d19c212",
+  "missing_predicates": [
+    "authenticated current fb02 execution/containment and shutdown-survival eligibility",
+    "supported code-load preserving exact provider, native MCP connection, queue incarnation and environment generation",
+    "finite preservation/recovery manifest for unique state, FIFO/counters/questions and other users"
+  ],
+  "next_preparation": {
+    "contract_document": "patches/kandev-v096-own-distribution-binding-topology-preflight.md",
+    "execute": false,
+    "maintenance_authorization": "separate finite lifecycle/preservation/recovery decision if no preserving load exists; not granted here",
+    "operation": "prepare finite installation manifest from already-held authenticated launch/connection records; proposed, not callable",
+    "owner": "existing deployment/lifecycle and native-MCP owners",
+    "unknown_result": "HELD"
+  },
+  "preservation": {
+    "additional_live_diagnostics": 0,
+    "caller_acceptance": "NOT RUN",
+    "credentials_or_process_data_accessed": false,
+    "deployment_or_overlay_installation": false,
+    "fifo_counters_questions_changed": false,
+    "original_artifacts_unchanged": true,
+    "paired_tests": "NOT RUN/UNKNOWN",
+    "source_or_provider_runtime_changed": false,
+    "task_messages_relayed": false,
+    "task_resources_accessed": false,
+    "verifier_installed": false
+  },
+  "retained_lineage_sha256": {
+    "patches/kandev-v096-own-distribution-binding.patch": "282e5c5749614a92cfda3becf785f1bbb1eb95a053a51075e24ebd1391b958b9",
+    "support-evidence/pg16-e872-31a2d4ae.json": "fb02ba36a12af620c92525be0ad8f8eaa6cadd5aaa5d6e063aeb0f38222e9500",
+    "support-evidence/pg16-own-binding-f9c859f7-escalation1.json": "fc05bb5ce0d6720a2aef1eacde1465e3e51d3cd5ae4304aee16d627c124b878a",
+    "support-evidence/pg16-own-binding-f9c859f7-escalation2.json": "186c58a2de24d45165211d0640c78c4007699263749ea52b6ac39e15c907cac9",
+    "support-evidence/pg16-own-binding-f9c859f7.json": "181094a23a2572a2b25894ed578c927546014a98b4e91f9b0d2aec6a79d15740"
+  },
+  "source_fix": "9fde182148c2a186c308376cae0efa8f107d4a66",
+  "status": "APPROVED_READ_PREFLIGHT_COMPLETE_INSTALLATION_HELD",
+  "validation": {
+    "both_local_checkouts_inspected": true,
+    "local_lineage_and_candidate_hashes": "PASS",
+    "new_tests_run": false,
+    "prior_synthetic_results": "retained; no new live proof"
+  },
+  "version": "pg16-own-binding-topology-preflight/v1"
+}
