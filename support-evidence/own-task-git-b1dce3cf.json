@@ -1,0 +1,59 @@
+{
+  "client_sha256": "58257df3e82d24445b4c31ae6aa025ec88d6ee28c53c60e0f6edf3e7a38d9cfe",
+  "delivery_target_session": "13d8c011-6e49-40ef-80e9-2f1445296d06",
+  "integration_finding": "Existing MCPExecutionContext adds backend-owned execution ID. Proposed verifier must compare exact current lifecycle record and retained original incarnation/environment generation, before and after. No such current caller certificate or preserving loader is installed/callable.",
+  "manifest_sha256": "9fefa9d1275e089d783b0ab2f1ad500bd334bfa97819b787d12e4c66d5add8ff",
+  "manifest_utf8_bytes": 6045,
+  "missing_fields": [
+    "actual_current_execution_id_and_original_launch_provenance",
+    "authenticated_queue_incarnation_and_environment_id_generation",
+    "effective_connect_policy_issuer_and_exact_rule",
+    "provider/native_channel/socket_preserving_code_load_and_recovery_manifest"
+  ],
+  "observation": {
+    "attempts": 1,
+    "classification": "UNIX_CONNECT_DENIED_BEFORE_BROKER_REQUEST",
+    "errno": 1,
+    "exit": 78,
+    "intent": "C0272-3930-B3EC-INERT-PROBE",
+    "message": "1997e610-5cec-5c3d-95a7-e98ddd5f7f44",
+    "message_sha256": "431fa7c7172dda819dba5f1f0325cb7d607136b6ab80161de320e7778048fd43",
+    "plan": "6809ac27-0374-4bf0-9eb9-6c635b6dfc29",
+    "policy_issuer": "UNKNOWN",
+    "provenance": "reviewed broker supplied genuine Source outcome; not independently replayed by Support",
+    "request_sent": false,
+    "separate_streams": "UNAVAILABLE",
+    "stage": "connect",
+    "turn": "3c2b4218-01b4-432a-af1c-21daa3a7d0b2"
+  },
+  "persistence": "fresh b1 artifacts only; prior b3 staging rejection remains in force",
+  "preservation": {
+    "Source_admission": false,
+    "both_checkouts_inspected": true,
+    "credential_environment_process_data_access": false,
+    "installed": false,
+    "live_diagnostics": 0,
+    "old_rejected_artifacts_unchanged_and_not_staged": true,
+    "probe_repeated": false,
+    "same_caller_acceptance": "NOT RUN",
+    "task_message_relay": false,
+    "task_source_Git_registry_provider_lifecycle_queues_counters_runtime_mutation": false
+  },
+  "prior_audit_sha256": "944a49e43d24a4083b3dc4995007af4c5b713b9fffb100bee9026b0d08b0b0da",
+  "request": "b1dce3cf-54c6-4437-b6f8-b24f63059def",
+  "retained_source_static_sha256": {
+    "apps/backend/internal/agent/runtime/lifecycle/manager_interaction.go": "1d1c7c318652a5b85890dfcb26c2e34c458d6842204e69d29e64e1d98f101cef",
+    "apps/backend/internal/agent/runtime/lifecycle/mcp_identity.go": "615a5f1f273a1b26fb5769315433182bb426e557b76b7dd21f4c854df17642d9",
+    "apps/backend/internal/agent/runtime/lifecycle/types.go": "8d703c5391df0eafae44b0607b9de4d8e6b3d45acdd8c66f22d091799357d9bd",
+    "apps/backend/internal/agentctl/types/streams/mcp_execution.go": "dea05f1d4811c90e9090808c40f25bc31da315d2490a3342aedfdd0c411cb0c2"
+  },
+  "status": "HELD_CONNECT_DENIAL_IDENTITY_AND_LOAD",
+  "validation": {
+    "canonical_manifest_and_prior_lineage": "PASS",
+    "new_synthetic_connect_test": "PASS; actual client with synthetic denied socket, zero live connections",
+    "previous_12_synthetic_tests": "retained PASS evidence; no new live acceptance",
+    "test_sha256": "0c25f038bad4bf06e879808c160202e638fc1c4bc4800559065940b41cf689d4"
+  },
+  "version": "own-git-connect-support/v1",
+  "wrapper_sha256": "3b50f0847262641f6f2357736db4451c5d9eb556811819025872dd5ddb432340"
+}
