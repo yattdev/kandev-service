@@ -1,0 +1,56 @@
+{
+  "contract_sha256": "0b9d88723d7c655e406ed722c6523ccec17c40a9ae86715d041dff208058ada7",
+  "contract_utf8_bytes": 9777,
+  "delivery_target_session": "13d8c011-6e49-40ef-80e9-2f1445296d06",
+  "direct_review_sha256": "6450d0899eb8a60c3f8c49855252431a5783a7791057fc5e14e9489bc671ec1c",
+  "direct_review_utf8_bytes": 1781,
+  "findings": {
+    "continuity_owner": "current primary lookup or promotion is not an immutable exact-question read-delegation proof; actual continuity/retention/authentication remain unqueried/UNKNOWN",
+    "native_answer": "NOT READ; no answer or current original lifecycle inferred",
+    "own_reader": "exact task/session lookup; new-session not_created does not settle a known old original",
+    "retained_read_seam": "FindOwnClarificationMessages does not itself require old session row, but current own-reader authorization prevents substituting old session; new exact continuity authorization is required",
+    "same_session_answer_reconciliation": "requires own caller/session and stored native Human evidence; not a successor scope grant"
+  },
+  "next": "Existing owners must establish original retained receipt and legitimate exact-original successor read boundary. Any scope expansion needs the inert concrete Human read-delegation proposal first; preserving installation is separate. No generic implementation approval or actual acceptance command issued.",
+  "preservation": {
+    "both_checkouts_inspected": true,
+    "deployment_or_runtime_action": false,
+    "live_database_registry_question_or_choice_reads": 0,
+    "live_host_process_socket_environment_credential_scans": 0,
+    "new_ask_answer_rejection_reconciliation": false,
+    "old_rejected_artifacts_staged_or_retried": false,
+    "old_session_or_question_recreated": false,
+    "service_native_MCP_or_provider_code_load": false,
+    "source_or_visibility_authority_granted": false,
+    "task_message_relay": false,
+    "task_metadata_source_Git_queues_counters_questions_changed": false
+  },
+  "request": "7fba514d-586a-4fe8-be8b-ee2ff389745c",
+  "static_source_sha256": {
+    "apps/backend/internal/mcp/handlers/own_answer.go": "a03db9659860fd43253953e3a17fd7816d813866da91bb2933134770629eaa50",
+    "apps/backend/internal/mcp/handlers/own_question.go": "4670c164706014a3126a5b70164bc6cc231a3fa00e1fe104136eb36dacbbb8a5",
+    "apps/backend/internal/task/ownanswer/binding.go": "b8a1fd6d479c5b2f61055db657ba6f419d6ade63edc70716f409d3d03f02adef",
+    "apps/backend/internal/task/repository/sqlite/message_own_answer.go": "5ab41f8fa650b42c411e13f6426c4b3998e807a5c11f1facec5353e53cf35713",
+    "apps/backend/internal/task/repository/sqlite/message_own_question.go": "c825d436ae83474f104da7722026b4442aa2ff164de63cde2965f1261faaf594"
+  },
+  "status": "HELD_PREPARATION_COMPLETE_NO_READ_AUTHORITY_OR_LIVE_PROOF",
+  "validation": {
+    "checks": 14,
+    "negatives": [
+      "wrong task/workspace/session/execution/incarnation",
+      "forged/oversized/noncanonical pins or caller proof in input",
+      "missing original or exact continuity",
+      "stale/broad/untrusted authority",
+      "forged envelope",
+      "changed caller/owner epoch/question revision",
+      "unproven or foreign/fabricated native answer"
+    ],
+    "positive_fixture": "synthetic trusted-owner records only; original session row absent, envelope and continuity retained",
+    "preservation": "normal own RUNNING/accounting progress allowed; pending input/counters/independent barriers preserved",
+    "result": "PASS",
+    "test_file": "tests/specifications/test_successor_question_continuity.py",
+    "test_sha256": "e683a430a4475f8753b5bea19ea74fe9e1b6bc5df1e5eab1dd1844e46f8fea11",
+    "type": "offline reference decision model, not installed implementation or cryptographic/live attestation"
+  },
+  "version": "successor-question-preparation/v1"
+}
