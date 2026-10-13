@@ -120,7 +120,57 @@ def should_stream_stdin(args: list[str]) -> bool:
     return index < len(args) and args[index] == "exec" and "-T" in args[index + 1 :]
 
 
+def transport_probe(args: list[str]) -> int:
+    """Observe the existing mapped endpoint without credentials or task actions.
+
+    Its deliberate anonymous rejection is only a protocol liveness check.
+    It cannot establish a session binding or accept Git write authority.
+    """
+    result: dict[str, object] = {
+        "version": "broker-transport-observation/v1",
+        "status": "UNKNOWN", "stage": "arguments", "errno": None,
+        "authenticated_binding": "UNKNOWN", "write_transport_accepted": False,
+        "git_operations": 0, "credentials_accessed": False, "retries": 0,
+    }
+    code = 78
+    if args != ["kandev", "transport-probe"]:
+        code = 64
+    else:
+        try:
+            result["stage"] = "socket_create"
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+                connection.settimeout(3)
+                result["stage"] = "connect"
+                connection.connect("/run/kandev-agent-docker.sock")
+                result["stage"] = "send"
+                connection.sendall(b"{}\n")
+                connection.sendall(struct.pack("!I", 0))
+                connection.shutdown(socket.SHUT_WR)
+                result["stage"] = "receive"
+                response = bytearray()
+                while len(response) <= 4096:
+                    chunk = connection.recv(4097 - len(response))
+                    if not chunk:
+                        break
+                    response.extend(chunk)
+                result["stage"] = "reply"
+                expected = {"returncode": 78, "stdout": "",
+                            "stderr": "kandev-agent-docker: missing task scope\n"}
+                if len(response) <= 4096 and json.loads(response) == expected:
+                    result["status"] = "anonymous_protocol_reachable"
+                    code = 0
+        except OSError as exc:
+            result["errno"] = exc.errno
+        except (ValueError, UnicodeError):
+            pass
+    # Never expose exception text, endpoint paths, reply bodies, headers or tokens.
+    write_all(sys.stdout, json.dumps(result, sort_keys=True) + "\n")
+    return code
+
+
 def main() -> int:
+    if sys.argv[1:3] == ["kandev", "transport-probe"]:
+        return transport_probe(sys.argv[1:])
     socket_path = os.environ.get("KANDEV_AGENT_DOCKER_SOCKET", "/run/kandev-agent-docker.sock")
     token = os.environ.get("KANDEV_AGENT_DOCKER_TOKEN", "")
     task_root = os.environ.get("KANDEV_AGENT_DOCKER_ROOT", "")
