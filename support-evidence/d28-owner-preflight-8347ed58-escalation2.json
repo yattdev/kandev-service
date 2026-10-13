@@ -1,0 +1,53 @@
+{
+  "audit_document_sha256": "0b762866019bced3d19df9ce4c163d23e78386f7a4ac770ece856ab2c3323e58",
+  "delivery_target_session": "13d8c011-6e49-40ef-80e9-2f1445296d06",
+  "findings": {
+    "control_protocol": "restart only; no attestation/prepare/read action; never invoked",
+    "external_supervisor": "UNKNOWN; no new live query permitted",
+    "launch_manifest": "backend-level replaceable launch configuration, no typed immutable exact-task containment/closure certificate",
+    "live_manifest": "NOT READ; selected environment may contain sensitive runtime values",
+    "supported_retained_owner_proof_reference": "UNAVAILABLE in retained reviewed evidence; not inferred nonexistent externally"
+  },
+  "immutable_lineage": {
+    "support-evidence/d28-owner-preflight-8347ed58-contract.json": "46eac56e3636b2e76aa7731835adad87224c17f78a2ff8e49d01f9291647a784",
+    "support-evidence/d28-owner-preflight-8347ed58-escalation1.json": "6fb297200b87fe588214bb2f12c2235a2ad2cda27860075fa50a309b1466fa8d",
+    "support-evidence/d28-owner-preflight-8347ed58-review.json": "7b67b0a2160e48f6c3bd766f32ff58d5b49389a1c5e420935a22dcc7ddaf9e4b",
+    "tests/specifications/test_owner_attestation_preflight.py": "e5b6e3b6e444115bd7896c0d96defd40a3a7a4ef418ca16bb75eb106fc81d6df"
+  },
+  "next_owner_response": {
+    "changed_boundary_prerequisite": "Actual finite existing task-contained resource binding and protected partition must be identified before separate observation/physical review.",
+    "not_requested": "generic engineering approval, shared shutdown, invented scope or approval of unknown handles",
+    "required": "Existing owner supplies retained immutable exact-task proof reference plus supported authenticated resolver, actual scope/generation or original closure, full coverage and disjoint protected partition; otherwise explicitly reports evidence unavailable."
+  },
+  "pass": 2,
+  "preservation": {
+    "caller_accepted": false,
+    "fifo_counters_questions_changed": false,
+    "helper_session_provider_changes": false,
+    "installed": false,
+    "ledger_rereads": 0,
+    "live_owner_attestation": "UNKNOWN",
+    "old_receipts_tests_and_lineage_unchanged": true,
+    "pending_preservation_handoff": "PENDING; no accepted receipt inferred",
+    "physical_operations": 0,
+    "previous_review_rejections_bypassed": false,
+    "process_environment_filesystem_credential_scans": 0,
+    "runtime_requests": 0,
+    "source_admission": false,
+    "task_resources_accessed": false
+  },
+  "protected_caller": "833d9d08-69b8-4855-9ff8-6b05c59a1647",
+  "request": "8347ed58-d488-446f-bb17-dc8b48d6e98f",
+  "static_parent": "79b0e8a39b7a3ff74cf15fa611202ab558dfaa64",
+  "status": "HELD_MISSING_RETAINED_AUTHENTICATED_TASK_DOMAIN_OR_CLOSURE",
+  "supervisor_schema_sha256": "7673ef4fa1b1e7402d32255e35d41666f84fd7d80459f579c90801c9e778d39d",
+  "task": "d28be44c-136f-47af-af5d-faa7e6381818",
+  "validation": {
+    "additive_test_sha256": "0a453fb1c5365d4a66a80668d638cb8b0adea8c97f33b8910ac32f340b4d119e",
+    "offline_specification_checks": 19,
+    "previous_tests_unchanged": true,
+    "synthetic_only": true
+  },
+  "version": "d28-owner-preflight-escalation/v1",
+  "workspace": "2e62401b-5ffe-4050-bc1b-d49ea5d5dbcd"
+}
