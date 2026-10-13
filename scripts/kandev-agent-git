@@ -2,6 +2,68 @@
 # Refresh task-owned Git metadata access when an attachment outlives its mounts.
 # The broker runs real Git in a fresh guard; hooks never run on the host.
 set -euo pipefail
+
+# Read-only acceptance of a late attachment must not need a broker connection.
+# This is dispatch only: the existing outer/inner guards still enforce access.
+# Unknown options and every mutation continue through the fresh guarded broker.
+task_acceptance_read() {
+    local target root next
+    local key
+    for key in GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE GIT_NAMESPACE \
+               GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES; do
+        [[ ! -v "$key" ]] || return 1
+    done
+    [[ -n "${KANDEV_AGENT_DOCKER_ROOT:-}" ]] || return 1
+    root=$(realpath -e -- "$KANDEV_AGENT_DOCKER_ROOT") || return 1
+    target=$(pwd -P) || return 1
+    [[ "$target" == "$root" || "$target" == "$root"/* ]] || return 1
+    while (( $# )); do
+        case "$1" in
+            -C)
+                (( $# >= 2 )) || return 1
+                next=$2
+                [[ "$next" == /* ]] || next="$target/$next"
+                target=$(realpath -e -- "$next") || return 1
+                [[ "$target" == "$root" || "$target" == "$root"/* ]] || return 1
+                shift 2
+                ;;
+            --no-pager|--no-optional-locks) shift ;;
+            *) break ;;
+        esac
+    done
+    (( $# )) || return 1
+    case "$1" in
+        status)
+            shift
+            for next in "$@"; do
+                case "$next" in
+                    --porcelain|--porcelain=v1|--porcelain=v2|--short|-s|--branch|-b|-sb|-bs|\
+                    --untracked-files=no|--untracked-files=normal|--untracked-files=all|-uno|-unormal|-uall)
+                        ;;
+                    *) return 1 ;;
+                esac
+            done
+            ;;
+        branch) [[ $# == 2 && "$2" == --show-current ]] || return 1 ;;
+        rev-parse)
+            shift
+            if [[ $# == 1 ]]; then
+                case "$1" in
+                    HEAD|--show-toplevel|--absolute-git-dir|--git-dir|--git-common-dir|\
+                    --show-prefix|--is-inside-work-tree|--is-bare-repository) ;;
+                    *) return 1 ;;
+                esac
+            elif [[ $# == 2 ]]; then
+                [[ "$1" == --verify && ( "$2" == HEAD || "$2" == 'HEAD^{commit}' ) \
+                    || "$1" == --abbrev-ref && "$2" == HEAD ]] || return 1
+            else
+                return 1
+            fi
+            ;;
+        *) return 1 ;;
+    esac
+}
+
 if [[ "${KANDEV_AGENT_GUARD_ACTIVE:-0}" == 1 \
       && "${KANDEV_AGENT_GUARD_SCOPE:-}" == project \
       && -n "${KANDEV_AGENT_DOCKER_TOKEN:-}" ]]; then
@@ -24,6 +86,10 @@ if [[ "${KANDEV_AGENT_GUARD_ACTIVE:-0}" == 1 \
     done
     if metadata=$(/usr/bin/git "${global_args[@]}" rev-parse --absolute-git-dir 2>/dev/null) \
           && [[ ! -w "$metadata" ]]; then
+        if task_acceptance_read "$@"; then
+            exec /usr/bin/git --no-pager --no-optional-locks \
+                -c core.fsmonitor=false -c core.untrackedCache=false "$@"
+        fi
         exec /usr/local/bin/kandev-agent-docker-client kandev git "$@"
     fi
 fi
