@@ -1,0 +1,31 @@
+{
+  "request_id": "390643ab-baa1-439b-9014-41410352bdf3",
+  "escalation_pass": 1,
+  "status": "BLOCKED_EXACT_RUNTIME_WRITER_RECOVERY_CONTROL_MISSING",
+  "both_checkouts_inspected": true,
+  "reviewed_host_diagnostics_used": true,
+  "test_socket_escalation_succeeded": true,
+  "initial_failure_evidence": "support-evidence/hqa-dispatch-390643ab.json",
+  "new_live_query_scope": "THREE_SUPPLIED_SESSION_ENVIRONMENT_AND_EXECUTOR_BINDINGS_ONLY",
+  "shared_environment_id": "e376dadd-cd2b-4c66-9be2-b110009aa178",
+  "hqa_executor_records": 0,
+  "other_supplied_executor_records": 2,
+  "existing_expired_lease_takeover_supported": true,
+  "start_created_accepts_waiting_state": true,
+  "workspace_restore_may_reuse_other_session_execution": true,
+  "exact_recovery_capability_available": false,
+  "regression_race_tests_passed": [
+    "TestRepositoryPlanCommentReservationLeaseBlocksConcurrentOwner",
+    "TestRepositoryExpiredPlanCommentLeaseRejectsStaleOwner",
+    "TestEnsureWorkspaceExecutionForSession_ReusesExistingTaskEnvironmentExecution"
+  ],
+  "source_implementation_changed": false,
+  "native_launch_or_drain_invoked": false,
+  "queue_replayed_or_mutated": false,
+  "runtime_restarted": false,
+  "production_deployed": false,
+  "task_lifecycle_changed": false,
+  "credentials_accessed_or_issued": false,
+  "proposal": "HQA-DISPATCH-390643AB-ESCALATION1.md",
+  "remaining_authority": "NARROW_EXACT_TASK_RECOVERY_CONTROL_IMPLEMENTATION_AND_ACTIVATION"
+}
