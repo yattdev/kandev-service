@@ -1,0 +1,6 @@
+# Context: reviewed static gateway binary and public CA bundle only.
+FROM scratch
+COPY kandev-task-preview /kandev-task-preview
+COPY ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+USER 1000:1000
+ENTRYPOINT ["/kandev-task-preview"]

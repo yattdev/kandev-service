@@ -1,0 +1,1578 @@
+From f38b3ac9740c16ed9d63962ff1f68aff3ab3860a Mon Sep 17 00:00:00 2001
+From: ayattara <alassane.yattara@savoirfairelinux.com>
+Date: Tue, 13 Oct 2026 22:43:40 -0400
+Subject: [PATCH] feat(preview): preserve hotfixes with exact-task ingress
+
+---
+ apps/backend/cmd/kandev-task-preview/main.go  |  47 +++
+ .../internal/auth/httpmw/middleware.go        |   3 +
+ .../internal/auth/httpmw/task_preview_test.go |  20 +
+ apps/backend/internal/backendapp/helpers.go   |   1 +
+ .../internal/backendapp/task_preview.go       |  62 +++
+ .../internal/backendapp/task_preview_test.go  |  38 ++
+ apps/backend/internal/taskpreview/control.go  | 150 +++++++
+ apps/backend/internal/taskpreview/gateway.go  | 202 ++++++++++
+ .../internal/taskpreview/goleak_test.go       |   8 +
+ apps/backend/internal/taskpreview/grant.go    | 182 +++++++++
+ .../backend/internal/taskpreview/inspector.go |  94 +++++
+ .../internal/taskpreview/preview_test.go      | 374 ++++++++++++++++++
+ .../internal/taskpreview/private_unix.go      |  38 ++
+ .../internal/taskpreview/private_windows.go   |   7 +
+ .../internal/taskpreview/revocation_test.go   |  30 ++
+ apps/backend/internal/taskpreview/store.go    |  71 ++++
+ .../internal/taskpreview/websocket_test.go    |  96 +++++
+ 17 files changed, 1423 insertions(+)
+ create mode 100644 apps/backend/cmd/kandev-task-preview/main.go
+ create mode 100644 apps/backend/internal/auth/httpmw/task_preview_test.go
+ create mode 100644 apps/backend/internal/backendapp/task_preview.go
+ create mode 100644 apps/backend/internal/backendapp/task_preview_test.go
+ create mode 100644 apps/backend/internal/taskpreview/control.go
+ create mode 100644 apps/backend/internal/taskpreview/gateway.go
+ create mode 100644 apps/backend/internal/taskpreview/goleak_test.go
+ create mode 100644 apps/backend/internal/taskpreview/grant.go
+ create mode 100644 apps/backend/internal/taskpreview/inspector.go
+ create mode 100644 apps/backend/internal/taskpreview/preview_test.go
+ create mode 100644 apps/backend/internal/taskpreview/private_unix.go
+ create mode 100644 apps/backend/internal/taskpreview/private_windows.go
+ create mode 100644 apps/backend/internal/taskpreview/revocation_test.go
+ create mode 100644 apps/backend/internal/taskpreview/store.go
+ create mode 100644 apps/backend/internal/taskpreview/websocket_test.go
+
+diff --git a/apps/backend/cmd/kandev-task-preview/main.go b/apps/backend/cmd/kandev-task-preview/main.go
+new file mode 100644
+index 0000000000..972eeeb7fa
+--- /dev/null
++++ b/apps/backend/cmd/kandev-task-preview/main.go
+@@ -0,0 +1,47 @@
++// kandev-task-preview is a host-owned TLS ingress for one reviewed grant.
++package main
++
++import (
++	"context"
++	"flag"
++	"github.com/kandev/kandev/internal/taskpreview"
++	"log"
++	"net/http"
++	"time"
++)
++
++func main() {
++	state := flag.String("state-dir", "", "private operator state directory")
++	listen := flag.String("listen", "", "exact approved LAN IP:port")
++	cert := flag.String("tls-cert", "", "trusted TLS certificate path")
++	key := flag.String("tls-key", "", "TLS private key path")
++	flag.Parse()
++	if *state == "" || *listen == "" || *cert == "" || *key == "" {
++		log.Fatal("state, listener and trusted TLS required")
++	}
++	store := taskpreview.Store{Directory: *state}
++	grant, _, err := store.Load()
++	if err != nil || !grant.Active(time.Now()) || *listen != grant.ListenAddress {
++		log.Fatal("preview grant unavailable")
++	}
++	// Bounded direct control traffic; no ambient HTTP proxy credentials or
++	// unbounded HTTP/2 streams into the production authorization bridge.
++	transport := &http.Transport{MaxConnsPerHost: 4, MaxIdleConnsPerHost: 4, ResponseHeaderTimeout: 5 * time.Second}
++	client := &http.Client{Transport: transport, Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
++	gateway := &taskpreview.Gateway{Store: store, Client: client, Now: time.Now}
++	server := &http.Server{Addr: *listen, Handler: gateway, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16384}
++	go func() {
++		timer := time.NewTimer(time.Until(time.Unix(grant.ExpiresAt, 0)))
++		defer timer.Stop()
++		<-timer.C
++		// Request/stream deadlines and the backend's clock enforce expiry.
++		// The gateway cannot modify its read-only authority or revoke marker.
++		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
++		defer cancel()
++		_ = server.Shutdown(ctx)
++	}()
++	// No access logging; request headers/bodies/tokens are never logged.
++	if err := server.ListenAndServeTLS(*cert, *key); err != nil && err != http.ErrServerClosed {
++		log.Fatal(err)
++	}
++}
+diff --git a/apps/backend/internal/auth/httpmw/middleware.go b/apps/backend/internal/auth/httpmw/middleware.go
+index 51da0877f4..f1c5ffc9cc 100644
+--- a/apps/backend/internal/auth/httpmw/middleware.go
++++ b/apps/backend/internal/auth/httpmw/middleware.go
+@@ -302,6 +302,9 @@ func BearerToken(r *http.Request) string {
+ // only plugins.Controller.webhook can read; see isPluginWebhookPath below.
+ func isPublicPath(method, path string) bool {
+ 	switch path {
++	case "/api/v1/task-preview/check":
++		// Self-authenticated exact preview key, binding and current user/task ACL.
++		return method == http.MethodPost
+ 	case "/health":
+ 		// CLI + desktop liveness probes poll before any session can exist.
+ 		return method == http.MethodGet
+diff --git a/apps/backend/internal/auth/httpmw/task_preview_test.go b/apps/backend/internal/auth/httpmw/task_preview_test.go
+new file mode 100644
+index 0000000000..5018c5fa81
+--- /dev/null
++++ b/apps/backend/internal/auth/httpmw/task_preview_test.go
+@@ -0,0 +1,20 @@
++package httpmw
++
++import (
++	"net/http"
++	"testing"
++)
++
++func TestTaskPreviewSelfAuthenticatedAllowlistIsExact(t *testing.T) {
++	if !isPublicPath(http.MethodPost, "/api/v1/task-preview/check") {
++		t.Fatal("signed control checks must reach their authenticator")
++	}
++	for _, path := range []string{"/api/v1/task-preview/authorize", "/api/v1/task-preview/credentials", "/api/v1/task-preview/check/other"} {
++		if isPublicPath(http.MethodPost, path) || isPublicPath(http.MethodGet, path) {
++			t.Fatal("browser or adjacent path bypassed session authentication")
++		}
++	}
++	if isPublicPath(http.MethodGet, "/api/v1/task-preview/check") {
++		t.Fatal("unsigned GET check allowlisted")
++	}
++}
+diff --git a/apps/backend/internal/backendapp/helpers.go b/apps/backend/internal/backendapp/helpers.go
+index b859975a4f..4d284dc6f0 100644
+--- a/apps/backend/internal/backendapp/helpers.go
++++ b/apps/backend/internal/backendapp/helpers.go
+@@ -914,6 +914,7 @@ func registerRoutes(p routeParams) {
+ 	if p.authSvc != nil {
+ 		authhttpapi.RegisterRoutes(p.router, p.authSvc, p.services.SessionHostnameResolver, p.log)
+ 	}
++	registerTaskPreviewRoutes(p)
+ 
+ 	// /health is a liveness probe: it answers 200 unconditionally, matching
+ 	// the bootstrap handler's /health contract (internal/backendapp/
+diff --git a/apps/backend/internal/backendapp/task_preview.go b/apps/backend/internal/backendapp/task_preview.go
+new file mode 100644
+index 0000000000..4227e50224
+--- /dev/null
++++ b/apps/backend/internal/backendapp/task_preview.go
+@@ -0,0 +1,62 @@
++package backendapp
++
++import (
++	"context"
++	"github.com/gin-gonic/gin"
++	"github.com/kandev/kandev/internal/auth"
++	"github.com/kandev/kandev/internal/auth/authn"
++	taskmodels "github.com/kandev/kandev/internal/task/models"
++	"github.com/kandev/kandev/internal/taskpreview"
++	"net/http"
++	"path/filepath"
++	"time"
++)
++
++func registerTaskPreviewRoutes(p routeParams) {
++	if p.authSvc == nil || p.taskSvc == nil {
++		return
++	}
++	control := &taskpreview.Control{Store: taskpreview.Store{Directory: "/run/kandev-task-preview"},
++		Inspector: taskpreview.DockerInspector{Binary: "/usr/bin/docker", Models: true}, Now: time.Now}
++	control.Identity = func(r *http.Request) (taskpreview.Principal, bool) {
++		id, ok := authn.IdentityFromContext(r.Context())
++		return taskpreview.Principal{UserID: id.UserID, SessionID: id.SessionID, Synthetic: id.Synthetic}, ok
++	}
++	control.Authorize = func(ctx context.Context, userID string, g taskpreview.Grant) error {
++		return authorizeTaskPreview(p, ctx, userID, g)
++	}
++
++	for _, path := range []string{"authorize", "credentials"} {
++		p.router.GET(taskpreview.ControlPrefix+path, gin.WrapH(control))
++	}
++	p.router.POST(taskpreview.ControlPrefix+"check", gin.WrapH(control))
++}
++
++func authorizeTaskPreview(p routeParams, ctx context.Context, userID string, g taskpreview.Grant) error {
++	if p.authSvc.Mode() != auth.ModeEnabled || userID != g.UserID {
++		return taskpreview.ErrDenied
++	}
++	identity, ok := p.authSvc.IdentityForUser(ctx, userID)
++	if !ok {
++		return taskpreview.ErrDenied
++	}
++	task, err := p.taskSvc.GetTask(authn.WithIdentity(ctx, identity), g.TaskID)
++	if err != nil || task.WorkspaceID != g.WorkspaceID || task.ArchivedAt != nil {
++		return taskpreview.ErrDenied
++	}
++	environment, err := p.taskSvc.GetTaskEnvironmentByTaskID(ctx, g.TaskID)
++	if err != nil || !previewEnvironmentMatches(environment, g) {
++		return taskpreview.ErrDenied
++	}
++	return nil
++}
++func previewEnvironmentMatches(environment *taskmodels.TaskEnvironment, g taskpreview.Grant) bool {
++	if environment == nil || environment.ID != g.EnvironmentID || environment.TaskID != g.TaskID {
++		return false
++	}
++	root := environment.WorkspacePath
++	if root == "" && environment.TaskDirName != "" {
++		root = filepath.Join("/data/tasks", environment.TaskDirName)
++	}
++	return root == g.TaskRoot
++}
+diff --git a/apps/backend/internal/backendapp/task_preview_test.go b/apps/backend/internal/backendapp/task_preview_test.go
+new file mode 100644
+index 0000000000..142aa35075
+--- /dev/null
++++ b/apps/backend/internal/backendapp/task_preview_test.go
+@@ -0,0 +1,38 @@
++package backendapp
++
++import (
++	taskmodels "github.com/kandev/kandev/internal/task/models"
++	"github.com/kandev/kandev/internal/taskpreview"
++	"testing"
++)
++
++func TestTaskPreviewRetainedEnvironmentOwnership(t *testing.T) {
++	g := taskpreview.Grant{TaskID: "task", EnvironmentID: "environment", TaskRoot: "/data/tasks/owned"}
++	environment := &taskmodels.TaskEnvironment{ID: g.EnvironmentID, TaskID: g.TaskID, WorkspacePath: g.TaskRoot}
++	if !previewEnvironmentMatches(environment, g) {
++		t.Fatal("registered task root denied")
++	}
++	environment.Status = taskmodels.TaskEnvironmentStatus("parked")
++	if !previewEnvironmentMatches(environment, g) {
++		t.Fatal("parking invalidated ownership")
++	}
++	for _, mutate := range []func(*taskmodels.TaskEnvironment){
++		func(e *taskmodels.TaskEnvironment) { e.ID = "replacement" },
++		func(e *taskmodels.TaskEnvironment) { e.TaskID = "other-task" },
++		func(e *taskmodels.TaskEnvironment) { e.WorkspacePath = "/data/tasks/other" },
++	} {
++		copy := *environment
++		mutate(&copy)
++		if previewEnvironmentMatches(&copy, g) {
++			t.Fatal("substituted ownership accepted")
++		}
++	}
++	if previewEnvironmentMatches(nil, g) {
++		t.Fatal("missing ownership accepted")
++	}
++	environment.WorkspacePath = ""
++	environment.TaskDirName = "owned"
++	if !previewEnvironmentMatches(environment, g) {
++		t.Fatal("legacy retained task-directory identity denied")
++	}
++}
+diff --git a/apps/backend/internal/taskpreview/control.go b/apps/backend/internal/taskpreview/control.go
+new file mode 100644
+index 0000000000..a733128d08
+--- /dev/null
++++ b/apps/backend/internal/taskpreview/control.go
+@@ -0,0 +1,150 @@
++package taskpreview
++
++import (
++	"context"
++	"crypto/sha256"
++	"encoding/base64"
++	"encoding/json"
++	"html"
++	"net"
++	"net/http"
++	"time"
++)
++
++const ControlPrefix = "/api/v1/task-preview/"
++const cookieName = "__Host-kandev-preview"
++
++type Principal struct {
++	UserID, SessionID string
++	Synthetic         bool
++}
++type Authorize func(context.Context, string, Grant) error
++type Control struct {
++	Store     Store
++	Inspector Inspector
++	Authorize Authorize
++	Identity  func(*http.Request) (Principal, bool)
++	Now       func() time.Time
++}
++
++func safeHeaders(w http.ResponseWriter) {
++	w.Header().Set("Cache-Control", "private, no-store")
++	w.Header().Set("Referrer-Policy", "no-referrer")
++	w.Header().Set("X-Content-Type-Options", "nosniff")
++	w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; base-uri 'none'")
++}
++func denied(w http.ResponseWriter) {
++	safeHeaders(w)
++	http.Error(w, "preview access denied", http.StatusForbidden)
++}
++func (c *Control) ServeHTTP(w http.ResponseWriter, r *http.Request) {
++	safeHeaders(w)
++	g, key, err := c.Store.Load()
++	if err != nil || !g.Active(c.Now()) {
++		denied(w)
++		return
++	}
++	if r.URL.Path == ControlPrefix+"check" {
++		c.check(w, r, g, key)
++		return
++	}
++	if !c.browserAllowed(r, g) {
++		denied(w)
++		return
++	}
++	if !g.Active(c.Now()) || c.Store.Revoked() {
++		denied(w)
++		return
++	}
++	switch r.URL.Path {
++	case ControlPrefix + "authorize":
++		if r.Method != http.MethodGet || r.URL.RawQuery != "" {
++			denied(w)
++			return
++		}
++		c.handoff(w, g, key)
++	case ControlPrefix + "credentials":
++		c.credentials(w, r)
++	default:
++		http.NotFound(w, r)
++	}
++}
++
++func (c *Control) browserAllowed(r *http.Request, g Grant) bool {
++	p, ok := c.Identity(r)
++	if !ok || p.Synthetic || p.SessionID == "" || p.UserID != g.UserID || c.Authorize(r.Context(), p.UserID, g) != nil {
++		return false
++	}
++	if !secureMainRequest(r) || "https://"+r.Host != g.MainOrigin || r.Header.Get("Origin") != "" && r.Header.Get("Origin") != g.MainOrigin {
++		return false
++	}
++	return c.Inspector != nil && c.Inspector.Validate(r.Context(), g) == nil
++}
++func (c *Control) credentials(w http.ResponseWriter, r *http.Request) {
++	if r.Method != http.MethodGet || r.URL.RawQuery != "" || r.Header.Get("Sec-Fetch-Site") == "cross-site" {
++		denied(w)
++		return
++	}
++	b, err := c.Store.read("login.json", 8192)
++	if err != nil {
++		http.Error(w, "owner login delivery pending", http.StatusNotFound)
++		return
++	}
++	w.Header().Set("Content-Type", "application/json")
++	_, _ = w.Write(b)
++}
++
++// Only a local TLS terminator may assert the public scheme. A remote caller
++// cannot use X-Forwarded-Proto to obtain a browser ticket over cleartext.
++func secureMainRequest(r *http.Request) bool {
++	if r.TLS != nil {
++		return true
++	}
++	host, _, err := net.SplitHostPort(r.RemoteAddr)
++	ip := net.ParseIP(host)
++	return err == nil && ip != nil && ip.IsLoopback() && r.Header.Get("X-Forwarded-Proto") == "https"
++}
++func (c *Control) handoff(w http.ResponseWriter, g Grant, key []byte) {
++	ticket := sign(key, "ticket", newClaims(g, c.Now(), time.Minute))
++	script := "document.forms[0].submit()"
++	digest := sha256.Sum256([]byte(script))
++	w.Header().Set("Content-Type", "text/html; charset=utf-8")
++	w.Header().Set("Content-Security-Policy", "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action "+g.PreviewOrigin+"; script-src 'sha256-"+base64.StdEncoding.EncodeToString(digest[:])+"'")
++	_, _ = w.Write([]byte(`<form method="post" action="` + html.EscapeString(g.PreviewOrigin) + `/__preview/redeem"><input type="hidden" name="ticket" value="` + html.EscapeString(ticket) + `"></form><script>` + script + `</script>`))
++}
++func (c *Control) check(w http.ResponseWriter, r *http.Request, g Grant, key []byte) {
++	if r.Method != http.MethodPost || r.URL.RawQuery != "" {
++		denied(w)
++		return
++	}
++	var req struct {
++		Proof  string `json:"proof"`
++		Revoke bool   `json:"revoke"`
++	}
++	r.Body = http.MaxBytesReader(w, r.Body, 4096)
++	decoder := json.NewDecoder(r.Body)
++	decoder.DisallowUnknownFields()
++	if decoder.Decode(&req) != nil {
++		denied(w)
++		return
++	}
++	purpose := "check"
++	if req.Revoke {
++		purpose = "revoke"
++	}
++	claims, err := verify(key, purpose, req.Proof, g, c.Now())
++	if err != nil || claims.Expires-claims.Issued > 15 || c.Authorize(r.Context(), claims.User, g) != nil ||
++		c.Inspector == nil || c.Inspector.Validate(r.Context(), g) != nil {
++		denied(w)
++		return
++	}
++	if !g.Active(c.Now()) || c.Store.Revoked() {
++		denied(w)
++		return
++	}
++	if req.Revoke && c.Store.Revoke() != nil {
++		denied(w)
++		return
++	}
++	w.WriteHeader(http.StatusNoContent)
++}
+diff --git a/apps/backend/internal/taskpreview/gateway.go b/apps/backend/internal/taskpreview/gateway.go
+new file mode 100644
+index 0000000000..589ee28ad5
+--- /dev/null
++++ b/apps/backend/internal/taskpreview/gateway.go
+@@ -0,0 +1,202 @@
++package taskpreview
++
++import (
++	"bytes"
++	"context"
++	"crypto/sha256"
++	"encoding/base64"
++	"encoding/json"
++	"net/http"
++	"net/http/httputil"
++	"net/url"
++	"strconv"
++	"strings"
++	"time"
++)
++
++type Gateway struct {
++	Store  Store
++	Client *http.Client
++	Now    func() time.Time
++}
++
++func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
++	safeHeaders(w)
++	grant, key, err := g.Store.Load()
++	if err != nil || !grant.Active(g.Now()) || "https://"+r.Host != grant.PreviewOrigin || r.URL.RawQuery != "" && strings.HasPrefix(r.URL.Path, "/__preview/") {
++		denied(w)
++		return
++	}
++	if r.URL.Path == "/__preview/redeem" {
++		g.redeem(w, r, grant, key)
++		return
++	}
++	if r.Header.Get("Service-Worker") != "" {
++		denied(w)
++		return
++	}
++	claims, err := g.browserSession(r, grant, key)
++	if err != nil || g.authorize(r.Context(), grant, key, claims.User) != nil {
++		denied(w)
++		return
++	}
++	if r.URL.Path == "/__preview/revoke" {
++		if r.Method != http.MethodPost || g.remoteAction(r.Context(), grant, key, claims.User, "revoke") != nil {
++			denied(w)
++			return
++		}
++		w.WriteHeader(http.StatusNoContent)
++		return
++	}
++	if strings.HasPrefix(r.URL.Path, "/__preview/") {
++		http.NotFound(w, r)
++		return
++	}
++	g.proxy(w, r, grant, key)
++}
++
++func (g *Gateway) browserSession(r *http.Request, grant Grant, key []byte) (Claims, error) {
++	if !allowedOrigin(r, grant.PreviewOrigin) {
++		return Claims{}, ErrDenied
++	}
++	cookies := 0
++	token := ""
++	for _, cookie := range r.Cookies() {
++		if cookie.Name == cookieName {
++			cookies++
++			token = cookie.Value
++		}
++	}
++	claims, err := verify(key, "session", token, grant, g.Now())
++	if cookies != 1 || err != nil {
++		return Claims{}, ErrDenied
++	}
++	return claims, nil
++}
++func allowedOrigin(r *http.Request, origin string) bool {
++	o := r.Header.Get("Origin")
++	if o != "" {
++		return o == origin
++	}
++	return (r.Method == http.MethodGet || r.Method == http.MethodHead) && r.Header.Get("Upgrade") == "" && r.Header.Get("Sec-Fetch-Site") != "cross-site"
++}
++func (g *Gateway) redeem(w http.ResponseWriter, r *http.Request, grant Grant, key []byte) {
++	if r.Method != http.MethodPost || r.Header.Get("Origin") != grant.MainOrigin {
++		denied(w)
++		return
++	}
++	r.Body = http.MaxBytesReader(w, r.Body, 4096)
++	if r.ParseForm() != nil || len(r.PostForm) != 1 || len(r.PostForm["ticket"]) != 1 {
++		denied(w)
++		return
++	}
++	claims, err := verify(key, "ticket", r.PostForm.Get("ticket"), grant, g.Now())
++	if err != nil || claims.Expires-claims.Issued > 60 || g.authorize(r.Context(), grant, key, claims.User) != nil || g.Store.Redeem(claims) != nil {
++		denied(w)
++		return
++	}
++	session := sign(key, "session", newClaims(grant, g.Now(), Lifetime))
++	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: session, Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode, Expires: time.Unix(grant.ExpiresAt, 0)})
++	// Finish a document at the preview origin before navigating: a cross-site
++	// 303 chain can suppress a newly issued SameSite=Strict cookie.
++	script := `location.replace("/")`
++	digest := sha256.Sum256([]byte(script))
++	w.Header().Set("Content-Type", "text/html; charset=utf-8")
++	w.Header().Set("Content-Security-Policy", "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; script-src 'sha256-"+base64.StdEncoding.EncodeToString(digest[:])+"'")
++	_, _ = w.Write([]byte("<script>" + script + "</script>"))
++}
++func (g *Gateway) authorize(ctx context.Context, grant Grant, key []byte, user string) error {
++	return g.remoteAction(ctx, grant, key, user, "check")
++}
++func (g *Gateway) remoteAction(ctx context.Context, grant Grant, key []byte, user, purpose string) error {
++	claims := newClaims(grant, g.Now(), 15*time.Second)
++	claims.User = user
++	b, _ := json.Marshal(map[string]any{"proof": sign(key, purpose, claims), "revoke": purpose == "revoke"})
++	req, err := http.NewRequestWithContext(ctx, http.MethodPost, grant.MainOrigin+ControlPrefix+"check", bytes.NewReader(b))
++	if err != nil {
++		return ErrDenied
++	}
++	req.Header.Set("Content-Type", "application/json")
++	resp, err := g.Client.Do(req)
++	if err != nil {
++		return ErrDenied
++	}
++	defer func() { _ = resp.Body.Close() }()
++	if resp.StatusCode != http.StatusNoContent {
++		return ErrDenied
++	}
++	return nil
++}
++func (g *Gateway) proxy(w http.ResponseWriter, r *http.Request, grant Grant, key []byte) {
++	ctx, cancel := context.WithTimeout(r.Context(), time.Unix(grant.ExpiresAt, 0).Sub(g.Now()))
++	done := make(chan struct{})
++	go func() {
++		defer close(done)
++		g.watch(ctx, cancel, grant, key)
++	}()
++	defer func() { cancel(); <-done }()
++	target, _ := url.Parse("http://127.0.0.1:" + strconv.Itoa(grant.HostPort))
++	proxy := &httputil.ReverseProxy{Rewrite: func(p *httputil.ProxyRequest) {
++		p.SetURL(target)
++		// The outer gate already validated the browser Origin. Normalise the
++		// inner HTTP hop for the unchanged trial's same-origin/CSRF checks;
++		// never require a trust-proxy setting or trial restart.
++		p.Out.Host = target.Host
++		if p.In.Header.Get("Origin") != "" {
++			p.Out.Header.Set("Origin", target.Scheme+"://"+target.Host)
++		}
++		p.Out.Header.Del("Authorization")
++		p.Out.Header.Del("Proxy-Authorization")
++		p.Out.Header.Del("Cookie")
++		for _, cookie := range p.In.Cookies() {
++			if cookie.Name != cookieName {
++				p.Out.AddCookie(cookie)
++			}
++		}
++		p.Out.Header.Del("Forwarded")
++		p.Out.Header.Del("X-Forwarded-Host")
++		p.Out.Header.Del("X-Forwarded-For")
++		p.Out.Header.Del("X-Forwarded-Proto")
++	}, ModifyResponse: func(resp *http.Response) error {
++		if loc, err := url.Parse(resp.Header.Get("Location")); err == nil && loc.Host == target.Host {
++			public, _ := url.Parse(grant.PreviewOrigin)
++			loc.Scheme, loc.Host = public.Scheme, public.Host
++			resp.Header.Set("Location", loc.String())
++		}
++		cookies := resp.Cookies()
++		resp.Header.Del("Set-Cookie")
++		for _, cookie := range cookies {
++			if cookie.Name == cookieName || cookie.Domain != "" {
++				continue
++			}
++			cookie.Secure = true
++			resp.Header.Add("Set-Cookie", cookie.String())
++		}
++		resp.Header.Set("Cache-Control", "private, no-store")
++		resp.Header.Set("Referrer-Policy", "no-referrer")
++		resp.Header.Set("X-Content-Type-Options", "nosniff")
++		resp.Header.Set("X-Frame-Options", "DENY")
++		resp.Header.Add("Content-Security-Policy", "frame-ancestors 'none'")
++		return nil
++	}, ErrorHandler: func(w http.ResponseWriter, _ *http.Request, _ error) {
++		http.Error(w, "preview upstream unavailable", http.StatusBadGateway)
++	}, FlushInterval: -1}
++	w.Header().Del("Content-Security-Policy")
++	proxy.ServeHTTP(w, r.WithContext(ctx))
++}
++func (g *Gateway) watch(ctx context.Context, cancel context.CancelFunc, grant Grant, key []byte) {
++	ticker := time.NewTicker(time.Second)
++	defer ticker.Stop()
++	for {
++		select {
++		case <-ctx.Done():
++			return
++		case <-ticker.C:
++			current, _, err := g.Store.Load()
++			if err != nil || current.Digest() != grant.Digest() || !grant.Active(g.Now()) || g.authorize(ctx, grant, key, grant.UserID) != nil {
++				cancel()
++				return
++			}
++		}
++	}
++}
+diff --git a/apps/backend/internal/taskpreview/goleak_test.go b/apps/backend/internal/taskpreview/goleak_test.go
+new file mode 100644
+index 0000000000..817cfc2d55
+--- /dev/null
++++ b/apps/backend/internal/taskpreview/goleak_test.go
+@@ -0,0 +1,8 @@
++package taskpreview
++
++import (
++	"go.uber.org/goleak"
++	"testing"
++)
++
++func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
+diff --git a/apps/backend/internal/taskpreview/grant.go b/apps/backend/internal/taskpreview/grant.go
+new file mode 100644
+index 0000000000..661ecd8ea2
+--- /dev/null
++++ b/apps/backend/internal/taskpreview/grant.go
+@@ -0,0 +1,182 @@
++// Package taskpreview implements an operator-registered single-target preview.
++package taskpreview
++
++import (
++	"crypto/hmac"
++	"crypto/rand"
++	"crypto/sha256"
++	"encoding/base64"
++	"encoding/hex"
++	"encoding/json"
++	"errors"
++	"net"
++	"net/url"
++	"path/filepath"
++	"regexp"
++	"strconv"
++	"strings"
++	"time"
++)
++
++const Lifetime = 24 * time.Hour
++
++var ErrDenied = errors.New("preview access denied")
++var uuidPattern = regexp.MustCompile(`^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$`)
++var digestPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
++var noncePattern = regexp.MustCompile(`^[a-f0-9]{32}$`)
++var projectPattern = regexp.MustCompile(`^kd_[a-f0-9]{24}$`)
++var servicePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
++
++// Grant is operator-installed; HTTP callers cannot select or register targets.
++type Grant struct {
++	ID             string `json:"id"`
++	ApprovalID     string `json:"approval_id"`
++	ApprovalSHA256 string `json:"approval_sha256"`
++	EnvironmentID  string `json:"environment_id"`
++	TaskID         string `json:"task_id"`
++	WorkspaceID    string `json:"workspace_id"`
++	UserID         string `json:"user_id"`
++	TaskRoot       string `json:"task_root"`
++	CWD            string `json:"cwd"`
++	ContainerID    string `json:"container_id"`
++	ImageID        string `json:"image_id"`
++	Project        string `json:"project"`
++	Service        string `json:"service"`
++	HostPort       int    `json:"host_port"`
++	ContainerPort  int    `json:"container_port"`
++	ModelPath      string `json:"model_path"`
++	ClaimPath      string `json:"claim_path"`
++	ModelSHA256    string `json:"model_sha256"`
++	MainOrigin     string `json:"main_origin"`
++	PreviewOrigin  string `json:"preview_origin"`
++	ListenAddress  string `json:"listen_address"`
++	IssuedAt       int64  `json:"issued_at"`
++	ExpiresAt      int64  `json:"expires_at"`
++}
++
++func (g Grant) Validate() error {
++	for _, id := range []string{g.ID, g.ApprovalID, g.EnvironmentID, g.TaskID, g.WorkspaceID} {
++		if !uuidPattern.MatchString(id) {
++			return ErrDenied
++		}
++	}
++	main, err := origin(g.MainOrigin)
++	if err != nil {
++		return err
++	}
++	preview, err := origin(g.PreviewOrigin)
++	if err != nil || strings.EqualFold(main.Hostname(), preview.Hostname()) {
++		return ErrDenied
++	}
++	if !privateListener(g.ListenAddress, preview.Port()) || !digestPattern.MatchString(g.ApprovalSHA256) {
++		return ErrDenied
++	}
++	if g.validateTarget() != nil || g.validatePaths() != nil || g.IssuedAt <= 0 || g.ExpiresAt-g.IssuedAt != int64(Lifetime/time.Second) {
++		return ErrDenied
++	}
++	return nil
++}
++
++func validPort(port int) bool { return port >= 1024 && port <= 65535 }
++func (g Grant) validateTarget() error {
++	if g.UserID == "" || len(g.UserID) > 128 || !digestPattern.MatchString(g.ContainerID) ||
++		!strings.HasPrefix(g.ImageID, "sha256:") || !digestPattern.MatchString(strings.TrimPrefix(g.ImageID, "sha256:")) ||
++		!projectPattern.MatchString(g.Project) || !servicePattern.MatchString(g.Service) ||
++		!validPort(g.HostPort) || !validPort(g.ContainerPort) || !digestPattern.MatchString(g.ModelSHA256) {
++		return ErrDenied
++	}
++	return nil
++}
++func (g Grant) validatePaths() error {
++	if !strings.HasPrefix(g.TaskRoot, "/data/tasks/") || !strings.HasPrefix(g.CWD, g.TaskRoot+"/") ||
++		filepath.Clean(g.TaskRoot) != g.TaskRoot || filepath.Clean(g.CWD) != g.CWD {
++		return ErrDenied
++	}
++	rootHash := sha256.Sum256([]byte(g.TaskRoot))
++	projectHash := sha256.Sum256([]byte(g.Project))
++	filename := hex.EncodeToString(projectHash[:]) + ".json"
++	registry := filepath.Dir(filepath.Dir(g.ModelPath))
++	if !filepath.IsAbs(g.ModelPath) || filepath.Base(registry) != "agent-docker-models" ||
++		filepath.Base(filepath.Dir(g.ModelPath)) != hex.EncodeToString(rootHash[:]) || filepath.Base(g.ModelPath) != filename ||
++		g.ClaimPath != filepath.Join(registry, "projects", filename) {
++		return ErrDenied
++	}
++	return nil
++}
++
++func privateListener(address, publicPort string) bool {
++	host, port, err := net.SplitHostPort(address)
++	ip := net.ParseIP(host)
++	if publicPort == "" {
++		publicPort = "443"
++	}
++	number, portErr := strconv.Atoi(port)
++	return err == nil && portErr == nil && number >= 1024 && number <= 65535 && port == publicPort && ip != nil && (ip.IsPrivate() || ip.IsLoopback())
++}
++
++func origin(raw string) (*url.URL, error) {
++	u, err := url.Parse(raw)
++	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.Port() == "443" || u.Hostname() != strings.ToLower(u.Hostname()) {
++		return nil, ErrDenied
++	}
++	return u, nil
++}
++func (g Grant) Active(now time.Time) bool {
++	return now.Unix() >= g.IssuedAt && now.Unix() < g.ExpiresAt
++}
++func (g Grant) Digest() string {
++	b, _ := json.Marshal(g)
++	sum := sha256.Sum256(b)
++	return hex.EncodeToString(sum[:])
++}
++
++type Claims struct {
++	Grant   string `json:"grant"`
++	Binding string `json:"binding"`
++	User    string `json:"user"`
++	Nonce   string `json:"nonce"`
++	Issued  int64  `json:"issued"`
++	Expires int64  `json:"expires"`
++}
++
++func newClaims(g Grant, now time.Time, ttl time.Duration) Claims {
++	var nonce [16]byte
++	if _, err := rand.Read(nonce[:]); err != nil {
++		panic(err)
++	}
++	exp := now.Add(ttl).Unix()
++	if exp > g.ExpiresAt {
++		exp = g.ExpiresAt
++	}
++	return Claims{g.ID, g.Digest(), g.UserID, hex.EncodeToString(nonce[:]), now.Unix(), exp}
++}
++func sign(key []byte, purpose string, c Claims) string {
++	b, _ := json.Marshal(c)
++	raw := base64.RawURLEncoding.EncodeToString(b)
++	h := hmac.New(sha256.New, key)
++	h.Write([]byte(purpose + "." + raw))
++	return raw + "." + base64.RawURLEncoding.EncodeToString(h.Sum(nil))
++}
++func verify(key []byte, purpose, token string, g Grant, now time.Time) (Claims, error) {
++	var c Claims
++	parts := strings.Split(token, ".")
++	if len(parts) != 2 || len(token) > 2048 {
++		return c, ErrDenied
++	}
++	h := hmac.New(sha256.New, key)
++	h.Write([]byte(purpose + "." + parts[0]))
++	mac, err := base64.RawURLEncoding.DecodeString(parts[1])
++	if err != nil || !hmac.Equal(mac, h.Sum(nil)) {
++		return c, ErrDenied
++	}
++	b, err := base64.RawURLEncoding.DecodeString(parts[0])
++	if err != nil || json.Unmarshal(b, &c) != nil || !validClaims(c, g, now) {
++		return c, ErrDenied
++	}
++	return c, nil
++}
++
++func validClaims(c Claims, g Grant, now time.Time) bool {
++	return noncePattern.MatchString(c.Nonce) && c.Grant == g.ID && c.Binding == g.Digest() && c.User == g.UserID &&
++		c.Issued <= now.Unix() && c.Issued >= g.IssuedAt && c.Expires > now.Unix() && c.Expires <= g.ExpiresAt && g.Active(now)
++}
+diff --git a/apps/backend/internal/taskpreview/inspector.go b/apps/backend/internal/taskpreview/inspector.go
+new file mode 100644
+index 0000000000..f815003770
+--- /dev/null
++++ b/apps/backend/internal/taskpreview/inspector.go
+@@ -0,0 +1,94 @@
++package taskpreview
++
++import (
++	"context"
++	"crypto/sha256"
++	"encoding/hex"
++	"encoding/json"
++	"io"
++	"os/exec"
++	"strconv"
++	"time"
++)
++
++type Inspector interface {
++	Validate(context.Context, Grant) error
++}
++type DockerInspector struct {
++	Binary string
++	Models bool // only the outer backend reads its existing exact model/claim paths
++}
++
++func (d DockerInspector) Validate(ctx context.Context, g Grant) error {
++	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
++	defer cancel()
++	format := `{"id":{{json .Id}},"image":{{json .Image}},"running":{{json .State.Running}},"labels":{"com.docker.compose.project":{{json (index .Config.Labels "com.docker.compose.project")}},"com.docker.compose.service":{{json (index .Config.Labels "com.docker.compose.service")}}},"ports":{{json .NetworkSettings.Ports}}}`
++	command := exec.CommandContext(ctx, d.Binary, "inspect", "--type", "container", "--format", format, g.ContainerID)
++	command.Env = []string{"PATH=/usr/bin:/bin", "DOCKER_HOST=unix:///var/run/docker.sock", "DOCKER_CONFIG=/run/kandev-preview-empty-docker-config"}
++	b, err := command.Output()
++	if err != nil || len(b) > 16384 {
++		return ErrDenied
++	}
++	if err := ValidateInspection(b, g); err != nil {
++		return err
++	}
++	if d.Models {
++		return validateModel(g)
++	}
++	return nil
++}
++func ValidateInspection(b []byte, g Grant) error {
++	var record struct {
++		ID      string            `json:"id"`
++		Image   string            `json:"image"`
++		Running bool              `json:"running"`
++		Labels  map[string]string `json:"labels"`
++		Ports   map[string][]struct {
++			HostIP   string `json:"HostIp"`
++			HostPort string `json:"HostPort"`
++		} `json:"ports"`
++	}
++	if json.Unmarshal(b, &record) != nil || record.ID != g.ContainerID || record.Image != g.ImageID || !record.Running ||
++		record.Labels["com.docker.compose.project"] != g.Project || record.Labels["com.docker.compose.service"] != g.Service {
++		return ErrDenied
++	}
++	ports := record.Ports[strconv.Itoa(g.ContainerPort)+"/tcp"]
++	if len(record.Ports) != 1 || len(ports) != 1 || ports[0].HostIP != "127.0.0.1" || ports[0].HostPort != strconv.Itoa(g.HostPort) {
++		return ErrDenied
++	}
++	return nil
++}
++func boundedFile(path string) ([]byte, error) {
++	f, err := privateFile(path)
++	if err != nil {
++		return nil, err
++	}
++	defer func() { _ = f.Close() }()
++	fi, err := f.Stat()
++	if err != nil || fi.Size() > 1048576 {
++		return nil, ErrDenied
++	}
++	return io.ReadAll(io.LimitReader(f, 1048577))
++}
++func validateModel(g Grant) error {
++	b, err := boundedFile(g.ModelPath)
++	if err != nil {
++		return ErrDenied
++	}
++	hash := sha256.Sum256(b)
++	if hex.EncodeToString(hash[:]) != g.ModelSHA256 {
++		return ErrDenied
++	}
++	for _, path := range []string{g.ModelPath, g.ClaimPath} {
++		b, err = boundedFile(path)
++		var record struct {
++			TaskRoot string `json:"task_root"`
++			CWD      string `json:"cwd"`
++			Project  string `json:"project"`
++		}
++		if err != nil || json.Unmarshal(b, &record) != nil || record.TaskRoot != g.TaskRoot || record.CWD != g.CWD || record.Project != g.Project {
++			return ErrDenied
++		}
++	}
++	return nil
++}
+diff --git a/apps/backend/internal/taskpreview/preview_test.go b/apps/backend/internal/taskpreview/preview_test.go
+new file mode 100644
+index 0000000000..50fcd32c1c
+--- /dev/null
++++ b/apps/backend/internal/taskpreview/preview_test.go
+@@ -0,0 +1,374 @@
++package taskpreview
++
++import (
++	"context"
++	"crypto/sha256"
++	"encoding/hex"
++	"encoding/json"
++	"fmt"
++	"io"
++	"net/http"
++	"net/http/httptest"
++	"net/url"
++	"os"
++	"path/filepath"
++	"strconv"
++	"strings"
++	"sync/atomic"
++	"testing"
++	"time"
++)
++
++type roundTrip func(*http.Request) (*http.Response, error)
++
++func (f roundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
++
++type inspectFunc func(context.Context, Grant) error
++
++func (f inspectFunc) Validate(c context.Context, g Grant) error { return f(c, g) }
++
++type fixture struct {
++	store     Store
++	grant     Grant
++	key       []byte
++	clock     atomic.Int64
++	allow     atomic.Bool
++	container atomic.Bool
++	checks    atomic.Int64
++	upstream  *httptest.Server
++	control   *Control
++	gate      *Gateway
++}
++
++func newFixture(t *testing.T) *fixture {
++	t.Helper()
++	f := &fixture{store: Store{Directory: t.TempDir()}, key: []byte(strings.Repeat("k", 32))}
++	f.clock.Store(1700000000)
++	f.allow.Store(true)
++	f.container.Store(true)
++	if err := os.Chmod(f.store.Directory, 0700); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.Mkdir(filepath.Join(f.store.Directory, "nonces"), 0700); err != nil {
++		t.Fatal(err)
++	}
++	f.upstream = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		if strings.Contains(r.Header.Get("Cookie"), cookieName) || r.Header.Get("Authorization") != "" {
++			t.Error("ingress credential reached trial")
++		}
++		w.Header().Add("Set-Cookie", cookieName+"=forged; Path=/")
++		w.Header().Add("Set-Cookie", "trial=local; Path=/")
++		w.Header().Set("Content-Type", "text/html")
++		_, _ = fmt.Fprint(w, "synthetic-trial:"+r.URL.Path)
++	}))
++	t.Cleanup(f.upstream.Close)
++	u, _ := url.Parse(f.upstream.URL)
++	port, _ := strconv.Atoi(u.Port())
++	f.grant = Grant{ID: "85278886-f97b-4219-b7ba-9182f7059c69", ApprovalID: "5047d7b6-8074-4e24-a025-7912eb4223d8", TaskID: "afdb2ef3-06ca-4cd5-a074-c4e691679da9", WorkspaceID: "2e62401b-5ffe-4050-bc1b-d49ea5d5dbcd", UserID: "owner", TaskRoot: "/data/tasks/fixture", CWD: "/data/tasks/fixture/ct", ContainerID: strings.Repeat("a", 64), ImageID: "sha256:" + strings.Repeat("b", 64), Project: "kd_" + strings.Repeat("c", 24), Service: "core", HostPort: port, ContainerPort: 59430, MainOrigin: "https://main.example.test", PreviewOrigin: "https://isolated.example.test:59433", IssuedAt: f.clock.Load(), ExpiresAt: f.clock.Load() + 86400}
++	f.grant.ApprovalSHA256 = strings.Repeat("a", 64)
++	f.grant.EnvironmentID = "0e3a05ec-e777-42a1-bdca-7dd4a8e75dbb"
++	f.grant.ListenAddress = "127.0.0.1:59433"
++	model, _ := json.Marshal(map[string]string{"task_root": f.grant.TaskRoot, "cwd": f.grant.CWD, "project": f.grant.Project})
++	rootHash := sha256.Sum256([]byte(f.grant.TaskRoot))
++	projectHash := sha256.Sum256([]byte(f.grant.Project))
++	registry := filepath.Join(f.store.Directory, "agent-docker-models")
++	f.grant.ModelPath = filepath.Join(registry, hex.EncodeToString(rootHash[:]), hex.EncodeToString(projectHash[:])+".json")
++	f.grant.ClaimPath = filepath.Join(registry, "projects", hex.EncodeToString(projectHash[:])+".json")
++	for _, path := range []string{f.grant.ModelPath, f.grant.ClaimPath} {
++		if e := os.MkdirAll(filepath.Dir(path), 0700); e != nil {
++			t.Fatal(e)
++		}
++	}
++	sum := sha256.Sum256(model)
++	f.grant.ModelSHA256 = hex.EncodeToString(sum[:])
++	for _, p := range []string{f.grant.ModelPath, f.grant.ClaimPath} {
++		if err := os.WriteFile(p, model, 0600); err != nil {
++			t.Fatal(err)
++		}
++	}
++	f.save(t)
++	if err := os.WriteFile(filepath.Join(f.store.Directory, "key"), f.key, 0600); err != nil {
++		t.Fatal(err)
++	}
++	f.control = &Control{Store: f.store, Now: f.now, Identity: func(r *http.Request) (Principal, bool) {
++		user := r.Header.Get("Test-User")
++		return Principal{UserID: user, SessionID: "native-session", Synthetic: user == "synthetic"}, user != ""
++	}, Authorize: func(_ context.Context, user string, g Grant) error {
++		f.checks.Add(1)
++		if !f.allow.Load() || user != "owner" || g.TaskID != f.grant.TaskID || g.WorkspaceID != f.grant.WorkspaceID {
++			return ErrDenied
++		}
++		return nil
++	}}
++	client := &http.Client{Timeout: time.Second, Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
++		if r.URL.String() != f.grant.MainOrigin+ControlPrefix+"check" {
++			return nil, ErrDenied
++		}
++		w := httptest.NewRecorder()
++		f.control.ServeHTTP(w, r)
++		return w.Result(), nil
++	})}
++	f.control.Inspector = inspectFunc(func(_ context.Context, g Grant) error {
++		if !f.container.Load() {
++			return ErrDenied
++		}
++		b, _ := json.Marshal(map[string]any{"id": g.ContainerID, "image": g.ImageID, "running": true, "labels": map[string]string{"com.docker.compose.project": g.Project, "com.docker.compose.service": g.Service}, "ports": map[string]any{"59430/tcp": []map[string]string{{"HostIp": "127.0.0.1", "HostPort": strconv.Itoa(g.HostPort)}}}})
++		if err := ValidateInspection(b, g); err != nil {
++			return err
++		}
++		return validateModel(g)
++	})
++	f.gate = &Gateway{Store: f.store, Now: f.now, Client: client}
++	return f
++}
++func (f *fixture) now() time.Time { return time.Unix(f.clock.Load(), 0) }
++func (f *fixture) save(t *testing.T) {
++	t.Helper()
++	b, _ := json.Marshal(f.grant)
++	if e := os.WriteFile(filepath.Join(f.store.Directory, "manifest.json"), b, 0600); e != nil {
++		t.Fatal(e)
++	}
++}
++func (f *fixture) session() string {
++	return sign(f.key, "session", newClaims(f.grant, f.now(), Lifetime))
++}
++func (f *fixture) request(method, path, token string) *httptest.ResponseRecorder {
++	r := httptest.NewRequest(method, f.grant.PreviewOrigin+path, nil)
++	r.Header.Set("Origin", f.grant.PreviewOrigin)
++	if token != "" {
++		r.AddCookie(&http.Cookie{Name: cookieName, Value: token})
++		r.AddCookie(&http.Cookie{Name: "trial", Value: "local"})
++	}
++	r.Header.Set("Authorization", "must-not-reach-trial")
++	w := httptest.NewRecorder()
++	f.gate.ServeHTTP(w, r)
++	return w
++}
++
++func TestAuthorizedTrialAndParkedLifetime(t *testing.T) {
++	f := newFixture(t)
++	token := f.session()
++	first := f.request("GET", "/health", token)
++	if first.Code != 200 || first.Body.String() != "synthetic-trial:/health" {
++		t.Fatalf("authorized request: %d", first.Code)
++	}
++	if strings.Contains(first.Header().Get("Content-Security-Policy"), "default-src 'none'") {
++		t.Fatal("app scripts would be blocked")
++	}
++	for _, c := range first.Result().Cookies() {
++		if c.Name == cookieName || !c.Secure {
++			t.Fatal("cookie isolation failed")
++		}
++	}
++	// No executor/session lookup exists: parking does not revoke the registered
++	// running container. Advance through its fixed, independently issued lifetime.
++	f.clock.Add(86399)
++	if f.request("GET", "/", token).Code != 200 {
++		t.Fatal("parked grant expired early")
++	}
++	f.clock.Add(1)
++	if f.request("GET", "/", token).Code != 403 {
++		t.Fatal("grant survived fixed expiry")
++	}
++}
++
++func TestNegativeAccessAndFreshAuthorization(t *testing.T) {
++	tests := []struct {
++		name   string
++		mutate func(*fixture, string) string
++	}{
++		{"unauthenticated", func(_ *fixture, _ string) string { return "" }},
++		{"cross-user", func(f *fixture, _ string) string {
++			c := newClaims(f.grant, f.now(), Lifetime)
++			c.User = "other"
++			return sign(f.key, "session", c)
++		}},
++		{"cross-workspace", func(f *fixture, s string) string {
++			f.grant.WorkspaceID = "11111111-1111-4111-8111-111111111111"
++			f.save(t)
++			return s
++		}},
++		{"wrong-container", func(f *fixture, s string) string { f.container.Store(false); return s }},
++		{"user-revoked", func(f *fixture, s string) string { f.allow.Store(false); return s }},
++		{"grant-revoked", func(f *fixture, s string) string {
++			if e := f.store.Revoke(); e != nil {
++				t.Fatal(e)
++			}
++			return s
++		}},
++		{"wrong-purpose", func(f *fixture, _ string) string {
++			return sign(f.key, "ticket", newClaims(f.grant, f.now(), time.Minute))
++		}},
++	}
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			f := newFixture(t)
++			token := tt.mutate(f, f.session())
++			if f.request("GET", "/", token).Code != 403 {
++				t.Fatal("negative access accepted")
++			}
++		})
++	}
++	f := newFixture(t)
++	token := f.session()
++	if f.request("GET", "/", token).Code != 200 {
++		t.Fatal("initial access")
++	}
++	before := f.checks.Load()
++	f.allow.Store(false)
++	if f.request("GET", "/", token).Code != 403 || f.checks.Load() <= before {
++		t.Fatal("authorization was cached")
++	}
++}
++
++func TestOriginHostAndDuplicateCookieDenials(t *testing.T) {
++	for _, name := range []string{"foreign-origin", "null-origin", "missing-post-origin", "wrong-host", "duplicate-cookie", "cross-site-navigation"} {
++		t.Run(name, func(t *testing.T) {
++			f := newFixture(t)
++			r := httptest.NewRequest("GET", f.grant.PreviewOrigin+"/", nil)
++			r.Header.Set("Origin", f.grant.PreviewOrigin)
++			r.AddCookie(&http.Cookie{Name: cookieName, Value: f.session()})
++			switch name {
++			case "foreign-origin":
++				r.Header.Set("Origin", f.grant.MainOrigin)
++			case "null-origin":
++				r.Header.Set("Origin", "null")
++			case "missing-post-origin":
++				r.Method = "POST"
++				r.Header.Del("Origin")
++			case "wrong-host":
++				r.Host = "other.example.test"
++			case "duplicate-cookie":
++				r.AddCookie(&http.Cookie{Name: cookieName, Value: f.session()})
++			case "cross-site-navigation":
++				r.Header.Del("Origin")
++				r.Header.Set("Sec-Fetch-Site", "cross-site")
++			}
++			w := httptest.NewRecorder()
++			f.gate.ServeHTTP(w, r)
++			if w.Code != 403 {
++				t.Fatal("origin or cookie boundary bypassed")
++			}
++		})
++	}
++}
++
++func TestTicketHandoffAndPersistentReplayDenial(t *testing.T) {
++	f := newFixture(t)
++	r := httptest.NewRequest("GET", f.grant.MainOrigin+ControlPrefix+"authorize", nil)
++	r.Header.Set("Test-User", "owner")
++	w := httptest.NewRecorder()
++	f.control.ServeHTTP(w, r)
++	if w.Code != 200 {
++		t.Fatal("native handoff denied")
++	}
++	parts := strings.Split(w.Body.String(), `name="ticket" value="`)
++	if len(parts) != 2 {
++		t.Fatal("no body-only ticket")
++	}
++	ticket := strings.Split(parts[1], `"`)[0]
++	for i := 0; i < 2; i++ {
++		r = httptest.NewRequest("POST", f.grant.PreviewOrigin+"/__preview/redeem", strings.NewReader(url.Values{"ticket": {ticket}}.Encode()))
++		r.Header.Set("Origin", f.grant.MainOrigin)
++		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
++		w = httptest.NewRecorder()
++		f.gate.ServeHTTP(w, r)
++		if i == 0 {
++			if w.Code != 200 || !strings.Contains(w.Body.String(), `location.replace("/")`) || w.Header().Get("Location") != "" {
++				t.Fatal("handoff failed")
++			}
++			cookie := w.Result().Cookies()[0]
++			if !cookie.Secure || !cookie.HttpOnly || cookie.Domain != "" || cookie.SameSite != http.SameSiteStrictMode || cookie.Expires.Unix() != f.grant.ExpiresAt {
++				t.Fatal("unsafe session cookie")
++			}
++		} else if w.Code != 403 {
++			t.Fatal("ticket replay accepted")
++		}
++		// The spent nonce remains on disk across a fresh gateway instance.
++		copy := *f.gate
++		f.gate = &copy
++	}
++}
++
++func TestCredentialDeliveryRequiresExistingOwnerSession(t *testing.T) {
++	f := newFixture(t)
++	const body = `{"email":"synthetic@example.invalid","password":"synthetic-only"}`
++	if e := os.WriteFile(filepath.Join(f.store.Directory, "login.json"), []byte(body), 0600); e != nil {
++		t.Fatal(e)
++	}
++	for _, user := range []string{"", "other", "synthetic", "owner"} {
++		r := httptest.NewRequest("GET", f.grant.MainOrigin+ControlPrefix+"credentials", nil)
++		r.Header.Set("Test-User", user)
++		w := httptest.NewRecorder()
++		f.control.ServeHTTP(w, r)
++		if user == "owner" {
++			if w.Code != 200 || w.Body.String() != body || !strings.Contains(w.Header().Get("Cache-Control"), "no-store") {
++				t.Fatal("authenticated credential delivery failed")
++			}
++		} else if w.Code != 403 || strings.Contains(w.Body.String(), "synthetic-only") {
++			t.Fatal("login disclosed without existing owner session")
++		}
++	}
++}
++
++func TestOwnershipModelChangesAndPrivateFilesFailClosed(t *testing.T) {
++	f := newFixture(t)
++	if validateModel(f.grant) != nil {
++		t.Fatal("valid model denied")
++	}
++	if e := os.WriteFile(f.grant.ModelPath, []byte(`{"task_root":"/data/tasks/other"}`), 0600); e != nil {
++		t.Fatal(e)
++	}
++	if validateModel(f.grant) == nil {
++		t.Fatal("changed ownership accepted")
++	}
++	if e := os.Remove(filepath.Join(f.store.Directory, "key")); e != nil {
++		t.Fatal(e)
++	}
++	if e := os.Symlink(f.grant.ClaimPath, filepath.Join(f.store.Directory, "key")); e != nil {
++		t.Fatal(e)
++	}
++	if _, _, e := f.store.Load(); e == nil {
++		t.Fatal("symlink key accepted")
++	}
++}
++
++func TestActiveStreamClosedAfterRevocation(t *testing.T) {
++	f := newFixture(t)
++	f.upstream.Close()
++	f.upstream = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		_, _ = fmt.Fprint(w, "started\n")
++		w.(http.Flusher).Flush()
++		<-r.Context().Done()
++	}))
++	defer f.upstream.Close()
++	u, _ := url.Parse(f.upstream.URL)
++	f.grant.HostPort, _ = strconv.Atoi(u.Port())
++	f.save(t)
++	server := httptest.NewTLSServer(f.gate)
++	defer server.Close()
++	client := server.Client()
++	r, _ := http.NewRequest("GET", server.URL+"/stream", nil)
++	r.Host = strings.TrimPrefix(f.grant.PreviewOrigin, "https://")
++	r.Header.Set("Origin", f.grant.PreviewOrigin)
++	r.AddCookie(&http.Cookie{Name: cookieName, Value: f.session()})
++	resp, e := client.Do(r)
++	if e != nil {
++		t.Fatal(e)
++	}
++	defer func() { _ = resp.Body.Close() }()
++	buf := make([]byte, 8)
++	if _, e = io.ReadFull(resp.Body, buf); e != nil {
++		t.Fatal(e)
++	}
++	if e = f.store.Revoke(); e != nil {
++		t.Fatal(e)
++	}
++	done := make(chan struct{})
++	go func() { _, _ = io.Copy(io.Discard, resp.Body); close(done) }()
++	select {
++	case <-done:
++	case <-time.After(4 * time.Second):
++		t.Fatal("revoked stream survived")
++	}
++}
+diff --git a/apps/backend/internal/taskpreview/private_unix.go b/apps/backend/internal/taskpreview/private_unix.go
+new file mode 100644
+index 0000000000..72c54fd4dc
+--- /dev/null
++++ b/apps/backend/internal/taskpreview/private_unix.go
+@@ -0,0 +1,38 @@
++//go:build !windows
++
++package taskpreview
++
++import (
++	"os"
++	"syscall"
++)
++
++func privateDirectory(path string) error {
++	fi, err := os.Lstat(path)
++	if err != nil || !fi.IsDir() || fi.Mode().Perm()&0077 != 0 {
++		return ErrDenied
++	}
++	st, ok := fi.Sys().(*syscall.Stat_t)
++	if !ok || st.Uid != 0 && st.Uid != uint32(os.Geteuid()) {
++		return ErrDenied
++	}
++	return nil
++}
++func privateFile(path string) (*os.File, error) {
++	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NOFOLLOW, 0)
++	if err != nil {
++		return nil, ErrDenied
++	}
++	f := os.NewFile(uintptr(fd), path)
++	fi, err := f.Stat()
++	if err != nil || !fi.Mode().IsRegular() || fi.Mode().Perm()&0077 != 0 {
++		_ = f.Close()
++		return nil, ErrDenied
++	}
++	st, ok := fi.Sys().(*syscall.Stat_t)
++	if !ok || st.Uid != 0 && st.Uid != uint32(os.Geteuid()) {
++		_ = f.Close()
++		return nil, ErrDenied
++	}
++	return f, nil
++}
+diff --git a/apps/backend/internal/taskpreview/private_windows.go b/apps/backend/internal/taskpreview/private_windows.go
+new file mode 100644
+index 0000000000..d26182c3e2
+--- /dev/null
++++ b/apps/backend/internal/taskpreview/private_windows.go
+@@ -0,0 +1,7 @@
++package taskpreview
++
++import "os"
++
++// The reviewed ingress is Linux-host only; other platforms fail closed.
++func privateDirectory(string) error        { return ErrDenied }
++func privateFile(string) (*os.File, error) { return nil, ErrDenied }
+diff --git a/apps/backend/internal/taskpreview/revocation_test.go b/apps/backend/internal/taskpreview/revocation_test.go
+new file mode 100644
+index 0000000000..27868e61ee
+--- /dev/null
++++ b/apps/backend/internal/taskpreview/revocation_test.go
+@@ -0,0 +1,30 @@
++package taskpreview
++
++import (
++	"net/http"
++	"net/http/httptest"
++	"testing"
++)
++
++func TestBrowserRevocationUsesAuthoritativeBackend(t *testing.T) {
++	f := newFixture(t)
++	if f.request("POST", "/__preview/revoke", f.session()).Code != 204 {
++		t.Fatal("authorized backend revoke failed")
++	}
++	if !f.store.Revoked() || f.request("GET", "/", f.session()).Code != 403 {
++		t.Fatal("revoke did not close access")
++	}
++}
++
++func TestGatewayBlocksServiceWorkerRegistration(t *testing.T) {
++	f := newFixture(t)
++	r := httptest.NewRequest("GET", f.grant.PreviewOrigin+"/worker.js", nil)
++	r.Header.Set("Origin", f.grant.PreviewOrigin)
++	r.Header.Set("Service-Worker", "script")
++	r.AddCookie(&http.Cookie{Name: cookieName, Value: f.session()})
++	w := httptest.NewRecorder()
++	f.gate.ServeHTTP(w, r)
++	if w.Code != 403 {
++		t.Fatal("application worker could intercept the authorization handoff")
++	}
++}
+diff --git a/apps/backend/internal/taskpreview/store.go b/apps/backend/internal/taskpreview/store.go
+new file mode 100644
+index 0000000000..4bdb3a1789
+--- /dev/null
++++ b/apps/backend/internal/taskpreview/store.go
+@@ -0,0 +1,71 @@
++package taskpreview
++
++import (
++	"encoding/json"
++	"io"
++	"os"
++	"path/filepath"
++)
++
++// Store is private to the host service and outer backend/broker. The agent
++// guard replaces /run, hiding the container's /run/kandev-task-preview mount.
++type Store struct{ Directory string }
++
++func (s Store) trustedDirectory() error { return privateDirectory(s.Directory) }
++func (s Store) read(name string, limit int64) ([]byte, error) {
++	if s.trustedDirectory() != nil {
++		return nil, ErrDenied
++	}
++	f, err := privateFile(filepath.Join(s.Directory, name))
++	if err != nil {
++		return nil, ErrDenied
++	}
++	defer func() { _ = f.Close() }()
++	fi, err := f.Stat()
++	if err != nil || fi.Size() > limit {
++		return nil, ErrDenied
++	}
++	return io.ReadAll(io.LimitReader(f, limit+1))
++}
++func (s Store) Load() (Grant, []byte, error) {
++	var g Grant
++	b, err := s.read("manifest.json", 16384)
++	if err != nil || json.Unmarshal(b, &g) != nil || g.Validate() != nil {
++		return g, nil, ErrDenied
++	}
++	key, err := s.read("key", 32)
++	if err != nil || len(key) != 32 || s.Revoked() {
++		return g, nil, ErrDenied
++	}
++	return g, key, nil
++}
++func (s Store) Revoked() bool {
++	_, err := os.Lstat(filepath.Join(s.Directory, "revoked"))
++	return err == nil || !os.IsNotExist(err)
++}
++func (s Store) exclusive(name string, body []byte) error {
++	if s.trustedDirectory() != nil {
++		return ErrDenied
++	}
++	f, err := os.OpenFile(filepath.Join(s.Directory, name), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
++	if err != nil {
++		return ErrDenied
++	}
++	defer func() { _ = f.Close() }()
++	if _, err = f.Write(body); err != nil {
++		return err
++	}
++	return f.Sync()
++}
++func (s Store) Revoke() error {
++	if s.Revoked() {
++		return nil
++	}
++	return s.exclusive("revoked", []byte("revoked\n"))
++}
++func (s Store) Redeem(c Claims) error {
++	// The gateway can write only this child. It cannot change grant authority,
++	// login delivery or the irreversible revocation marker.
++	nonces := Store{Directory: filepath.Join(s.Directory, "nonces")}
++	return nonces.exclusive(c.Nonce, []byte("used\n"))
++}
+diff --git a/apps/backend/internal/taskpreview/websocket_test.go b/apps/backend/internal/taskpreview/websocket_test.go
+new file mode 100644
+index 0000000000..cd201f946c
+--- /dev/null
++++ b/apps/backend/internal/taskpreview/websocket_test.go
+@@ -0,0 +1,96 @@
++package taskpreview
++
++import (
++	"net/http"
++	"net/http/httptest"
++	"net/url"
++	"strconv"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/gorilla/websocket"
++)
++
++func TestWebSocketAuthorizedThenExpiredOrRevoked(t *testing.T) {
++	for _, reason := range []string{"expired", "revoked"} {
++		t.Run(reason, func(t *testing.T) {
++			f := newFixture(t)
++			f.upstream.Close()
++			f.upstream = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++				// The pinned trial's normal same-origin check must succeed on the
++				// inner HTTP hop without changing its trust-proxy configuration.
++				upgrader := websocket.Upgrader{}
++				conn, err := upgrader.Upgrade(w, r, nil)
++				if err != nil {
++					return
++				}
++				defer func() { _ = conn.Close() }()
++				if err = conn.WriteMessage(websocket.TextMessage, []byte("synthetic")); err != nil {
++					return
++				}
++				_, _, _ = conn.ReadMessage()
++			}))
++			defer f.upstream.Close()
++			u, _ := url.Parse(f.upstream.URL)
++			f.grant.HostPort, _ = strconv.Atoi(u.Port())
++			server := httptest.NewTLSServer(f.gate)
++			defer server.Close()
++			f.grant.PreviewOrigin = server.URL
++			f.grant.ListenAddress = strings.TrimPrefix(server.URL, "https://")
++			f.save(t)
++			dialer := websocket.Dialer{TLSClientConfig: server.Client().Transport.(*http.Transport).TLSClientConfig}
++			headers := http.Header{"Origin": {f.grant.PreviewOrigin}, "Cookie": {cookieName + "=" + f.session()}}
++			conn, _, err := dialer.Dial("wss"+strings.TrimPrefix(server.URL, "https")+"/ws", headers)
++			if err != nil {
++				t.Fatal(err)
++			}
++			defer func() { _ = conn.Close() }()
++			if _, body, e := conn.ReadMessage(); e != nil || string(body) != "synthetic" {
++				t.Fatal("authorized upgrade failed")
++			}
++			if reason == "expired" {
++				f.clock.Store(f.grant.ExpiresAt)
++			} else if e := f.store.Revoke(); e != nil {
++				t.Fatal(e)
++			}
++			if e := conn.SetReadDeadline(time.Now().Add(4 * time.Second)); e != nil {
++				t.Fatal(e)
++			}
++			if _, _, e := conn.ReadMessage(); e == nil {
++				t.Fatal("terminal access retained")
++			}
++		})
++	}
++}
++
++func TestInspectionRejectsTargetSubstitution(t *testing.T) {
++	f := newFixture(t)
++	valid := `{"id":"` + f.grant.ContainerID + `","image":"` + f.grant.ImageID + `","running":true,"labels":{"com.docker.compose.project":"` + f.grant.Project + `","com.docker.compose.service":"core"},"ports":{"59430/tcp":[{"HostIp":"127.0.0.1","HostPort":"` + strconv.Itoa(f.grant.HostPort) + `"}]}}`
++	if ValidateInspection([]byte(valid), f.grant) != nil {
++		t.Fatal("valid inspection denied")
++	}
++	for _, pair := range [][2]string{{f.grant.ContainerID, strings.Repeat("d", 64)}, {f.grant.ImageID, "sha256:" + strings.Repeat("e", 64)}, {f.grant.Project, "kd_" + strings.Repeat("f", 24)}, {`"running":true`, `"running":false`}, {`127.0.0.1`, `0.0.0.0`}} {
++		if ValidateInspection([]byte(strings.ReplaceAll(valid, pair[0], pair[1])), f.grant) == nil {
++			t.Fatal("substituted target accepted")
++		}
++	}
++}
++
++func TestMainCleartextAndForwardedSchemeDenials(t *testing.T) {
++	f := newFixture(t)
++	for _, peer := range []string{"192.0.2.1:1234", "127.0.0.1:1234"} {
++		r := httptest.NewRequest("GET", "http://main.example.test"+ControlPrefix+"authorize", nil)
++		r.RemoteAddr = peer
++		r.Header.Set("Test-User", "owner")
++		r.Header.Set("X-Forwarded-Proto", "https")
++		w := httptest.NewRecorder()
++		f.control.ServeHTTP(w, r)
++		if peer == "192.0.2.1:1234" && w.Code != 403 {
++			t.Fatal("remote cleartext handoff accepted")
++		}
++		if peer == "127.0.0.1:1234" && w.Code != 200 {
++			t.Fatal("local TLS terminator denied")
++		}
++	}
++}
+-- 
+2.43.0
+

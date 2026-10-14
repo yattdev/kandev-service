@@ -1,0 +1,24 @@
+diff --git a/Dockerfile.local b/Dockerfile.local
+--- a/Dockerfile.local
++++ b/Dockerfile.local
+@@ -370,6 +370,7 @@
+ COPY scripts/kandev-agent-guard /usr/local/bin/kandev-agent-guard
+ COPY scripts/kandev-workspace-registration.py /usr/local/bin/kandev-workspace-registration
+ COPY scripts/kandev-agent-docker-broker /usr/local/bin/kandev-agent-docker-broker
++COPY scripts/kandev-task-preview-broker.py /usr/local/bin/kandev-task-preview-broker.py
+ # Optional Human-selected registrations; agents cannot write this image-owned policy.
+ COPY .local-project-artifacts/ /tmp/kandev-project-artifacts/
+ RUN install -d -m 0755 /etc/kandev && \
+diff --git a/docker-compose.override.yml b/docker-compose.override.yml
+--- a/docker-compose.override.yml
++++ b/docker-compose.override.yml
+@@ -118,6 +118,9 @@
+       # agent guard replaces /run with a private tmpfs, so tasks cannot read it.
+       - kandev-scout-auth:/run/kandev-agent-docker/scout-auth
+ 
++      # Exact private preview state; outside data/Code aliases, hidden by guard /run.
++      - ${HOME}/.config/kandev/task-preview-85278886:/run/kandev-task-preview
++
+       # ── Android UI QA ───────────────────────────────────────────────────────
+       # Keep the large SDK and the host AVD catalogue outside the image and
+       # immutable to agents. AVD launches use read-only ephemeral overlays.
