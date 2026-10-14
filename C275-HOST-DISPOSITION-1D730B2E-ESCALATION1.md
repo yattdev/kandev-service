@@ -113,3 +113,11 @@ not repeated. No database access, raw/application resume, replay, source/feature
 work, credentials, profile/model/lane change, cleanup, runtime operation,
 production restart or Human schema/preview decision change occurred. No command
 acceptance is claimed and no Human relay is required for this pushed result.
+
+## Final conditional-route correction
+
+The [pass-2 audit](C275-HOST-DISPOSITION-1D730B2E-ESCALATION2.md) supersedes
+unconditional no-prompt recovery advice: FAILED/tokenless resume can retain the
+task description. It also distinguishes the successful separate verifier route
+from this request's explicit database/credential exclusions. No Host recovery or
+original command receipt is claimed.

@@ -1,0 +1,63 @@
+{
+  "request_id": "1d730b2e-d812-4dca-b553-bd77badf66c8",
+  "root_incident_request_id": "8f0d9649-2703-4e73-9ef4-682c114b4e12",
+  "escalation_pass": 2,
+  "status": "BLOCKED",
+  "recorded_at": "2026-10-14T06:43:31.558064+00:00",
+  "task_id": "b4c55269-b579-4dbd-9227-67061064323c",
+  "session_id": "1a963e8a-8c5b-471a-b98b-35d612e6406b",
+  "intent_id": "C275-HOST-DISPOSITION-20261014-v1",
+  "message_id": "5300a2b6-8008-5621-806e-32ca460e9c9f",
+  "turn_id": "862cec5b-1e66-47be-9c2a-dd5415c84517",
+  "caller_supplied_packet_digest": "24f398694a8b58ff623f6f0e53a5e1c9ef98a514bd4980b1983430881742013f",
+  "caller_supplied_fork17_head": "d7b24e163f4adfb6290f824fdc8f3bff2afa7a58",
+  "original_outcome": "UNKNOWN",
+  "current_task_status_independently_polled": false,
+  "supported_readiness_route": {
+    "transport": "authenticated application WebSocket",
+    "action": "session.recover",
+    "recovery_action": "resume",
+    "existing_user_task_access_and_session_prompt_required": true,
+    "invoked": false,
+    "prompt_free_only_after_compatible_executor_resume_preflight": true,
+    "current_compatible_executor_resume_preflight": "NOT_ATTESTED",
+    "readiness_does_not_reconcile_unknown_original": true
+  },
+  "read_only_host_audit": {
+    "reviewed_escalation": "SUCCEEDED",
+    "features_http": 200,
+    "websocket_without_identity_http": 401,
+    "callable_kandev_or_browser_control_available": false,
+    "scoped_broker_recovery_available": false
+  },
+  "separate_verifier_route_not_reused": {
+    "request_id": "1be028a8-6818-4ef8-bbf0-2111b868c73f",
+    "reason": "REQUIRES_DIRECT_DATABASE_PREFLIGHT_AND_TEMPORARY_AUTH_TOKEN_INSERT_DELETE_EXCLUDED_BY_THIS_REQUEST"
+  },
+  "tests": {
+    "failed_tokenless_resume_retains_task_description_race_regression": "PASS",
+    "provider_calls": false
+  },
+  "source_review_revision": "e8f963523d9d10f85af7c0d0d2c45ae0d1fdff91",
+  "direct_database_access": false,
+  "credential_access_or_change": false,
+  "recovery_or_successor_started": false,
+  "original_packet_replayed": false,
+  "queue_or_original_turn_mutated": false,
+  "new_repair_job_or_worker_created": false,
+  "source_or_feature_implementation_changed": false,
+  "profile_model_lane_or_human_decision_changed": false,
+  "production_restart_or_deployment": false,
+  "actual_command_acceptance": false,
+  "safe_retry_issued": false,
+  "production_identity_observed": {
+    "container_id": "3b95b8dbafb8d29c6956e06467cfff09511ff1592f654aec0fe5fa2f9668d172",
+    "image_id": "sha256:cee318f8d409330e9945cd958bb6c6159eec72c56e990f43cc31323debfba16f",
+    "started_at": "2026-10-12T22:06:50.719127446Z"
+  },
+  "remaining_owner": "KANDEV_AUTHENTICATED_LIFECYCLE_PLATFORM_OPERATOR",
+  "smallest_next_action": "PROVIDE_EXACT_APPLICATION_OWNED_UNKNOWN_EFFECTS_CUSTODY_AND_COMPATIBLE_RESUME_PREFLIGHT_USING_EXISTING_AUTHENTICATED_OPERATOR_CONTEXT_BEFORE_ANY_CONTINUATION",
+  "preflight_grant_issued": false,
+  "review": "C275-HOST-DISPOSITION-1D730B2E-ESCALATION2.md",
+  "root_backlink": "C275-STARTUP-8F0D9649-ESCALATION2.md"
+}
