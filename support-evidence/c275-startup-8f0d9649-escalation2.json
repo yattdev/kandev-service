@@ -1,0 +1,33 @@
+{
+  "request_id": "8f0d9649-2703-4e73-9ef4-682c114b4e12",
+  "pass": 2,
+  "recorded_at": "2026-10-14T05:21:23.042083+00:00",
+  "status": "BLOCKED",
+  "original_intent_dispositions": {
+    "C275-VISIBILITY-NEXT-20261014-v1": "UNKNOWN",
+    "C275-3686-QA-RESUME-20261014-v1": "UNKNOWN"
+  },
+  "actual_same_target_command_receipts_available": false,
+  "both_checkouts_inspected": true,
+  "prior_evidence_preserved": true,
+  "prior_reviewed_host_and_test_escalation_succeeded": true,
+  "agent_boundary_used_to_deny_support_diagnostics": false,
+  "safe_same_session_agent_recovery_categorically_excluded_by_production_restart_ban": false,
+  "native_original_queue_continuation_available": false,
+  "web_resume_exists": true,
+  "installed_complete_unknown_delivery_and_task_wide_writer_custody_operation": false,
+  "custody_draft_is_installed_operation_or_grant": false,
+  "draft_sha256": "7cad5b9e8fc394a9bea7c120c3807560ce4de8f1875f67ce8c2be14186d0604d",
+  "additional_live_queries_or_status_polls": false,
+  "tests_repeated": false,
+  "source_changes": false,
+  "direct_cli_resume_or_host_credentials": false,
+  "live_mutations": false,
+  "production_restart": false,
+  "duplicate_workers_jobs_or_packets": false,
+  "successor_launched": false,
+  "remaining_owner": "KANDEV_LIFECYCLE_PLATFORM_OPERATOR",
+  "smallest_next_action": "EXACT_TWO_TARGET_RECOVERY_DECISION_ACCOUNTING_FOR_UNKNOWN_EFFECTS_WITH_CLOSURE_PRESERVATION_EXCLUSIVE_CUSTODY_AND_AUTHENTICATED_CALLABLE_OPERATION",
+  "review": "C275-STARTUP-8F0D9649-ESCALATION2.md",
+  "prior_review": "https://github.com/yattdev/kandev-service/blob/7a3deb1/C275-STARTUP-8F0D9649-ESCALATION1.md"
+}
