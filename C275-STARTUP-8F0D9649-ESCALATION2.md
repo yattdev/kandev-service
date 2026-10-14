@@ -120,3 +120,7 @@ preserves its UNKNOWN original and distinguishes existing authenticated
 readiness recovery from the missing original-bound continuation. Its actor
 must retain read-only disposition authority; no new source-writer grant is
 required or authorized. No duplicate repair job was opened.
+
+The [Host final audit](C275-HOST-DISPOSITION-1D730B2E-ESCALATION2.md) preserves
+that exact original turn and adds the authenticated-route boundary and tested
+FAILED/tokenless auto-prompt condition. No duplicate recovery job was created.
