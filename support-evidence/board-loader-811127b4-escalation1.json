@@ -1,0 +1,42 @@
+{
+  "request_id": "811127b4-88c1-4758-ba6f-f175ee0e6153",
+  "pass": 1,
+  "recorded_at": "2026-10-14T04:55:09.719932+00:00",
+  "status": "BLOCKED",
+  "prior_scope_wording_refined": true,
+  "task_bound_preservation_safe_recovery_considered": true,
+  "agent_facing_restriction_used_as_support_diagnostic_blocker": false,
+  "reviewed_host_diagnostics_completed": true,
+  "both_checkouts_inspected": true,
+  "original_evidence": "https://github.com/yattdev/kandev-service/blob/69950a7e7da8244ffbf50c6ac4030dccd71ccabb/support-evidence/board-loader-811127b4.json",
+  "host_mapped_admin_targets_present": {
+    "e8821e3b-c3b0-45a5-8923-c2157eaf6a77": false,
+    "046e49a9-fa4f-433d-a263-a84ca28aa2aa": false
+  },
+  "exact_recovery_records_present": false,
+  "exact_recovery_locks_present": false,
+  "namespace_translation_fix_sufficient": false,
+  "worktree_store_environment_owned": true,
+  "resume_can_cleanup_before_git_admission": true,
+  "workspace_restore_exact_owner_guarantee": false,
+  "quiescence_alone_satisfies_compiled_consumer_predicate": false,
+  "same_original_receipt_restored": false,
+  "actual_agent_output_acceptance": false,
+  "live_session_queue_status_polled": false,
+  "live_mutations": false,
+  "source_implementation": false,
+  "deployment": false,
+  "credentials_read": false,
+  "remaining_owner": "KANDEV_PLATFORM_STORAGE_OPERATOR",
+  "smallest_next_action": "SUPPLY_TRUSTED_EXACT_GIT_ADMIN_RECOVERY_SOURCE_AND_PRESERVATION_PROOF_OR_AUTHORIZE_PINNED_BACKEND_RECOVERY_IMPLEMENTATION_ACTIVATION",
+  "race_regressions_passed": [
+    "TestManager_RecoverWorktreeSnapshotsAndRematerializesCheckout",
+    "TestEnsureWorkspaceExecutionForSession_ReusesExistingTaskEnvironmentExecution",
+    "TestWorkspaceRestoreReusesRetainedTerminalRuntime",
+    "TestWorkspaceRestoreRejectsActiveCleanupWithoutMutation",
+    "TestManager_CleanupStaleExecution_StopsRuntimeInstance",
+    "TestResumeSession_ConcurrentResumeReReadsFreshState"
+  ],
+  "test_source_revision": "80fdc4ce072ced98c6d72996f02e2c578d64dd82",
+  "review": "BOARD-LOADER-811127B4-ESCALATION1.md"
+}
