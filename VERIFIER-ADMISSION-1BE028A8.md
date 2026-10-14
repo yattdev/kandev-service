@@ -1,9 +1,16 @@
 # Core trial verifier admission: 1be028a8
 
 Support request `1be028a8-6818-4ef8-bbf0-2111b868c73f`.
-Execution restoration remains **BLOCKED**. A reporting repair is implemented,
-tested and preserved separately from live recovery. No Review/QA verdict or
-execution acceptance is claimed.
+Initial-pass status was **BLOCKED**. Its reporting repair was implemented,
+tested and preserved separately from live recovery; no execution acceptance was
+claimed in that pass. The resolved escalation below supersedes that status.
+
+**Historical initial-pass record.** The current
+[escalation outcome is RESOLVED for guarded protocol readiness](VERIFIER-ADMISSION-1BE028A8-ESCALATION1.md).
+Reviewed host use of the existing authenticated recovery control restored both
+original side sessions without a work prompt, model change or deployment. The
+initial-pass observations and uninstalled source candidate below are retained as
+history; its former operator-access blocker has been superseded.
 
 ## Exact scope and observed failure
 
