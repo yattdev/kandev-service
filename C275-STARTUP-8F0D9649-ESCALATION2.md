@@ -107,3 +107,16 @@ CLI resume, host credential, broad SQL/task-state write, queue deletion/replay,
 source/profile/model/lane change, force push, production restart, foreign-resource
 access, cleanup, successor launch or actual command acceptance occurred. No Human
 relay is needed for this pushed Support result.
+
+## Material Host extension
+
+The same incident includes read-only Host task
+`b4c55269-b579-4dbd-9227-67061064323c`, session
+`1a963e8a-8c5b-471a-b98b-35d612e6406b`, original turn
+`862cec5b-1e66-47be-9c2a-dd5415c84517`, through Support
+`1d730b2e-d812-4dca-b553-bd77badf66c8`.
+The [Host escalation audit](C275-HOST-DISPOSITION-1D730B2E-ESCALATION1.md)
+preserves its UNKNOWN original and distinguishes existing authenticated
+readiness recovery from the missing original-bound continuation. Its actor
+must retain read-only disposition authority; no new source-writer grant is
+required or authorized. No duplicate repair job was opened.
