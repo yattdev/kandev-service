@@ -1,0 +1,29 @@
+package sqlite
+
+import (
+ "context"
+ "testing"
+ "time"
+ "github.com/kandev/kandev/internal/task/models"
+)
+
+// Synthetic only: an actual same-task predecessor is still outside the
+// current exact-session reader. No continuity or read grant is inferred.
+func TestSupportSuccessorQuestionSameTaskDoesNotImplyContinuity(t *testing.T) {
+ r := newRepoForSessionTests(t)
+ ctx := context.Background()
+ seedForMsgTest(t,r,"root","predecessor","old-turn")
+ seedForMsgTest(t,r,"root","current","current-turn")
+ now := time.Now().UTC()
+ m := &models.Message{ID:"original",TaskID:"root",TaskSessionID:"predecessor",TurnID:"old-turn",Type:models.MessageTypeClarificationRequest,AuthorType:"agent",Content:"synthetic original envelope",CreatedAt:now,UpdatedAt:now,Metadata:map[string]any{"question_id":"stable","pending_id":"original-bundle","status":"answered"}}
+ if err:=r.CreateMessage(ctx,m);err!=nil {t.Fatal(err)}
+ var before string
+ if err:=r.db.QueryRow("SELECT content || metadata FROM task_session_messages WHERE id = ?",m.ID).Scan(&before);err!=nil {t.Fatal(err)}
+ got,err:=r.FindOwnClarificationMessages(ctx,"root","current",[]string{"stable"})
+ if err!=nil || len(got)!=0 {t.Fatalf("current namespace crossed predecessor boundary: %v, %v",got,err)}
+ original,err:=r.FindOwnClarificationMessages(ctx,"root","predecessor",[]string{"stable"})
+ if err!=nil || len(original)!=1 || original[0].ID!=m.ID || original[0].Content!="" {t.Fatalf("original metadata identity/body isolation failed: %v, %v",original,err)}
+ var after string
+ if err:=r.db.QueryRow("SELECT content || metadata FROM task_session_messages WHERE id = ?",m.ID).Scan(&after);err!=nil {t.Fatal(err)}
+ if before!=after {t.Fatal("read mutated original envelope")}
+}
