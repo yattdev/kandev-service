@@ -1,0 +1,564 @@
+From 80fdc4ce072ced98c6d72996f02e2c578d64dd82 Mon Sep 17 00:00:00 2001
+From: ayattara <alassane.yattara@savoirfairelinux.com>
+Date: Tue, 13 Oct 2026 23:05:21 -0400
+Subject: [PATCH] fix(mcp): report unrepresentable own-question answers
+
+---
+ .../own_answer_disposition_test.go            |  37 +++++++
+ .../internal/mcp/handlers/own_answer.go       |  16 ++-
+ .../mcp/handlers/own_answer_disposition.go    |  28 +++++
+ .../mcp/handlers/own_answer_format_test.go    | 102 ++++++++++++++++++
+ .../internal/mcp/handlers/own_question.go     |  28 +++--
+ .../backend/internal/mcp/server/own_answer.go |   5 +-
+ .../mcp/server/own_answer_format_test.go      |  36 +++++++
+ .../internal/mcp/server/own_question.go       |   6 +-
+ .../internal/task/ownanswer/binding.go        |  12 ++-
+ .../repository/sqlite/message_own_answer.go   |  19 ++++
+ .../sqlite/message_own_answer_format_test.go  |  97 +++++++++++++++++
+ 11 files changed, 370 insertions(+), 16 deletions(-)
+ create mode 100644 apps/backend/internal/clarification/own_answer_disposition_test.go
+ create mode 100644 apps/backend/internal/mcp/handlers/own_answer_disposition.go
+ create mode 100644 apps/backend/internal/mcp/handlers/own_answer_format_test.go
+ create mode 100644 apps/backend/internal/mcp/server/own_answer_format_test.go
+ create mode 100644 apps/backend/internal/task/repository/sqlite/message_own_answer_format_test.go
+
+diff --git a/apps/backend/internal/clarification/own_answer_disposition_test.go b/apps/backend/internal/clarification/own_answer_disposition_test.go
+new file mode 100644
+index 0000000000..52458d4314
+--- /dev/null
++++ b/apps/backend/internal/clarification/own_answer_disposition_test.go
+@@ -0,0 +1,37 @@
++package clarification
++
++import (
++	"context"
++	"testing"
++
++	"github.com/kandev/kandev/internal/events"
++	taskmodels "github.com/kandev/kandev/internal/task/models"
++	"github.com/stretchr/testify/require"
++)
++
++// Contract coverage for the existing supported Human rejection path; this test
++// adds no new settlement behavior or agent authority.
++func TestResolverOwnAnswerDispositionRejectsOnlyOriginalWithoutResume(t *testing.T) {
++	const pending = "original-pending"
++	original := resolverDeliveryMessage(pending, "original-message", "original-turn")
++	original.Content = "Original question body"
++	r, _, repo, _, eventBus := newResolverDeliveryFixture(t, pending, []*taskmodels.Message{original})
++	other := resolverDeliveryMessage("other-pending", "other-message", "other-turn")
++	repo.messages["other-pending"] = []*taskmodels.Message{other}
++	beforeOther := cloneResolverMessage(other)
++	result, claimed, err := r.ResolveBundle(context.Background(), pending, Outcome{Rejected: true, Answers: []Answer{}})
++	require.NoError(t, err)
++	require.True(t, claimed)
++	require.Equal(t, string(StatusRejected), result.Status)
++	require.True(t, result.Response.Rejected)
++	require.Empty(t, eventBus.resumeRequests)
++	require.Equal(t, "Original question body", repo.messages[pending][0].Content)
++	require.Equal(t, beforeOther, repo.messages["other-pending"][0])
++	for _, event := range eventBus.events {
++		require.NotEqual(t, events.ClarificationPrimaryAnswered, event.Type)
++	}
++	_, claimed, err = r.ResolveBundle(context.Background(), pending, Outcome{Rejected: true, Answers: []Answer{}})
++	require.NoError(t, err)
++	require.False(t, claimed)
++	require.Empty(t, eventBus.resumeRequests)
++}
+diff --git a/apps/backend/internal/mcp/handlers/own_answer.go b/apps/backend/internal/mcp/handlers/own_answer.go
+index 21e8c273ed..d6f07ef813 100644
+--- a/apps/backend/internal/mcp/handlers/own_answer.go
++++ b/apps/backend/internal/mcp/handlers/own_answer.go
+@@ -4,6 +4,7 @@ import (
+ 	"bytes"
+ 	"context"
+ 	"encoding/json"
++	"errors"
+ 	"github.com/kandev/kandev/internal/clarification"
+ 	mcpprofile "github.com/kandev/kandev/internal/mcp/profile"
+ 	mcpscope "github.com/kandev/kandev/internal/mcp/scope"
+@@ -17,12 +18,16 @@ type ownAnswerWriter interface {
+ }
+ 
+ func (h *Handlers) handleReconcileOwnAnswer(ctx context.Context, msg *ws.Message) (*ws.Message, error) {
+-	var b ownanswer.OwnAnswerBinding
++	var request struct {
++		ownanswer.OwnAnswerBinding
++		ResultMode string `json:"result_mode,omitempty"`
++	}
+ 	decoder := json.NewDecoder(bytes.NewReader(msg.Payload))
+ 	decoder.DisallowUnknownFields()
+-	if decoder.Decode(&b) != nil || b.Validate() != nil {
++	if decoder.Decode(&request) != nil || request.Validate() != nil || !validOwnAnswerMode(request.ResultMode) {
+ 		return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeValidation, "exact question and Human message identities/hashes required", nil)
+ 	}
++	b := request.OwnAnswerBinding
+ 	caller, err := h.authorizeOwnQuestion(ctx, ownQuestionRequest{TaskID: b.TaskID, SessionID: b.SessionID})
+ 	if err != nil {
+ 		return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeForbidden, "exact own-task/session answer reconciliation required", nil)
+@@ -47,6 +52,9 @@ func (h *Handlers) handleReconcileOwnAnswer(ctx context.Context, msg *ws.Message
+ 		return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeConflict, "question still has a live waiter", nil)
+ 	}
+ 	rows, changed, err := writer.ReconcileOwnQuestionAnswer(ctx, b)
++	if errors.Is(err, ownanswer.ErrAnswerFormatUnsupported) && request.ResultMode == ownanswer.DispositionMode {
++		return ws.NewResponse(msg.ID, msg.Action, unsupportedOwnAnswerDisposition(b))
++	}
+ 	if err != nil {
+ 		return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeConflict, "stored evidence cannot be securely correlated; preserve the original question and Human message", nil)
+ 	}
+@@ -58,3 +66,7 @@ func (h *Handlers) handleReconcileOwnAnswer(ctx context.Context, msg *ws.Message
+ 	}
+ 	return ws.NewResponse(msg.ID, msg.Action, map[string]any{"receipt": receipt, "changed": changed, "publication_pending": publishErr != nil})
+ }
++
++func validOwnAnswerMode(mode string) bool {
++	return mode == "" || mode == ownanswer.DispositionMode
++}
+diff --git a/apps/backend/internal/mcp/handlers/own_answer_disposition.go b/apps/backend/internal/mcp/handlers/own_answer_disposition.go
+new file mode 100644
+index 0000000000..b618f40590
+--- /dev/null
++++ b/apps/backend/internal/mcp/handlers/own_answer_disposition.go
+@@ -0,0 +1,28 @@
++package handlers
++
++import (
++	"net/url"
++
++	"github.com/kandev/kandev/internal/clarification"
++	"github.com/kandev/kandev/internal/task/ownanswer"
++)
++
++// This is an instruction for an explicit future Human decision, never an
++// automatic rejection, choice, prompt dispatch or runtime resume operation.
++func unsupportedOwnAnswerDisposition(b ownanswer.OwnAnswerBinding) map[string]any {
++	return map[string]any{
++		"status": "not_reconciled", "reason_code": ownanswer.ErrAnswerFormatUnsupported.Error(),
++		"question_status": "pending", "agent_disconnected": true,
++		"changed": false, "retry_allowed": false,
++		"task_id": b.TaskID, "session_id": b.SessionID,
++		"question_id": b.QuestionID, "pending_id": b.PendingID,
++		"question_message_id": b.QuestionMessageID, "question_sha256": b.QuestionSHA256,
++		"answer_message_id": b.AnswerMessageID, "answer_sha256": b.AnswerSHA256,
++		"disposition": map[string]any{
++			"kind": "human_confirmed_original_rejection", "requires_human_confirmation": true,
++			"method": "POST", "path": "/api/v1/clarification/" + url.PathEscape(b.PendingID) + "/respond",
++			"body":           map[string]any{"answers": []clarification.Answer{}, "rejected": true},
++			"runtime_resume": false, "queue_replay": false,
++		},
++	}
++}
+diff --git a/apps/backend/internal/mcp/handlers/own_answer_format_test.go b/apps/backend/internal/mcp/handlers/own_answer_format_test.go
+new file mode 100644
+index 0000000000..de90637db7
+--- /dev/null
++++ b/apps/backend/internal/mcp/handlers/own_answer_format_test.go
+@@ -0,0 +1,102 @@
++package handlers
++
++import (
++	"context"
++	"encoding/json"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/google/uuid"
++	"github.com/jmoiron/sqlx"
++	"github.com/kandev/kandev/internal/orchestrator/messagequeue"
++	"github.com/kandev/kandev/internal/task/models"
++	"github.com/kandev/kandev/internal/task/ownanswer"
++	sqliterepo "github.com/kandev/kandev/internal/task/repository/sqlite"
++	ws "github.com/kandev/kandev/pkg/websocket"
++	"github.com/stretchr/testify/require"
++)
++
++func nativeCommentsFixture(t *testing.T) (*Handlers, *sqliterepo.Repository, context.Context, map[string]any) {
++	t.Helper()
++	h, repo, ctx, questions := ownQuestionFixture(t)
++	response, err := h.handleReceiptUserQuestion(ctx, makeWSMessage(t, ws.ActionMCPAskUserQuestion, map[string]any{}), "own-task", "own-session", questions, "synthetic")
++	require.NoError(t, err)
++	receipt := ownReceipt(t, response)
++	q, err := repo.GetMessage(ctx, receipt.Questions[0].MessageID)
++	require.NoError(t, err)
++	q.Metadata["agent_disconnected"] = true
++	require.NoError(t, repo.UpdateMessage(ctx, q))
++	am := &models.Message{ID: uuid.NewString(), TaskID: q.TaskID, TaskSessionID: q.TaskSessionID, TurnID: q.TurnID, AuthorType: models.MessageAuthorUser, Type: models.MessageTypeMessage,
++		Content:   "### Agent Message Comments\n\nSelected agent response:\n> Synthetic choice?\n\nUser feedback:\n> Monitor four only.\n> Keep qualifications.\n\n---\n",
++		CreatedAt: q.CreatedAt.Add(time.Second), UpdatedAt: q.CreatedAt.Add(time.Second),
++		Metadata: map[string]any{"client_message_request_fingerprint": strings.Repeat("a", 64), "queue_admission_ids": []string{uuid.NewString()}}}
++	require.NoError(t, repo.CreateMessage(ctx, am))
++	pool := sqlx.NewDb(repo.DB(), "sqlite3") // same owned test pool, no second connection/close
++	_, err = messagequeue.NewSQLiteRepository(pool, pool)
++	require.NoError(t, err)
++	session, err := repo.GetTaskSession(ctx, q.TaskSessionID)
++	require.NoError(t, err)
++	ids := am.Metadata["queue_admission_ids"].([]string)
++	queued := messagequeue.QueuedMessage{ID: ids[0], TaskID: q.TaskID, SessionID: q.TaskSessionID, Content: am.Content, QueuedBy: messagequeue.QueuedByUser, Metadata: map[string]any{"queue_admission_ids": ids}, QueuedAt: q.CreatedAt}
++	raw, err := json.Marshal(queued)
++	require.NoError(t, err)
++	_, err = repo.DB().ExecContext(ctx, `INSERT INTO queue_admission_receipts(task_id,session_id,session_incarnation_id,client_queue_id,request_fingerprint,accepted_queue_id,response_json,admitted_at) VALUES (?,?,?,?,?,?,?,?)`, q.TaskID, q.TaskSessionID, session.QueueIncarnationID, ids[0], strings.Repeat("b", 64), ids[0], string(raw), queued.QueuedAt)
++	require.NoError(t, err)
++	raw, err = json.Marshal(q.Metadata["question"])
++	require.NoError(t, err)
++	payload := map[string]any{"result_mode": "explicit_disposition_v1", "task_id": q.TaskID, "session_id": q.TaskSessionID, "question_id": questions[0].ID, "pending_id": receipt.PendingID, "question_message_id": q.ID, "answer_message_id": am.ID, "question_sha256": ownanswer.OwnAnswerDigest(raw), "answer_sha256": ownanswer.OwnAnswerDigest([]byte(am.Content))}
++	return h, repo, ctx, payload
++}
++
++func TestOwnAnswerUnsupportedFormatReturnsGuardedDisposition(t *testing.T) {
++	h, repo, ctx, payload := nativeCommentsFixture(t)
++	before, err := repo.GetMessage(ctx, payload["question_message_id"].(string))
++	require.NoError(t, err)
++	human, err := repo.GetMessage(ctx, payload["answer_message_id"].(string))
++	require.NoError(t, err)
++	response, err := h.handleReconcileOwnAnswer(ctx, makeWSMessage(t, ws.ActionMCPReconcileOwnQuestionAnswer, payload))
++	require.NoError(t, err)
++	require.Equal(t, ws.MessageTypeResponse, response.Type)
++	var result map[string]any
++	require.NoError(t, json.Unmarshal(response.Payload, &result))
++	require.Equal(t, "not_reconciled", result["status"])
++	require.Equal(t, "ANSWER_FORMAT_UNSUPPORTED", result["reason_code"])
++	require.Equal(t, false, result["retry_allowed"])
++	require.Equal(t, false, result["changed"])
++	require.Equal(t, "pending", result["question_status"])
++	disposition, ok := result["disposition"].(map[string]any)
++	require.True(t, ok)
++	require.Equal(t, "human_confirmed_original_rejection", disposition["kind"])
++	require.Equal(t, true, disposition["requires_human_confirmation"])
++	require.Equal(t, false, disposition["runtime_resume"])
++	require.Equal(t, false, disposition["queue_replay"])
++	require.Equal(t, "POST", disposition["method"])
++	require.Equal(t, "/api/v1/clarification/"+payload["pending_id"].(string)+"/respond", disposition["path"])
++	raw, err := json.Marshal(disposition["body"])
++	require.NoError(t, err)
++	require.JSONEq(t, `{"answers":[],"rejected":true}`, string(raw))
++	q, err := repo.GetMessage(ctx, before.ID)
++	require.NoError(t, err)
++	a, err := repo.GetMessage(ctx, human.ID)
++	require.NoError(t, err)
++	require.Equal(t, before, q)
++	require.Equal(t, human, a)
++	_, err = repo.DB().ExecContext(ctx, `DELETE FROM queue_admission_receipts WHERE task_id=? AND session_id=?`, before.TaskID, before.TaskSessionID)
++	require.NoError(t, err)
++	response, err = h.handleReconcileOwnAnswer(ctx, makeWSMessage(t, ws.ActionMCPReconcileOwnQuestionAnswer, payload))
++	require.NoError(t, err)
++	require.Equal(t, ws.MessageTypeError, response.Type)
++	require.NotContains(t, string(response.Payload), "ANSWER_FORMAT_UNSUPPORTED")
++}
++
++// Old running sidecars must continue to receive an error, rather than treating
++// a structured refusal as a successful answer reconciliation.
++func TestOwnAnswerUnsupportedFormatLegacyClientStillFailsClosed(t *testing.T) {
++	h, _, ctx, payload := nativeCommentsFixture(t)
++	delete(payload, "result_mode")
++	response, err := h.handleReconcileOwnAnswer(ctx, makeWSMessage(t, ws.ActionMCPReconcileOwnQuestionAnswer, payload))
++	require.NoError(t, err)
++	require.Equal(t, ws.MessageTypeError, response.Type)
++	require.NotContains(t, string(response.Payload), "human_confirmed_original_rejection")
++}
+diff --git a/apps/backend/internal/mcp/handlers/own_question.go b/apps/backend/internal/mcp/handlers/own_question.go
+index cbf989b448..9189a309e7 100644
+--- a/apps/backend/internal/mcp/handlers/own_question.go
++++ b/apps/backend/internal/mcp/handlers/own_question.go
+@@ -182,21 +182,29 @@ func addOwnQuestionItem(r *ownQuestionReceipt, m *models.Message, seen map[strin
+ 	if err != nil {
+ 		return err
+ 	}
+-	if rawReceipt := m.Metadata[ownanswer.OwnAnswerReceiptKey]; rawReceipt != nil {
+-		data, e := json.Marshal(rawReceipt)
+-		if e != nil {
+-			return e
+-		}
+-		var parsed ownanswer.OwnAnswerReceipt
+-		if e = json.Unmarshal(data, &parsed); e != nil {
+-			return e
+-		}
+-		item.AnswerReceipt = &parsed
++	item.AnswerReceipt, err = projectOwnAnswerReceipt(m.Metadata[ownanswer.OwnAnswerReceiptKey])
++	if err != nil {
++		return err
+ 	}
+ 	r.Questions = append(r.Questions, item)
+ 	return nil
+ }
+ 
++func projectOwnAnswerReceipt(raw any) (*ownanswer.OwnAnswerReceipt, error) {
++	if raw == nil {
++		return nil, nil
++	}
++	data, err := json.Marshal(raw)
++	if err != nil {
++		return nil, err
++	}
++	var parsed ownanswer.OwnAnswerReceipt
++	if err := json.Unmarshal(data, &parsed); err != nil {
++		return nil, err
++	}
++	return &parsed, nil
++}
++
+ func ownBundleStatus(items []ownQuestionItem) string {
+ 	status := items[0].Status
+ 	for _, item := range items {
+diff --git a/apps/backend/internal/mcp/server/own_answer.go b/apps/backend/internal/mcp/server/own_answer.go
+index 908b880183..3db0693e0a 100644
+--- a/apps/backend/internal/mcp/server/own_answer.go
++++ b/apps/backend/internal/mcp/server/own_answer.go
+@@ -2,6 +2,7 @@ package mcp
+ 
+ import (
+ 	"context"
++	"github.com/kandev/kandev/internal/task/ownanswer"
+ 	ws "github.com/kandev/kandev/pkg/websocket"
+ 	"github.com/mark3labs/mcp-go/mcp"
+ 	"github.com/mark3labs/mcp-go/server"
+@@ -11,7 +12,7 @@ const ownAnswerToolName = "reconcile_own_question_answer_kandev"
+ 
+ func (s *Server) registerOwnAnswerTool() {
+ 	options := []mcp.ToolOption{
+-		mcp.WithDescription("Bind an already-delivered native Human user message once to this caller's exact disconnected pending single-choice question. Requires original IDs and exact SHA256 hashes; the backend derives the answer from the stored complete question/answer envelope. No choice/body input, fabricated answer, retry/replay, runtime resume, queue operation or other-session dismissal. Ambiguous/unproven origin or changed evidence fails closed. Re-read own status after a timeout."),
++		mcp.WithDescription("Bind an already-delivered native Human user message once to this caller's exact disconnected pending single-choice question. Requires original IDs and exact SHA256 hashes; the backend derives the answer from the stored complete question/answer envelope. No choice/body input, fabricated answer, retry/replay, runtime resume, queue operation or other-session dismissal. Ambiguous/unproven origin or changed evidence fails closed. Unsupported comments/free-text envelopes return ANSWER_FORMAT_UNSUPPORTED, not_reconciled, retry_allowed:false, with a separate Human-confirmed original-question rejection path; never retry unchanged or interpret that disposition as an answered/rejected question. Re-read own status after a timeout."),
+ 		mcp.WithDestructiveHintAnnotation(false), mcp.WithIdempotentHintAnnotation(true), mcp.WithOpenWorldHintAnnotation(false),
+ 	}
+ 	for _, key := range []string{"question_id", "pending_id", "question_message_id", "question_sha256", "answer_message_id", "answer_sha256"} {
+@@ -22,7 +23,7 @@ func (s *Server) registerOwnAnswerTool() {
+ 
+ func (s *Server) ownAnswerHandler() server.ToolHandlerFunc {
+ 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+-		payload := map[string]any{"task_id": s.taskID, "session_id": s.sessionID}
++		payload := map[string]any{"task_id": s.taskID, "session_id": s.sessionID, "result_mode": ownanswer.DispositionMode}
+ 		for _, key := range []string{"question_id", "pending_id", "question_message_id", "question_sha256", "answer_message_id", "answer_sha256"} {
+ 			value := req.GetString(key, "")
+ 			if value == "" {
+diff --git a/apps/backend/internal/mcp/server/own_answer_format_test.go b/apps/backend/internal/mcp/server/own_answer_format_test.go
+new file mode 100644
+index 0000000000..eb89d9ee2a
+--- /dev/null
++++ b/apps/backend/internal/mcp/server/own_answer_format_test.go
+@@ -0,0 +1,36 @@
++package mcp
++
++import (
++	"encoding/json"
++	"errors"
++	"testing"
++
++	"github.com/stretchr/testify/require"
++)
++
++func TestOwnAnswerUnsupportedFormatRemainsStructuredError(t *testing.T) {
++	b := &testBackend{response: map[string]interface{}{
++		"status": "not_reconciled", "reason_code": "ANSWER_FORMAT_UNSUPPORTED",
++		"retry_allowed": false, "changed": false,
++	}}
++	s := newTaskModeServer(t, b, "own-task")
++	args := map[string]interface{}{"question_id": "stable-q", "pending_id": "pending", "question_message_id": "question", "question_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", "answer_message_id": "human", "answer_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}
++	result := callTool(t, s, ownAnswerToolName, args)
++	require.True(t, result.IsError, "unsupported reconciliation must not look successful")
++	require.Equal(t, "explicit_disposition_v1", b.lastPayload.(map[string]any)["result_mode"])
++	require.NotNil(t, result.StructuredContent)
++	raw, err := json.Marshal(result.StructuredContent)
++	require.NoError(t, err)
++	require.Contains(t, string(raw), "ANSWER_FORMAT_UNSUPPORTED")
++}
++
++func TestOwnAnswerUnexpectedErrorIsStillRedacted(t *testing.T) {
++	b := &testBackend{err: errors.New("private database failure with sensitive contents")}
++	s := newTaskModeServer(t, b, "own-task")
++	args := map[string]interface{}{"question_id": "stable-q", "pending_id": "pending", "question_message_id": "question", "question_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", "answer_message_id": "human", "answer_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}
++	result := callTool(t, s, ownAnswerToolName, args)
++	require.True(t, result.IsError)
++	raw, err := json.Marshal(result)
++	require.NoError(t, err)
++	require.NotContains(t, string(raw), "private database failure")
++}
+diff --git a/apps/backend/internal/mcp/server/own_question.go b/apps/backend/internal/mcp/server/own_question.go
+index 49bf2d2edc..94b36d0347 100644
+--- a/apps/backend/internal/mcp/server/own_question.go
++++ b/apps/backend/internal/mcp/server/own_question.go
+@@ -82,7 +82,11 @@ func (s *Server) ownQuestionBackendCall(ctx context.Context, action string, payl
+ 	if err := s.backend.RequestPayload(ctx, action, payload, &result); err != nil {
+ 		return mcp.NewToolResultError("own-question operation failed; correlate original status before retry"), nil
+ 	}
+-	return ownQuestionToolResult(result), nil
++	toolResult := ownQuestionToolResult(result)
++	if action == ws.ActionMCPReconcileOwnQuestionAnswer && result["status"] == "not_reconciled" {
++		toolResult.IsError = true
++	}
++	return toolResult, nil
+ }
+ 
+ func ownQuestionToolResult(result map[string]interface{}) *mcp.CallToolResult {
+diff --git a/apps/backend/internal/task/ownanswer/binding.go b/apps/backend/internal/task/ownanswer/binding.go
+index 6d47131c9f..bcf7d80a68 100644
+--- a/apps/backend/internal/task/ownanswer/binding.go
++++ b/apps/backend/internal/task/ownanswer/binding.go
+@@ -15,6 +15,16 @@ import (
+ const OwnAnswerReceiptKey = "own_question_answer_receipt"
+ const OwnAnswerBindingKey = "own_question_answer_binding"
+ 
++// DispositionMode is injected by updated MCP clients, never tool arguments.
++// Older clients keep receiving errors rather than a refusal they might mistake
++// for successful answer reconciliation.
++const DispositionMode = "explicit_disposition_v1"
++
++// ErrAnswerFormatUnsupported never implies permission to select an option or
++// retire the original question. Repositories expose it only after provenance,
++// disconnected/unclaimed state and ambiguity checks have also passed.
++var ErrAnswerFormatUnsupported = errors.New("ANSWER_FORMAT_UNSUPPORTED")
++
+ // OwnAnswerBinding names persisted evidence, never a caller-supplied answer.
+ type OwnAnswerBinding struct {
+ 	TaskID            string `json:"task_id"`
+@@ -119,7 +129,7 @@ func exactHumanOption(m *models.Message, q Question, contextText string) (string
+ 		}
+ 	}
+ 	if selected == "" {
+-		return "", errors.New("human answer does not exactly match the recorded single-choice envelope")
++		return "", ErrAnswerFormatUnsupported
+ 	}
+ 	return selected, nil
+ }
+diff --git a/apps/backend/internal/task/repository/sqlite/message_own_answer.go b/apps/backend/internal/task/repository/sqlite/message_own_answer.go
+index 36b7173b04..81574a2818 100644
+--- a/apps/backend/internal/task/repository/sqlite/message_own_answer.go
++++ b/apps/backend/internal/task/repository/sqlite/message_own_answer.go
+@@ -37,6 +37,9 @@ func (r *Repository) ReconcileOwnQuestionAnswer(ctx context.Context, b ownanswer
+ 		return nil, false, err
+ 	}
+ 	answer, receipt, err := ownanswer.CorrelateOwnAnswer(b, qm, am, r.nowUTC())
++	if errors.Is(err, ownanswer.ErrAnswerFormatUnsupported) {
++		return nil, false, r.unsupportedOwnAnswerDisposition(ctx, tx, b, qm, am)
++	}
+ 	if err != nil {
+ 		return nil, false, err
+ 	}
+@@ -61,6 +64,22 @@ func (r *Repository) ReconcileOwnQuestionAnswer(ctx context.Context, b ownanswer
+ 	return []*models.Message{qm}, true, tx.Commit()
+ }
+ 
++// Format alone proves no Human authority. Before reporting a non-retryable
++// disposition, require all the normal read-only guards. Rollback leaves both
++// messages and every queue/session/task record untouched.
++func (r *Repository) unsupportedOwnAnswerDisposition(ctx context.Context, tx *sqlx.Tx, b ownanswer.OwnAnswerBinding, qm, am *models.Message) error {
++	if err := r.verifyOwnHumanAdmission(ctx, tx, b, am, &ownanswer.OwnAnswerReceipt{}); err != nil {
++		return err
++	}
++	if err := guardOwnAnswerUnclaimed(qm, am); err != nil {
++		return err
++	}
++	if err := r.guardOwnAnswerAmbiguity(ctx, tx, b, qm, am); err != nil {
++		return err
++	}
++	return ownanswer.ErrAnswerFormatUnsupported
++}
++
+ func ownAnswerReplayMatches(prior any, am *models.Message, want *ownanswer.OwnAnswerReceipt, answer *ownanswer.Answer, qm *models.Message) bool {
+ 	raw, err := json.Marshal(prior)
+ 	var got ownanswer.OwnAnswerReceipt
+diff --git a/apps/backend/internal/task/repository/sqlite/message_own_answer_format_test.go b/apps/backend/internal/task/repository/sqlite/message_own_answer_format_test.go
+new file mode 100644
+index 0000000000..448613efea
+--- /dev/null
++++ b/apps/backend/internal/task/repository/sqlite/message_own_answer_format_test.go
+@@ -0,0 +1,97 @@
++package sqlite
++
++import (
++	"context"
++	"encoding/json"
++	"maps"
++	"testing"
++
++	"github.com/kandev/kandev/internal/task/ownanswer"
++	"github.com/stretchr/testify/require"
++)
++
++func TestOwnAnswerUnsupportedFormatPreservesEvidence(t *testing.T) {
++	r := newRepoForSessionTests(t)
++	ctx := context.Background()
++	b, qm, am := ownAnswerEvidence(t, r)
++	// Exact output shape of formatAgentMessageCommentsAsMarkdown. The quoted
++	// selection and multiline feedback are not a structured option selection.
++	am.Content = "### Agent Message Comments\n\nSelected agent response:\n> Synthetic choice?\n\nUser feedback:\n> Monitor only these four.\n> Keep conclusions qualified.\n\n---\n"
++	b.AnswerSHA256 = ownanswer.OwnAnswerDigest([]byte(am.Content))
++	_, err := r.db.ExecContext(ctx, `UPDATE task_session_messages SET content=? WHERE id=?`, am.Content, am.ID)
++	require.NoError(t, err)
++	ownAnswerAdmission(t, r, am)
++	other := *qm
++	other.ID = "independent-question-message"
++	other.Metadata = maps.Clone(qm.Metadata)
++	question := qm.Metadata["question"].(ownanswer.Question)
++	question.ID, question.Title, question.Prompt = "independent-question", "Independent", "A different question?"
++	other.Metadata["question"], other.Metadata["question_id"], other.Metadata["pending_id"] = question, question.ID, "independent-pending"
++	require.NoError(t, r.CreateMessage(ctx, &other))
++	beforeOther, err := r.GetMessage(ctx, other.ID)
++	require.NoError(t, err)
++	beforeQ, err := r.GetMessage(ctx, qm.ID)
++	require.NoError(t, err)
++	beforeA, err := r.GetMessage(ctx, am.ID)
++	require.NoError(t, err)
++	beforeS, err := r.GetTaskSession(ctx, b.SessionID)
++	require.NoError(t, err)
++	beforeT, err := r.GetTask(ctx, b.TaskID)
++	require.NoError(t, err)
++	rows, changed, err := r.ReconcileOwnQuestionAnswer(ctx, b)
++	require.EqualError(t, err, "ANSWER_FORMAT_UNSUPPORTED")
++	require.Empty(t, rows)
++	require.False(t, changed)
++	afterQ, err := r.GetMessage(ctx, qm.ID)
++	require.NoError(t, err)
++	afterA, err := r.GetMessage(ctx, am.ID)
++	require.NoError(t, err)
++	afterS, err := r.GetTaskSession(ctx, b.SessionID)
++	require.NoError(t, err)
++	afterT, err := r.GetTask(ctx, b.TaskID)
++	require.NoError(t, err)
++	require.Equal(t, beforeQ, afterQ)
++	require.Equal(t, beforeA, afterA)
++	require.Equal(t, beforeS, afterS)
++	require.Equal(t, beforeT, afterT)
++	afterOther, err := r.GetMessage(ctx, other.ID)
++	require.NoError(t, err)
++	require.Equal(t, beforeOther, afterOther)
++}
++
++func TestOwnAnswerFormatDispositionRequiresProvenanceAndUnclaimedQuestion(t *testing.T) {
++	for _, invalid := range []string{"missing-admission", "changed-hash", "foreign-workspace", "claimed-question", "ambiguous-question"} {
++		t.Run(invalid, func(t *testing.T) {
++			r := newRepoForSessionTests(t)
++			ctx := context.Background()
++			b, q, a := ownAnswerEvidence(t, r)
++			a.Content += "\nFree-text qualifications"
++			b.AnswerSHA256 = ownanswer.OwnAnswerDigest([]byte(a.Content))
++			_, err := r.db.ExecContext(ctx, `UPDATE task_session_messages SET content=? WHERE id=?`, a.Content, a.ID)
++			require.NoError(t, err)
++			if invalid != "missing-admission" {
++				ownAnswerAdmission(t, r, a)
++			}
++			switch invalid {
++			case "changed-hash":
++				b.AnswerSHA256 = b.QuestionSHA256
++			case "foreign-workspace":
++				b.WorkspaceID = "foreign"
++			case "claimed-question":
++				q.Metadata["status"] = "answered"
++				raw, e := json.Marshal(q.Metadata)
++				require.NoError(t, e)
++				_, e = r.db.ExecContext(ctx, `UPDATE task_session_messages SET metadata=? WHERE id=?`, string(raw), q.ID)
++				require.NoError(t, e)
++			case "ambiguous-question":
++				q.ID = "another-question"
++				q.Metadata["pending_id"] = "another-pending"
++				require.NoError(t, r.CreateMessage(ctx, q))
++			}
++			_, changed, err := r.ReconcileOwnQuestionAnswer(ctx, b)
++			require.Error(t, err)
++			require.NotEqual(t, "ANSWER_FORMAT_UNSUPPORTED", err.Error())
++			require.False(t, changed)
++		})
++	}
++}
+-- 
+2.43.0
+
