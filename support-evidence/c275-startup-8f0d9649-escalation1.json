@@ -1,0 +1,38 @@
+{
+  "request_id": "8f0d9649-2703-4e73-9ef4-682c114b4e12",
+  "pass": 1,
+  "recorded_at": "2026-10-14T05:16:29.210358+00:00",
+  "status": "BLOCKED",
+  "both_checkouts_inspected": true,
+  "c275_safe_same_session_repair_considered_authorized": true,
+  "production_restart_ban_used_to_forbid_all_agent_recovery": false,
+  "prior_reviewed_host_diagnostics_succeeded": true,
+  "additional_live_queries_or_status_polls": false,
+  "native_message_continuation_requires_existing_eligible_queue": true,
+  "web_resume_exists": true,
+  "web_resume_atomically_reconciles_original_unknown_intent": false,
+  "task_scoped_backend_resume_with_original_receipt_and_task_wide_writer_claim_available": false,
+  "host_exact_stop_helper_is_recovery_start_operation": false,
+  "provider_acceptance_and_effects": {
+    "9349b6e5-a167-4d88-af14-cb355015e3dd": "UNKNOWN",
+    "3a64829a-8eff-4162-bb4d-166f8df5b4c6": "UNKNOWN"
+  },
+  "prior_original_evidence_preserved": true,
+  "new_race_regressions_passed": [
+    "TestResumeTaskSession_WrongTask",
+    "TestLaunchRestoreWorkspace_WrongTask"
+  ],
+  "prior_outcome_regressions_passed": 3,
+  "prior_correlated_watchdog_replay_regressions_passed": 10,
+  "custody_draft_is_grant_or_installed_api": false,
+  "draft": "support-evidence/c275-startup-8f0d9649-custody-preflight-draft.json",
+  "source_changes": false,
+  "live_mutations": false,
+  "direct_cli_resume": false,
+  "host_credentials": false,
+  "duplicate_workers_jobs_or_packets": false,
+  "actual_command_acceptance": false,
+  "remaining_owner": "KANDEV_LIFECYCLE_PLATFORM_OPERATOR",
+  "smallest_next_action": "RETURN_EXACT_BACKEND_CUSTODY_PREFLIGHT_DECISION_FOR_THE_TWO_PINNED_ORIGINAL_INTENTS_WITH_UNKNOWN_EFFECTS_ACCOUNTED_FOR",
+  "review": "C275-STARTUP-8F0D9649-ESCALATION1.md"
+}
