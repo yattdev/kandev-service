@@ -3,38 +3,17 @@ From: ayattara <alassane.yattara@savoirfairelinux.com>
 Date: Wed, 14 Oct 2026 01:42:09 -0400
 Subject: [PATCH] fix(mcp): stop retry advice for terminal task-message owners
 
----
- .../mcp/handlers/task_message_receipt.go      |  38 ++++-
- .../task_message_terminal_receipt_test.go     | 146 ++++++++++++++++++
- .../mcp/server/task_message_receipt.go        |   2 +-
- 3 files changed, 184 insertions(+), 2 deletions(-)
- create mode 100644 apps/backend/internal/mcp/handlers/task_message_terminal_receipt_test.go
 
 diff --git a/apps/backend/internal/mcp/handlers/task_message_receipt.go b/apps/backend/internal/mcp/handlers/task_message_receipt.go
 index 1ac9e7500b..24804fffc2 100644
 --- a/apps/backend/internal/mcp/handlers/task_message_receipt.go
 +++ b/apps/backend/internal/mcp/handlers/task_message_receipt.go
-@@ -21,6 +21,7 @@ import (
- 
- const taskMessageIntentKey = "task_message_intent_id"
- const observeTaskMessageTurn = "observe_original_turn"
+@@ -23,0 +24 @@ const observeTaskMessageTurn = "observe_original_turn"
 +const taskMessageSessionTerminal = "session_terminal"
- 
- var taskMessageIntentNamespace = uuid.MustParse("2c81d732-93f2-48b8-b132-1fde6e603147")
- 
-@@ -137,6 +138,8 @@ func (h *Handlers) readTaskMessageReceipt(ctx context.Context, p mcpscope.Princi
- 	if len(records) == 0 {
- 		if req.IntentID == "" {
- 			receipt.Status = "not_found"
+@@ -139,0 +141,2 @@ func (h *Handlers) readTaskMessageReceipt(ctx context.Context, p mcpscope.Princi
 +		} else if err := h.guardAbsentTaskMessageReceipt(ctx, p, receipt); err != nil {
 +			return nil, nil, err
- 		}
- 		return receipt, records, nil
- 	}
-@@ -175,6 +178,22 @@ func (h *Handlers) readTaskMessageReceipt(ctx context.Context, p mcpscope.Princi
- 	return receipt, records, nil
- }
- 
+@@ -177,0 +181,16 @@ func (h *Handlers) readTaskMessageReceipt(ctx context.Context, p mcpscope.Princi
 +// Absence proves no message was admitted, not that its owner can accept one.
 +// This projection never changes lifecycle state or wakes an execution.
 +func (h *Handlers) guardAbsentTaskMessageReceipt(ctx context.Context, p mcpscope.Principal, receipt *taskMessageReceipt) error {
@@ -51,37 +30,18 @@ index 1ac9e7500b..24804fffc2 100644
 +	return nil
 +}
 +
- func projectTaskMessageQueueReceipt(r *taskMessageReceipt, record models.TaskMessageRecord) {
- 	r.Status = taskMessageStatusQueued
- 	r.ContinueAllowed = true
-@@ -268,6 +287,9 @@ func (h *Handlers) handleReceiptTaskMessage(ctx context.Context, msg *ws.Message
- 	if len(records) > 0 {
- 		return replayTaskMessageReceipt(msg, receipt, records, fingerprint)
- 	}
+@@ -270,0 +290,3 @@ func (h *Handlers) handleReceiptTaskMessage(ctx context.Context, msg *ws.Message
 +	if receipt.AdmissionError == taskMessageSessionTerminal {
 +		return ws.NewResponse(msg.ID, msg.Action, receipt)
 +	}
- 	if h.sessionLauncher == nil || h.sessionLauncher.GetMessageQueue() == nil {
- 		return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeConflict, "durable queue unavailable", nil)
- 	}
-@@ -279,7 +301,7 @@ func (h *Handlers) handleReceiptTaskMessage(ctx context.Context, msg *ws.Message
- 		return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeConflict, "task message admission unconfirmed; read original intent before retry", nil)
- 	}
- 	if err != nil {
+@@ -282 +304 @@ func (h *Handlers) handleReceiptTaskMessage(ctx context.Context, msg *ws.Message
 -		receipt.AdmissionError = taskMessageAdmissionError(err)
 +		applyTaskMessageAdmissionFailure(receipt, err)
- 	} else if receipt.ContinueAllowed {
- 		_ = h.continueTaskMessageReceipt(readCtx, p, receipt, readRecords)
- 	}
-@@ -348,5 +370,19 @@ func taskMessageAdmissionError(err error) string {
- 	if errors.Is(err, repoerrors.ErrTaskMessageInputPending) {
- 		return "human_input_pending"
- 	}
+@@ -350,0 +373,3 @@ func taskMessageAdmissionError(err error) string {
 +	if errors.Is(err, repoerrors.ErrTaskSessionUnavailable) {
 +		return "session_unavailable"
 +	}
- 	return "admission_unavailable"
- }
+@@ -352,0 +378,11 @@ func taskMessageAdmissionError(err error) string {
 +
 +func applyTaskMessageAdmissionFailure(receipt *taskMessageReceipt, err error) {
 +	if receipt.AdmissionError == taskMessageSessionTerminal {
@@ -249,15 +209,6 @@ diff --git a/apps/backend/internal/mcp/server/task_message_receipt.go b/apps/bac
 index 72d81e0242..cb6aa1f354 100644
 --- a/apps/backend/internal/mcp/server/task_message_receipt.go
 +++ b/apps/backend/internal/mcp/server/task_message_receipt.go
-@@ -19,7 +19,7 @@ func (s *Server) registerTaskMessageReceiptTools() {
- 		name, action, description string
- 		readOnly                  bool
- 	}{
+@@ -22 +22 @@ func (s *Server) registerTaskMessageReceiptTools() {
 -		{"get_task_message_status_kandev", ws.ActionMCPGetTaskMessageStatus, "Read only the authenticated sender's own task-message receipt in this workspace. Supply exact task_id/session_id plus intent_id, or an exact legacy message_id. Returns identities and lifecycle metadata only, never prompt bodies or peer messages. recorded_delivery_unknown does not prove provider acceptance; never resend an existing identity.", true},
 +		{"get_task_message_status_kandev", ws.ActionMCPGetTaskMessageStatus, "Read only the authenticated sender's own task-message receipt in this workspace. Supply exact task_id/session_id plus intent_id, or an exact legacy message_id. Returns identities and lifecycle metadata only, never prompt bodies or peer messages. An absent intent targeting a terminal session returns session_terminal and retry_allowed=false; exact_session_recovery_required is a disposition, not a launch permission. recorded_delivery_unknown does not prove provider acceptance; never resend an existing identity.", true},
- 		{"continue_task_message_kandev", ws.ActionMCPContinueTaskMessage, "Recheck readiness of an existing sender-owned queued task message using its exact receipt. Preserves FIFO, clarification, WIP, session-incarnation and writer fences. Does not create a prompt, reapply a move, interrupt a turn, or replay a legacy transcript with uncertain acceptance. Observe existing turn when continuation is denied.", false},
- 	} {
- 		tool := mcp.NewTool(entry.name, mcp.WithDescription(entry.description), mcp.WithRawOutputSchema(json.RawMessage(taskMessageReceiptOutputSchema)), mcp.WithReadOnlyHintAnnotation(entry.readOnly), mcp.WithIdempotentHintAnnotation(true), mcp.WithDestructiveHintAnnotation(false), mcp.WithOpenWorldHintAnnotation(false),
--- 
-2.43.0
-
