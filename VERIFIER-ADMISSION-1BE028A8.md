@@ -135,8 +135,10 @@ Unrelated dirty/untracked files in both user checkouts were preserved.
 
 The source commit is
 [`e8f963523d9d10f85af7c0d0d2c45ae0d1fdff91`](https://github.com/yattdev/kandev/commit/e8f963523d9d10f85af7c0d0d2c45ae0d1fdff91).
-The exported patch is `patches/kandev-verifier-admission-1be028a8.patch`, SHA-256
-`1094e080a5f61cb2b629939a480d4a3bcbc1e5f010f73aa32f96b713f16d40ad`.
+The exported zero-context patch applies with `git apply --unidiff-zero` to the
+pinned compatibility parent. It is
+`patches/kandev-verifier-admission-1be028a8.patch`, SHA-256
+`1c0004bc7541ed5a1923af77da589dd7274a6cb670f860eb6651498c8949809b`.
 
 New tests cover terminal absence, read/send/continue without launch, unchanged
 failed evidence, FIFO identity, UNKNOWN delivery, foreign caller rejection,
