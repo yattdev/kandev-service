@@ -1,0 +1,52 @@
+{
+  "request_id": "05d2f692-811d-4856-8586-b0cdf06ea3cf",
+  "status": "BLOCKED_MISSING_EXACT_TARGET_GRANT_HOOK",
+  "caller_task_id": "a68df3ae-aaf5-4591-a46d-9d73db62e46d",
+  "caller_session_id": "13d8c011-6e49-40ef-80e9-2f1445296d06",
+  "workspace_id": "2e62401b-5ffe-4050-bc1b-d49ea5d5dbcd",
+  "target_task_id": "96e27238-8b7d-476a-8c70-b8da0abae935",
+  "human_message_id": "dd1b09d2-c951-50d4-8df4-56d0c1014807",
+  "human_message_sha256": "bd755825d1aa9af1a8ec39a1d98f3b9a5b6c57af52a74897b02a5ded3c43e721",
+  "native_admission": {
+    "same_task_session": true,
+    "current_incarnation": true,
+    "queued_by_user": true,
+    "content_byte_equal": false,
+    "standalone_grant_attested": false
+  },
+  "parent_id": "",
+  "target_state": "SCHEDULING",
+  "target_step_id": "814573a3-f2a3-4f42-8706-4f2997401fa6",
+  "terminal_retention_present": false,
+  "archived": false,
+  "session_counts": {
+    "COMPLETED": 4,
+    "FAILED": 1
+  },
+  "done_step_id": "30ae45bd-e99e-455a-8eb7-10e7a038200f",
+  "done_auto_archive_hours": 72,
+  "done_on_enter_auto_start": true,
+  "silent_move_options_after_hold": {
+    "skip_step_prompt": true,
+    "reset_context": false
+  },
+  "capability_source_reference": "924f3f41-ea93-4708-b394-c6ca3e929298",
+  "capability_source_same_workspace_task_available": false,
+  "foreign_source_opened": false,
+  "existing_regressions_race_passed": [
+    "TestUpdateTaskTerminalRetentionRequiresDirectParent",
+    "TestTerminalRetentionPreventsArchiveCleanupUntilCleared",
+    "TestSilentRetainedTerminalMoveDoesNotCreateSessionOrReopenTask"
+  ],
+  "capability_issued": false,
+  "live_retention_set": false,
+  "task_moved": false,
+  "task_mutated": false,
+  "archived_or_cleaned": false,
+  "application_source_edited": false,
+  "runtime_restarted": false,
+  "credential_values_accessed": false,
+  "archive_git_consumer_completeness": "UNKNOWN",
+  "proposal_and_acceptance": "TERMINAL-RETENTION-05D2F692.md",
+  "remaining": "NARROW_PLATFORM_IMPLEMENTATION_AND_ACTIVATION_EXCEPTION_FOR_ENABLE_ONLY_EXACT_TARGET_GRANT_WITH_AUTHENTICATED_EXISTING_HUMAN_PROVENANCE"
+}
