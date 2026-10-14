@@ -1,0 +1,28 @@
+{
+  "request_id": "85278886-f97b-4219-b7ba-9182f7059c69",
+  "status": "IMPLEMENTED_TESTED_NOT_ACTIVATED",
+  "task_id": "afdb2ef3-06ca-4cd5-a074-c4e691679da9",
+  "workspace_id": "2e62401b-5ffe-4050-bc1b-d49ea5d5dbcd",
+  "container_id": "fed730dc124fb13a704c4ec9c39b973e697f06f4062cc34472eadd84efd8f0c6",
+  "source_commit": "eb6935d8ef65673dda22fa74a774a75e3194c0af",
+  "compatible_superset_commit": "f38b3ac9740c16ed9d63962ff1f68aff3ab3860a",
+  "candidate_image_id": "sha256:dee1871874fdf4b091b5b2c52c4b18d85e96cd36d443f338326d3e4f9f88d8d2",
+  "activated": false,
+  "issued_at": null,
+  "expires_at": null,
+  "preview_url": null,
+  "login_delivery_ready": false,
+  "provider_credentials_accessed": false,
+  "remaining": [
+    "SEPARATE_PRODUCTION_RECREATE_APPROVAL_FOR_DOCUMENTED_PLAN",
+    "TRUSTED_MAIN_AND_DISTINCT_PREVIEW_HTTPS_ORIGINS_AND_TLS_REFERENCES",
+    "OWNER_RESTORES_EXACT_APPROVED_V2_CONTAINER"
+  ],
+  "target_final_state": {
+    "running": false,
+    "finished_at": "2026-10-14T02:23:23.421420001Z",
+    "exit_code": 0,
+    "oom_killed": false
+  },
+  "revoke_after_activation": "docker kandev preview revoke 85278886-f97b-4219-b7ba-9182f7059c69"
+}

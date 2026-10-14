@@ -1,0 +1,16 @@
+[Unit]
+Description=Exact-task authenticated Kandev preview (85278886)
+
+[Service]
+Type=simple
+# Reviewed non-secret references: LISTEN, IMAGE (sha256:...), TLS_CERT, TLS_KEY.
+EnvironmentFile=%h/.config/kandev/task-preview-85278886/listener.env
+ExecStart=/usr/bin/env -i PATH=/usr/bin:/bin DOCKER_HOST=unix:///var/run/docker.sock DOCKER_CONFIG=/run/kandev-preview-empty-docker-config /usr/bin/docker run --pull=never --rm --name kandev-task-preview-85278886 --label kandev.preview-grant=85278886-f97b-4219-b7ba-9182f7059c69 --network host --read-only --cap-drop ALL --security-opt no-new-privileges:true --user 1000:1000 --pids-limit 64 --memory 64m --cpus 1 --mount type=bind,src=%h/.config/kandev/task-preview-85278886,dst=/run/kandev-task-preview,readonly --mount type=bind,src=%h/.config/kandev/task-preview-85278886/nonces,dst=/run/kandev-task-preview/nonces --mount type=bind,src=${KANDEV_PREVIEW_TLS_CERT},dst=/run/preview-certificate.pem,readonly --mount type=bind,src=${KANDEV_PREVIEW_TLS_KEY},dst=/run/preview-private-key.pem,readonly ${KANDEV_PREVIEW_IMAGE} --state-dir /run/kandev-task-preview --listen ${KANDEV_PREVIEW_LISTEN} --tls-cert /run/preview-certificate.pem --tls-key /run/preview-private-key.pem
+UMask=0077
+TimeoutStopSec=15
+Restart=no
+# Docker owns the mount/PID/capability sandbox. This host user manager cannot
+# create read-only bind namespaces. No socket is mounted inside the gateway.
+
+[Install]
+WantedBy=default.target

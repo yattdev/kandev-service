@@ -1,0 +1,97 @@
+#!/usr/bin/env python3
+"""Reviewed host-only issuance. Never install/start/restart services or trials."""
+import argparse
+import hashlib
+import json
+import ipaddress
+import os
+from pathlib import Path
+import secrets
+import subprocess
+import time
+import uuid
+from urllib.parse import urlsplit
+
+
+def issue(template, directory, models):
+    grant = json.loads(Path(template).read_text())
+    main = urlsplit(grant['main_origin'])
+    preview = urlsplit(grant['preview_origin'])
+    for origin in (main, preview):
+        if (origin.scheme != 'https' or not origin.hostname or origin.path
+                or origin.query or origin.fragment or origin.username or origin.port == 443):
+            raise ValueError('canonical trusted HTTPS origins required')
+    if main.hostname == preview.hostname or grant.get('issued_at') or grant.get('expires_at'):
+        raise ValueError('separate cookie hosts and unissued reviewed template required')
+    for name in ('id', 'approval_id', 'environment_id', 'task_id', 'workspace_id'):
+        if str(uuid.UUID(grant[name])) != grant[name]:
+            raise ValueError('canonical exact identities required')
+    listener = urlsplit('//' + grant['listen_address'])
+    ip = ipaddress.ip_address(listener.hostname)
+    networks = ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '127.0.0.0/8', 'fc00::/7', '::1/128']
+    if (not any(ip in ipaddress.ip_network(n) for n in networks if ip.version == ipaddress.ip_network(n).version)
+            or listener.port != preview.port or not 1024 <= listener.port <= 65535
+            or listener.path or listener.query or listener.fragment or listener.username):
+        raise ValueError('exact private listener and matching preview port required')
+    root = grant['task_root']
+    project = grant['project']
+    key = hashlib.sha256(project.encode()).hexdigest() + '.json'
+    model = Path(models) / hashlib.sha256(root.encode()).hexdigest() / key
+    claim = Path(models) / 'projects' / key
+    for path in (model, claim):
+        if path.is_symlink() or path.stat().st_mode & 0o077 or path.stat().st_size > 1048576:
+            raise ValueError('private exact model/claim required')
+        record = json.loads(path.read_bytes())
+        if any(record.get(k) != grant[k] for k in ('task_root', 'cwd', 'project')):
+            raise ValueError('immutable ownership claim differs')
+    if hashlib.sha256(model.read_bytes()).hexdigest() != grant['model_sha256']:
+        raise ValueError('reviewed model digest differs')
+    formatter = '{"id":{{json .Id}},"image":{{json .Image}},"running":{{json .State.Running}},"project":{{json (index .Config.Labels "com.docker.compose.project")}},"service":{{json (index .Config.Labels "com.docker.compose.service")}},"ports":{{json .NetworkSettings.Ports}}}'
+    record = json.loads(subprocess.check_output(
+        ['/usr/bin/docker', 'inspect', '--type', 'container', '--format', formatter, grant['container_id']],
+        timeout=5, env={'PATH': '/usr/bin:/bin', 'DOCKER_HOST': 'unix:///var/run/docker.sock',
+                        'DOCKER_CONFIG': '/run/kandev-preview-empty-docker-config'}))
+    expected_ports = {str(grant['container_port']) + '/tcp': [{'HostIp': '127.0.0.1', 'HostPort': str(grant['host_port'])}]}
+    if (record['id'] != grant['container_id'] or record['image'] != grant['image_id']
+            or not record['running'] or record['project'] != project
+            or record['service'] != grant['service'] or record['ports'] != expected_ports):
+        raise ValueError('exact reviewed target differs')
+    destination = Path(directory)
+    destination.mkdir(mode=0o700, parents=False, exist_ok=True)
+    info = destination.lstat()
+    if destination.is_symlink() or info.st_mode & 0o077 or info.st_uid != os.geteuid():
+        raise ValueError('private Support-owned state required')
+    if any(destination.joinpath(name).exists() for name in ('manifest.json', 'key', 'revoked')):
+        raise ValueError('grant cannot be reissued or renewed')
+    grant['issued_at'] = int(time.time())
+    grant['expires_at'] = grant['issued_at'] + 86400
+    # The outer backend's existing host-identity data bind sees atomic model
+    # replacements. The gateway never opens these paths or mounts project data.
+    grant['model_path'] = str(model.resolve())
+    grant['claim_path'] = str(claim.resolve())
+    destination.joinpath('nonces').mkdir(mode=0o700, exist_ok=False)
+    # Publish manifest last: partial preparation cannot issue a usable grant.
+    for name, body in [('key', secrets.token_bytes(32)),
+                       ('listener.env', ('KANDEV_PREVIEW_LISTEN=' + grant['listen_address'] + '\n').encode()),
+                       ('manifest.json', json.dumps(grant, sort_keys=True).encode())]:
+        descriptor = os.open(destination / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, 'wb') as stream:
+            stream.write(body)
+            stream.flush()
+            os.fsync(stream.fileno())
+    print(json.dumps({'grant_id': grant['id'], 'task_id': grant['task_id'],
+                      'container_id': grant['container_id'], 'preview_url': grant['preview_origin'] + '/',
+                      'issued_at': grant['issued_at'], 'expires_at': grant['expires_at'],
+                      'listener_started': False, 'capability_delivered': False}))
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--reviewed-template', required=True)
+    parser.add_argument('--state-dir', required=True)
+    parser.add_argument('--models-root', required=True)
+    args = parser.parse_args()
+    try:
+        issue(args.reviewed_template, args.state_dir, args.models_root)
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        parser.exit(1, 'preview issuance refused; preserve reviewed target and state\n')
