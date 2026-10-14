@@ -1,0 +1,27 @@
+{
+  "request_id": "6cef6efd-df84-40bd-85f0-40577b9f52c0",
+  "escalation_pass": 2,
+  "status": "BLOCKED_LIVE_ACTIONS_REPAIR_PUSHED",
+  "source_commit": "80fdc4ce072ced98c6d72996f02e2c578d64dd82",
+  "source_patch_sha256": "bf60942533cedd53d17d44744db2185b542809e9adbc62e070bdebcb3214856c",
+  "both_checkouts_inspected": true,
+  "reviewed_host_diagnostics_previously_succeeded": true,
+  "new_live_probe": false,
+  "operation_retried": false,
+  "safe_to_retry_unchanged": false,
+  "prior_evidence_record": "support-evidence/own-answer-6cef6efd.json",
+  "disposition": "HUMAN_CONFIRMED_ORIGINAL_REJECTION",
+  "pending_id": "efe029a8-7cc2-4e83-9e05-e8dcc12f69de",
+  "live_rejection_performed": false,
+  "human_rejection_confirmation_present": false,
+  "deployment_permitted": false,
+  "deployed": false,
+  "queue_replayed": false,
+  "runtime_resumed": false,
+  "envelopes_changed": false,
+  "source_changes_in_this_audit": false,
+  "remaining_authority": [
+    "EXPLICIT_HUMAN_ORIGINAL_QUESTION_REJECTION_IF_RETIREMENT_DESIRED",
+    "SEPARATE_DEPLOYMENT_AUTHORIZATION_FOR_REPORTING_REPAIR"
+  ]
+}
