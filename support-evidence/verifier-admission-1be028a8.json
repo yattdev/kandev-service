@@ -1,0 +1,99 @@
+{
+  "request_id": "1be028a8-6818-4ef8-bbf0-2111b868c73f",
+  "status": "BLOCKED",
+  "recorded_at": "2026-10-14T05:43:07.149264+00:00",
+  "workspace_id": "2e62401b-5ffe-4050-bc1b-d49ea5d5dbcd",
+  "task_id": "afdb2ef3-06ca-4cd5-a074-c4e691679da9",
+  "step_id": "0541923c-2d38-478e-8573-3c5e27e37a31",
+  "main_session_id": "fafba895-b769-40d5-a840-f6b90b98fcb4",
+  "agent_profile_id": "c06ad00e-0da1-429a-8174-54f97164a289",
+  "configured_model": "gpt-6.1-sol",
+  "originals": [
+    {
+      "role": "Review",
+      "session_id": "ce9a2b21-226c-41b1-be4c-828c7ef1dfef",
+      "intent_id": "activation-review-c9-59433-v1",
+      "message_id": "24ea3a33-b106-5b56-bb88-9ced18e9e558",
+      "turn_id": "04436262-9a3d-4ef3-ad65-2c21801f7a99",
+      "queue_incarnation_id": "de782256-6dc8-4624-9fff-aec6755fc682",
+      "execution_id": "a44318b3-a799-4ca4-84b0-7a231e6ba531",
+      "prompt_generation": 8,
+      "content_sha256": "518f06f78239763f3975cf280231ce02bef17b6e85447231a5e87c9b93e4160d",
+      "original_outcome": "UNKNOWN",
+      "observed_state": "FAILED",
+      "queued_entries": 0,
+      "open_turns": 0,
+      "pending_clarifications": 0
+    },
+    {
+      "role": "QA",
+      "session_id": "9610084b-03e4-442c-ba8a-3109e06a4123",
+      "intent_id": "activation-qa-c9-59433-v1",
+      "message_id": "22d8f471-e8a5-58ca-b51a-0f3539dab9bd",
+      "turn_id": "be347b62-9f02-401e-be9c-bace319759be",
+      "queue_incarnation_id": "702f5f83-ea4a-4e37-9e26-7051524ebc22",
+      "execution_id": "37bdbcdb-ef37-464e-91df-db30186835c6",
+      "prompt_generation": 7,
+      "content_sha256": "9b31eb1c96a3f72676b9ccdd2c594ca318c3e9c5a362a492852e3a18edf5f0d2",
+      "original_outcome": "UNKNOWN",
+      "observed_state": "FAILED",
+      "queued_entries": 0,
+      "open_turns": 0,
+      "pending_clarifications": 0
+    }
+  ],
+  "capability_issued": false,
+  "readiness_restored": false,
+  "command_acceptance_claimed": false,
+  "reporting_repair": {
+    "commit": "e8f963523d9d10f85af7c0d0d2c45ae0d1fdff91",
+    "branch": "support/verifier-admission-1be028a8",
+    "compatibility_parent": "56d742982b8c2daf0a13cb72c453aecd3471b6a7",
+    "canonical_upstream_checked": "0b208ce00a0ae00955696381006364dbc3b7424a",
+    "patch": "patches/kandev-verifier-admission-1be028a8.patch",
+    "patch_sha256": "1094e080a5f61cb2b629939a480d4a3bcbc1e5f010f73aa32f96b713f16d40ad",
+    "installed": false,
+    "candidate_backend": "/tmp/kandev-verifier-admission-1be028a8-candidate",
+    "candidate_backend_sha256": "745d82d47003d5fe1d5a8caa11e9ecaf54ebd46eac075299b278227faf1d158f"
+  },
+  "checks": {
+    "new_regression_failed_before_fix": true,
+    "race_native_receipt_handler_server_repository": "PASS",
+    "race_resume_identity_and_saved_resume_state": "PASS",
+    "changed_package_golangci": "PASS",
+    "repository_commit_hooks": "PASS",
+    "fts5_backend_build": "PASS",
+    "postgresql": "NOT_RUN_NO_SQL_CHANGE"
+  },
+  "recovery_control": {
+    "transport": "authenticated application WebSocket",
+    "action": "session.recover",
+    "recovery_action": "resume",
+    "requires_existing_user_task_access_and_session_prompt": true,
+    "submits_prompt_itself": false,
+    "invoked": false,
+    "task_facing_delegate_available": false,
+    "new_operator_token_minted": false,
+    "preflight_required": true
+  },
+  "production_observed": {
+    "container_id": "3b95b8dbafb8d29c6956e06467cfff09511ff1592f654aec0fe5fa2f9668d172",
+    "image_id": "sha256:cee318f8d409330e9945cd958bb6c6159eec72c56e990f43cc31323debfba16f",
+    "backend_sha256": "75128d854c9f5ddcdebe85fd9e3c057897f460ae1d10535a67805ed9053bf57b",
+    "native_agentctl_sha256": "4181384550bbe0d1c1f2f1f5157a4a819482417ed8789a8903155779292da8ec",
+    "auth_feature_enabled": true
+  },
+  "performed": {
+    "live_recovery": false,
+    "provider_call": false,
+    "evaluation": false,
+    "verdict": false,
+    "credential_discovery": false,
+    "profile_or_model_change": false,
+    "queue_replay": false,
+    "database_mutation": false,
+    "board_step_change": false,
+    "trial_change": false,
+    "production_deploy_or_restart": false
+  }
+}
