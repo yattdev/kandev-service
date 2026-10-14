@@ -1,0 +1,31 @@
+{
+  "request_id": "85278886-f97b-4219-b7ba-9182f7059c69",
+  "escalation_pass": 2,
+  "status": "IMPLEMENTED_TESTED_ACTIVATION_BLOCKED",
+  "prior_review": "TASK-PREVIEW-85278886-ESCALATION1.md",
+  "compatible_superset_commit": "883439a99d97f8809401f6a83baa8a20279af99d",
+  "canonical_source_commit": "1b29c2ff5b86f2b4af08cf1c4bc3be836c46a455",
+  "both_checkouts_inspected": true,
+  "pushed_source_revisions_verified": true,
+  "candidate_binary_digests_reverified": true,
+  "patch_reverse_applicability_verified": true,
+  "reviewed_host_diagnostics_previously_succeeded": true,
+  "new_live_status_probe": false,
+  "source_changes_in_this_audit": false,
+  "activated": false,
+  "capability_issued": false,
+  "preview_url": null,
+  "issued_at": null,
+  "expires_at": null,
+  "login_delivery_ready": false,
+  "credentials_accessed": false,
+  "provider_calls": false,
+  "production_deployed": false,
+  "trial_lifecycle_changed": false,
+  "trial_requests": false,
+  "remaining": [
+    "SEPARATE_DOCUMENTED_PRODUCTION_RECREATE_APPROVAL",
+    "CONCRETE_TRUSTED_HTTPS_AND_LISTENER_BINDINGS",
+    "OWNER_VALIDATES_OR_RESTORES_EXACT_APPROVED_V2_BEFORE_ISSUANCE"
+  ]
+}

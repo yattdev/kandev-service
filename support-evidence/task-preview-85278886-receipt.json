@@ -29,5 +29,7 @@
   "candidate_gateway_sha256": "cb6d21167dc47f9796f02a2c66ead4a0dae899ba0c6106e3c32c10ed5f04d4f6",
   "container_started_at": null,
   "escalation_record": "TASK-PREVIEW-85278886-ESCALATION1.md",
-  "target_state_observed_at": "2026-10-14T03:17:40Z"
+  "target_state_observed_at": "2026-10-14T03:17:40Z",
+  "final_audit_record": "TASK-PREVIEW-85278886-ESCALATION2.md",
+  "final_audit_pass": 2
 }
