@@ -21,5 +21,6 @@
   "preview_origin": "DISTINCT_HTTPS_PREVIEW_ORIGIN_REQUIRED",
   "listen_address": "APPROVED_PRIVATE_LAN_IP:59433",
   "issued_at": 0,
-  "expires_at": 0
+  "expires_at": 0,
+  "container_started_at": "CAPTURED_FROM_EXACT_CONTAINER_AT_ISSUANCE"
 }

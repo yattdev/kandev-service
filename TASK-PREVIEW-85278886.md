@@ -8,6 +8,11 @@ read-only inspection found V2 externally stopped at 2026-10-14T02:23:23.42142000
 the same approved container before issuance. A replacement needs an exact new
 target review; V1 remains excluded.
 
+Escalation 1 adds native authorization acceptance and a tested connection-race
+repair. The current candidates, commits and revised activation sequence are in
+[TASK-PREVIEW-85278886-ESCALATION1.md](TASK-PREVIEW-85278886-ESCALATION1.md).
+That record supersedes the original candidate hashes below.
+
 ## Approved scope and captured target
 
 Human's answered question `core_trial_preview_20261014`, message
@@ -61,7 +66,7 @@ fails closed. It is never registered through HTTP or agent-controlled inputs.
    cookie. The trial cannot set or receive this cookie. Different ports on one
    hostname are explicitly insufficient for cookie isolation.
 4. Every proxied request rechecks live user/task authorization through an
-   exact-purpose signed control proof, exact Docker ID/image/project/service,
+   exact-purpose signed control proof, exact Docker ID/image/project/service/boot timestamp,
    loopback publication, retained task-environment ID/root, original model digest
    and ownership claim. The latter files are re-read through the existing data
    bind so atomic registry replacements are observed. There is no
@@ -148,21 +153,23 @@ contains invalid origin placeholders and zero issuance/expiry so it cannot run.
 1. Resolve an existing trusted production HTTPS origin and a **different
    hostname** for this preview, a dedicated trusted preview certificate/key and
    one exact LAN IP/listen port. Preserve the existing production auth cookie
-   host. The production TLS terminator must be local, preserve Host and set
+   host. Select distinct registrable sites for main and preview to avoid parent-
+   domain cookie interference; the manifest validator itself checks distinct hosts.
+   The production TLS terminator must be local, preserve Host and set
    X-Forwarded-Proto=https; remote cleartext assertions are rejected. If no main
    TLS origin exists, its exact authentication-bridge TLS exposure is an
    additional scope decision, not an implied generic production proxy grant.
 2. Owner restores the exact V2 container without rebuilding/replacing it.
    Revalidate the live target/model/claim and all approval metadata. Fill only
    the reviewed origin fields in the template. Run the host-only
-   `scripts/kandev-task-preview-issue` with exact model-root metadata and the new
-   private `%h/.config/kandev/task-preview-85278886` directory, outside all
-   production data/Code identity mounts.
-   The signing key is generated there, never in Git, task roots or chat. The
-   issuer checks the original V2 ID/image/publication/model/claim before issuing
-   the exact 24-hour window and prints a non-secret receipt. Do this only when
-   ready to activate, so the issued lifetime is not consumed while awaiting
-   restart approval.
+   `scripts/kandev-task-preview-issue` later, after step 6 has passed. Before
+   the compose build, prepare only an empty private mode-0700
+   `%h/.config/kandev/task-preview-85278886` directory, outside all production
+   data/Code identity mounts. An empty mount fails closed. Do not issue the grant
+   while awaiting restart approval. Issuance after a healthy bridge creates the
+   key, exact boot pin and fixed 24-hour window without another recreate. The
+   key never enters Git, task roots or chat. A restart of the same trial after
+   issuance invalidates the grant; parking its outer task does not.
 3. Build the static standalone gateway (`CGO_ENABLED=0 go build -trimpath`) and
    a scratch image using `Dockerfile.task-preview`. Its isolated build context
    contains only that binary and the public system CA bundle. Record the source
@@ -183,11 +190,12 @@ contains invalid origin placeholders and zero issuance/expiry so it cannot run.
    `02bb5d05944141c9e03ad746dde120668f98e46f`) plus the unchanged workspace
    adoption patch and this reviewed preview patch. Do not substitute the
    canonical development branch's backend binary for the deployed hotfix
-   lineage. Preserve all 361 retained frontend asset hashes and both existing
+   lineage. Preserve all 362 retained public frontend file bodies and their asset paths and both existing
    agentctl binaries. The prepared `support/task-preview-hotfix-85278886` branch contains this
    restored baseline plus the preview overlay; run the prior hotfix acceptance
    and new preview tests on that superset before producing any replacement
-   backend binary.
+   backend binary. The escalation record pins the already built superset
+   candidate and its public-asset preservation evidence.
 5. Prepare the compose delta: bind only this exact private state at
    `/run/kandev-task-preview`. No metadata/data parent or inode-pinned model file
    is newly mounted. Add the helper COPY described
@@ -197,7 +205,11 @@ contains invalid origin placeholders and zero issuance/expiry so it cannot run.
    the production build/recreate. Its captured-image HTTP-200 gate and verified
    automatic rollback remain mandatory. A recovered rollback is BLOCKED.
    Run `bash test.sh` after successful activation; no assertion may be weakened.
-7. Start only the dedicated TLS gateway after the production bridge is healthy.
+7. With the production bridge healthy and the exact V2 target running, invoke
+   the issuer using the reviewed template and exact model root. Capture the
+   content-free receipt. Add the reviewed image/TLS references to the generated
+   private listener.env (issuance creates its LISTEN entry); never overwrite the
+   manifest or key. Then start only the dedicated TLS gateway.
    If a host firewall rule is necessary, scope it to the exact approved LAN
    listener/source boundary; do not add broad port ranges or public listeners.
    Hand off the issued/expires timestamps and a token-free HTTPS URL only after
@@ -300,7 +312,7 @@ provenance is claimed. Those fields remain null until the separately approved
 activation succeeds. `test.sh` is reserved for the approved production recreate;
 Dockerfile.local and compose remain unapplied patch artifacts here.
 
-### Published source and candidate provenance
+### Original source and candidate provenance (superseded by escalation 1)
 
 - Canonical development feature commit: `eb6935d8ef65673dda22fa74a774a75e3194c0af`,
   pushed to `yattdev/kandev`, branch `support/task-preview-85278886`.
