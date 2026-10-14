@@ -4,9 +4,9 @@
   "task_id": "afdb2ef3-06ca-4cd5-a074-c4e691679da9",
   "workspace_id": "2e62401b-5ffe-4050-bc1b-d49ea5d5dbcd",
   "container_id": "fed730dc124fb13a704c4ec9c39b973e697f06f4062cc34472eadd84efd8f0c6",
-  "source_commit": "eb6935d8ef65673dda22fa74a774a75e3194c0af",
-  "compatible_superset_commit": "f38b3ac9740c16ed9d63962ff1f68aff3ab3860a",
-  "candidate_image_id": "sha256:dee1871874fdf4b091b5b2c52c4b18d85e96cd36d443f338326d3e4f9f88d8d2",
+  "source_commit": "1b29c2ff5b86f2b4af08cf1c4bc3be836c46a455",
+  "compatible_superset_commit": "883439a99d97f8809401f6a83baa8a20279af99d",
+  "candidate_image_id": "sha256:1476f52391b522e43fab380b96059c6b8f8f3c693a77e199fedbcc09e618429b",
   "activated": false,
   "issued_at": null,
   "expires_at": null,
@@ -15,7 +15,7 @@
   "provider_credentials_accessed": false,
   "remaining": [
     "SEPARATE_PRODUCTION_RECREATE_APPROVAL_FOR_DOCUMENTED_PLAN",
-    "TRUSTED_MAIN_AND_DISTINCT_PREVIEW_HTTPS_ORIGINS_AND_TLS_REFERENCES",
+    "TRUSTED_MAIN_AND_COOKIE_ISOLATED_PREVIEW_HTTPS_ORIGINS_AND_TLS_REFERENCES",
     "OWNER_RESTORES_EXACT_APPROVED_V2_CONTAINER"
   ],
   "target_final_state": {
@@ -24,5 +24,10 @@
     "exit_code": 0,
     "oom_killed": false
   },
-  "revoke_after_activation": "docker kandev preview revoke 85278886-f97b-4219-b7ba-9182f7059c69"
+  "revoke_after_activation": "docker kandev preview revoke 85278886-f97b-4219-b7ba-9182f7059c69",
+  "candidate_backend_sha256": "dbec5779bcfafc858a41c6240cbebf3557b3613922150e6df4a1f85ed57cacc0",
+  "candidate_gateway_sha256": "cb6d21167dc47f9796f02a2c66ead4a0dae899ba0c6106e3c32c10ed5f04d4f6",
+  "container_started_at": null,
+  "escalation_record": "TASK-PREVIEW-85278886-ESCALATION1.md",
+  "target_state_observed_at": "2026-10-14T03:17:40Z"
 }

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Reviewed host-only issuance. Never install/start/restart services or trials."""
 import argparse
+from datetime import datetime
 import hashlib
 import json
 import ipaddress
@@ -46,7 +47,7 @@ def issue(template, directory, models):
             raise ValueError('immutable ownership claim differs')
     if hashlib.sha256(model.read_bytes()).hexdigest() != grant['model_sha256']:
         raise ValueError('reviewed model digest differs')
-    formatter = '{"id":{{json .Id}},"image":{{json .Image}},"running":{{json .State.Running}},"project":{{json (index .Config.Labels "com.docker.compose.project")}},"service":{{json (index .Config.Labels "com.docker.compose.service")}},"ports":{{json .NetworkSettings.Ports}}}'
+    formatter = '{"id":{{json .Id}},"image":{{json .Image}},"running":{{json .State.Running}},"started_at":{{json .State.StartedAt}},"project":{{json (index .Config.Labels "com.docker.compose.project")}},"service":{{json (index .Config.Labels "com.docker.compose.service")}},"ports":{{json .NetworkSettings.Ports}}}'
     record = json.loads(subprocess.check_output(
         ['/usr/bin/docker', 'inspect', '--type', 'container', '--format', formatter, grant['container_id']],
         timeout=5, env={'PATH': '/usr/bin:/bin', 'DOCKER_HOST': 'unix:///var/run/docker.sock',
@@ -56,6 +57,12 @@ def issue(template, directory, models):
             or not record['running'] or record['project'] != project
             or record['service'] != grant['service'] or record['ports'] != expected_ports):
         raise ValueError('exact reviewed target differs')
+    started = datetime.fromisoformat(record['started_at'].replace('Z', '+00:00'))
+    if started.tzinfo is None or not 0 < started.timestamp() <= time.time():
+        raise ValueError('exact current container boot required')
+    # Pin this boot as well as the immutable ID. Restarting the same container
+    # cannot launder a socket accepted by a different listener during a stop.
+    grant['container_started_at'] = record['started_at']
     destination = Path(directory)
     destination.mkdir(mode=0o700, parents=False, exist_ok=True)
     info = destination.lstat()
@@ -80,7 +87,8 @@ def issue(template, directory, models):
             stream.flush()
             os.fsync(stream.fileno())
     print(json.dumps({'grant_id': grant['id'], 'task_id': grant['task_id'],
-                      'container_id': grant['container_id'], 'preview_url': grant['preview_origin'] + '/',
+                      'container_id': grant['container_id'], 'container_started_at': grant['container_started_at'],
+                      'preview_url': grant['preview_origin'] + '/',
                       'issued_at': grant['issued_at'], 'expires_at': grant['expires_at'],
                       'listener_started': False, 'capability_delivered': False}))
 
