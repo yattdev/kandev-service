@@ -1,0 +1,16 @@
+{
+  "request_id": "24103b2e-b245-4644-9828-15ff9adaf614",
+  "escalation_pass": 2,
+  "status": "EXECUTING",
+  "recorded_at": "2026-10-15T00:22:54.899876+00:00",
+  "thread_id": "01a137d6-f9dc-7ad0-b2c0-10bb5a542722",
+  "platform_turn_id": null,
+  "local_operation_turn_id": "a4aeb743-49ee-480a-b729-e708ae67144d",
+  "local_operation_turn_id_is_platform_id": false,
+  "operation_started": "FINAL_STATIC_INSTALLED_LINEAGE_AND_SUPPLIED_PREREQUISITE_AUDIT",
+  "accepted_production_builds_total": 1,
+  "new_build_started": false,
+  "new_live_task_probe": false,
+  "raw_model_access": false,
+  "capability_issued": false
+}
