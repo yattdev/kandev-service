@@ -1,0 +1,5 @@
+# Approved bridge build context: pinned static Caddy binary only; no keys.
+FROM scratch
+COPY --chmod=0755 caddy /caddy
+USER 1000:1000
+ENTRYPOINT ["/caddy", "run", "--config", "/run/Caddyfile", "--adapter", "caddyfile"]

@@ -243,3 +243,32 @@ and key backup is at
 The backend overlay was subsequently updated for independent task checkout
 adoption. See [the patch and build record](../patches/kandev-v096-workspace-adoption.md)
 for its current binary hash and the operator attestation requirement.
+
+## Approved exact successor preview activation (24103b2e)
+
+Human approved the c4819364 package for exact successor c9b3a34c…/59433,
+one safe production build/recreate and its captured-image rollback. The
+backend candidate is the accepted compatible superset
+`883439a99d97f8809401f6a83baa8a20279af99d`, SHA-256
+`dbec5779bcfafc858a41c6240cbebf3557b3613922150e6df4a1f85ed57cacc0`.
+It preserves the restored full live lineage documented in
+`TASK-PREVIEW-85278886-ESCALATION1.md`, both unchanged native sidecars,
+and all 362 retained frontend asset bodies (manifest SHA-256
+`9795fb290a348d7dc6bdbd6ce6bb4fd563f260e771d93f54f63559e2f1120289`).
+The captured prior backend SHA is
+`75128d854c9f5ddcdebe85fd9e3c057897f460ae1d10535a67805ed9053bf57b`;
+the original trio/config and immutable image are retained under the private
+`support-rollback/preview-24103b2e` request directory. Native sidecar hashes
+remain `4181384550bbe0d1c1f2f1f5157a4a819482417ed8789a8903155779292da8ec`
+and `bc7f9d9494ff117bf2bd884fa10f6f4e0e92104fa8c75cd0063edcc81cfa7869`.
+This preparation does not attest deployment, grant issuance or browser acceptance;
+the final request receipt must state those separately. No reporting-only patch
+created after this accepted source superset is silently included.
+
+Accepted deployment for this request: the single safe-deploy --build exited 0
+with HTTP200 on image
+`sha256:7cd0c17fd24fd6c7e84ae29a3a0d4c374942aaf3def54a4716e26dd149e3422f`.
+Installed trio matches the candidate/unchanged pair above; `bash test.sh` passed
+129/129. Browser access remains unissued for the precise gates in
+[`TASK-PREVIEW-ACTIVATION-24103B2E.md`](../TASK-PREVIEW-ACTIVATION-24103B2E.md).
+Do not use an undeployed reporting branch as this live backend's provenance.
