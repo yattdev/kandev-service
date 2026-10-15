@@ -160,3 +160,26 @@ Source test commit: `bb985c2baba703df7b20564d9336f3f256e8544f`, parent
 has no active commit hooks; those checks ran directly without a hook bypass.
 [Exact regression patch](patches/kandev-v096-own-answer-comment-boundary.patch),
 SHA-256 `159c5f3cb26345b67ee14dbeed53b9b639d488ad55621e6e1025a1f026032482`.
+
+## Final escalation audit
+
+Both automatic escalation passes are complete. The
+[pass 1 interface/provenance audit](OWN-ANSWER-CB42DDE1-ESCALATION1.md) and
+[final machine audit](support-evidence/own-answer-cb42dde1-escalation2.json)
+retain BLOCKED. Reviewed host access succeeded; another host privilege grant
+would not supply the missing authenticated no-dispatch operation.
+
+Final source review also checked the internal per-question update interface:
+it is a cancel-path helper, not a caller operation for binding an already
+delivered affirmative answer. Direct use of internal writers would bypass the
+reconciliation guards. Inbox sidecars alter visibility, not answer linkage.
+The broker has no independent own-answer repair route. No live polling or
+mutation was performed during the final static audit, and no unchanged test
+suite was rerun.
+
+The terminal dependency is the reviewed historical direct-native binding
+capability described above. Changed backend code also requires activation
+authority, explicitly excluded here. The smallest next action remains trusted
+reconciliation-maintainer review using the existing approval and exact pins;
+no new Human approval, rejection, unchanged retry or handoff replay is proposed.
+The source commit is test-only and must not be reported as a deployed repair.
