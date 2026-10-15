@@ -1,0 +1,68 @@
+{
+  "request_id": "f7a1c1da-89a5-4741-a905-6756fb4b13c5",
+  "original_request_id": "cb42dde1-ee10-4dfe-99ce-dfd9868ad46c",
+  "evidence_repository": "yattdev/kandev-service",
+  "publication_branch": "support/evidence-cb42dde1-f7a1c1da",
+  "publication_base": "70cfc590906a7ba9adc7a23bc76b8b5cb2969bf8",
+  "export_policy": "Only listed artifacts and this manifest; no unrelated unpublished commits or worktree edits",
+  "original_host_commit": "291c13654262585f8e1e640bfdddf65a4dcafb6e",
+  "classification": "local customization; absent at canonical upstream/main 8c6f4b800b123d5f074cc006a88893c807c584b9",
+  "existing_source_owner": "local own-answer reconciliation module in yattdev/kandev",
+  "operation": "reconcile_own_question_answer_kandev",
+  "source_reporting_commit": "80fdc4ce072ced98c6d72996f02e2c578d64dd82",
+  "source_test_commit": "bb985c2baba703df7b20564d9336f3f256e8544f",
+  "maintainer_verdict": "UNRESOLVED; review request to be routed; static assessment is not approval",
+  "artifacts": [
+    {
+      "path": "OWN-ANSWER-CB42DDE1.md",
+      "sha256": "77abb6d5276a900843a6141d1aa542c01b4b3a74e8b0031e0ce2668be953c5c4",
+      "bytes": 10603,
+      "original_commit": "291c13654262585f8e1e640bfdddf65a4dcafb6e",
+      "kind": "unchanged completed evidence"
+    },
+    {
+      "path": "OWN-ANSWER-CB42DDE1-ESCALATION1.md",
+      "sha256": "b958e1f9dc697a019c370626b684a59521d91cc688b17d1cb05c78d0e18872d8",
+      "bytes": 5136,
+      "original_commit": "291c13654262585f8e1e640bfdddf65a4dcafb6e",
+      "kind": "unchanged completed evidence"
+    },
+    {
+      "path": "support-evidence/own-answer-cb42dde1-escalation2.json",
+      "sha256": "390f454ace5863faafc361189ed46d6d6c76eb16a7316e328bb1195868509716",
+      "bytes": 3069,
+      "original_commit": "291c13654262585f8e1e640bfdddf65a4dcafb6e",
+      "kind": "unchanged completed evidence"
+    },
+    {
+      "path": "patches/kandev-v096-own-answer-comment-boundary.patch",
+      "sha256": "159c5f3cb26345b67ee14dbeed53b9b639d488ad55621e6e1025a1f026032482",
+      "bytes": 4886,
+      "original_commit": "291c13654262585f8e1e640bfdddf65a4dcafb6e",
+      "kind": "unchanged completed evidence"
+    },
+    {
+      "path": "support-evidence/own-answer-cb42dde1.json",
+      "sha256": "fd2a70efc08def15eeb20d75050237028f9b250878db8f32f0e23895c5402a7e",
+      "bytes": 3290,
+      "original_commit": "291c13654262585f8e1e640bfdddf65a4dcafb6e",
+      "kind": "unchanged completed evidence"
+    },
+    {
+      "path": "support-evidence/own-answer-cb42dde1-escalation1.json",
+      "sha256": "8e33756977f0d7e2f0ff07fe79b73328d21b31edcd49eca8b70b1d71d6df2b5d",
+      "bytes": 1741,
+      "original_commit": "291c13654262585f8e1e640bfdddf65a4dcafb6e",
+      "kind": "unchanged completed evidence"
+    },
+    {
+      "path": "OWN-ANSWER-CB42DDE1-CONTRACT-REVIEW.md",
+      "sha256": "e9955f2099dbc012acb939cbd29c72cffb96d39f01e1f692376090f8ea33057f",
+      "bytes": 11365,
+      "kind": "new static contract assessment; not maintainer approval"
+    }
+  ],
+  "no_live_state_read_or_write": true,
+  "no_tests_repeated": true,
+  "no_implementation_activation_build_or_preview": true
+}
