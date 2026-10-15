@@ -1,0 +1,21 @@
+{
+  "request_id": "24103b2e-b245-4644-9828-15ff9adaf614",
+  "platform_only": true,
+  "main_tls_trusted_with_dedicated_public_ca": true,
+  "host_and_leaf_san_verified": true,
+  "ca_critical_name_constraints_and_pathlen_verified": true,
+  "checks": {
+    "main_tls_root": 200,
+    "unauth_authorize": 401,
+    "unauth_credentials": 401,
+    "foreign_origin_unauth": 403,
+    "unsigned_control_no_grant": 403,
+    "wrong_host_no_upstream_content": true
+  },
+  "authenticated_browser_positive": "PENDING_OWNER_AND_CLIENT_OS_TRUST_READINESS",
+  "native_acl_positive": "SYNTHETIC_REGRESSIONS_PASS; REAL_BROWSER_NOT_ATTESTED",
+  "gateway_started": false,
+  "grant_issued": false,
+  "client_trust_changed": false,
+  "trial_requests": false
+}

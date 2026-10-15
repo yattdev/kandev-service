@@ -1,0 +1,9 @@
+{
+  "request_id": "24103b2e-b245-4644-9828-15ff9adaf614",
+  "command": "bash test.sh",
+  "exit_code": 0,
+  "pass_labels_count": 129,
+  "fail_labels_count": 0,
+  "failure_labels": [],
+  "completed_at_epoch": 1792023145
+}

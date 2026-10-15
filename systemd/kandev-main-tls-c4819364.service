@@ -1,0 +1,13 @@
+[Unit]
+Description=Approved fixed main TLS bridge for c4819364
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/kandev/preview-c4819364-tls/main/listener.env
+ExecStart=/usr/bin/env -i PATH=/usr/bin:/bin DOCKER_HOST=unix:///var/run/docker.sock DOCKER_CONFIG=/run/kandev-preview-empty-docker-config /usr/bin/docker run --pull=never --rm --name kandev-main-tls-c4819364 --network host --read-only --cap-drop ALL --security-opt no-new-privileges:true --user 1000:1000 --pids-limit 64 --memory 128m --cpus 1 --mount type=bind,src=%h/.config/kandev/preview-c4819364-tls/main/Caddyfile,dst=/run/Caddyfile,readonly --mount type=bind,src=%h/.config/kandev/preview-c4819364-tls/main/fullchain.pem,dst=/run/main/fullchain.pem,readonly --mount type=bind,src=%h/.config/kandev/preview-c4819364-tls/main/key.pem,dst=/run/main/key.pem,readonly ${KANDEV_MAIN_TLS_IMAGE}
+UMask=0077
+TimeoutStopSec=15
+Restart=no
+
+[Install]
+WantedBy=default.target

@@ -370,6 +370,7 @@ COPY scripts/codex-sandbox-preflight.sh /usr/local/bin/codex-sandbox-preflight
 COPY scripts/kandev-agent-guard /usr/local/bin/kandev-agent-guard
 COPY scripts/kandev-workspace-registration.py /usr/local/bin/kandev-workspace-registration
 COPY scripts/kandev-agent-docker-broker /usr/local/bin/kandev-agent-docker-broker
+COPY scripts/kandev-task-preview-broker.py /usr/local/bin/kandev-task-preview-broker.py
 # Optional Human-selected registrations; agents cannot write this image-owned policy.
 COPY .local-project-artifacts/ /tmp/kandev-project-artifacts/
 RUN install -d -m 0755 /etc/kandev && \

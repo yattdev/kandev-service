@@ -118,6 +118,9 @@ services:
       # agent guard replaces /run with a private tmpfs, so tasks cannot read it.
       - kandev-scout-auth:/run/kandev-agent-docker/scout-auth
 
+      # Exact private preview state; outside data/Code aliases, hidden by guard /run.
+      - ${HOME}/.config/kandev/task-preview-c4819364:/run/kandev-task-preview
+
       # ── Android UI QA ───────────────────────────────────────────────────────
       # Keep the large SDK and the host AVD catalogue outside the image and
       # immutable to agents. AVD launches use read-only ephemeral overlays.

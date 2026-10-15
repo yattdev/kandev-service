@@ -1,0 +1,26 @@
+{
+  "request_id": "24103b2e-b245-4644-9828-15ff9adaf614",
+  "status": "OWNER_INPUTS_PENDING",
+  "plugin_coordinator_task_id": "c6ced4e4-4777-427e-8b97-090ae877f44c",
+  "trial_task_id": "afdb2ef3-06ca-4cd5-a074-c4e691679da9",
+  "owner_main_session_id": "fafba895-b769-40d5-a840-f6b90b98fcb4",
+  "no_new_owner_prompt_issued": true,
+  "client_browser_reported": "Chrome",
+  "client_lan_ip_reported": "192.168.50.131",
+  "client_os": null,
+  "owner_existing_binding_operation": "ALREADY_REQUESTED_BY_C6; NO_DUPLICATE",
+  "required_owner_nonsecret_fields": [
+    "environment_id",
+    "task_root",
+    "cwd",
+    "model_reference",
+    "model_sha256",
+    "claim_reference",
+    "claim_ownership_attestation",
+    "native_user_id_and_task_workspace_acl_attestation"
+  ],
+  "raw_model_or_credential_values_requested": false,
+  "issuance_waits_client_trust_readiness": true,
+  "capability_issued": false,
+  "existing_issuer_contract_blocker": "ISSUER_AND_RUNTIME_VALIDATOR_READ_RAW_MODEL; OWNER_DIGEST_ALONE_NOT_AN_ATTESTATION_ONLY_ROUTE; NO_READ_OR_BYPASS_INVOKED"
+}
