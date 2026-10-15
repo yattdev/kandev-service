@@ -124,6 +124,25 @@ class TransportProbeTests(unittest.TestCase):
         self.assertNotEqual(broker.expected_token(key, Path('/synthetic/owned-task')),
                             broker.expected_token(key, Path('/synthetic/foreign-task')))
 
+    def test_anonymous_probe_is_rejected_before_resources_or_dispatch(self):
+        # Test the actual server preflight, not a fixture reply. The probe
+        # must not resolve a root, validate credentials or launch a guard.
+        with patch.object(broker, 'Path', side_effect=AssertionError('filesystem accessed')), \
+             patch.object(broker, 'expected_token', side_effect=AssertionError('token accessed')), \
+             patch.object(broker, 'handle_git', side_effect=AssertionError('Git dispatched')), \
+             patch.object(broker, 'run_command', side_effect=AssertionError('command launched')):
+            with self.assertRaisesRegex(broker.BrokerError, '^missing task scope$'):
+                broker.handle_request({}, b'synthetic-test-only')
+
+    def test_claimed_caller_fields_cannot_turn_anonymous_probe_into_scope(self):
+        request = {'session_id': 'claimed-source', 'incarnation': 'claimed-inc',
+                   'generation': 1, 'authenticated_binding': True,
+                   'args': ['kandev', 'git', 'status']}
+        with patch.object(broker, 'Path', side_effect=AssertionError('filesystem accessed')), \
+             patch.object(broker, 'handle_git', side_effect=AssertionError('Git dispatched')):
+            with self.assertRaisesRegex(broker.BrokerError, '^missing task scope$'):
+                broker.handle_request(request, b'synthetic-test-only')
+
 
 if __name__ == '__main__':
     unittest.main()
