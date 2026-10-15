@@ -1,0 +1,64 @@
+{
+  "repository": "yattdev/kandev-service",
+  "commit": "9509ef6a6554e5302181264fcdfbb22d65ddf510",
+  "branch": "support/evidence-cb42dde1-f7a1c1da",
+  "remote_byte_verification": "PASS",
+  "artifacts": [
+    {
+      "path": "OWN-ANSWER-CB42DDE1.md",
+      "sha256": "77abb6d5276a900843a6141d1aa542c01b4b3a74e8b0031e0ce2668be953c5c4",
+      "bytes": 10603,
+      "git_blob": "6eba1fe8b0b7e2d32262f17a996cb59924e1f559",
+      "url": "https://github.com/yattdev/kandev-service/blob/9509ef6a6554e5302181264fcdfbb22d65ddf510/OWN-ANSWER-CB42DDE1.md"
+    },
+    {
+      "path": "OWN-ANSWER-CB42DDE1-ESCALATION1.md",
+      "sha256": "b958e1f9dc697a019c370626b684a59521d91cc688b17d1cb05c78d0e18872d8",
+      "bytes": 5136,
+      "git_blob": "845c8d86dc55c66967413f3b01960cb25b9b6cdc",
+      "url": "https://github.com/yattdev/kandev-service/blob/9509ef6a6554e5302181264fcdfbb22d65ddf510/OWN-ANSWER-CB42DDE1-ESCALATION1.md"
+    },
+    {
+      "path": "support-evidence/own-answer-cb42dde1-escalation2.json",
+      "sha256": "390f454ace5863faafc361189ed46d6d6c76eb16a7316e328bb1195868509716",
+      "bytes": 3069,
+      "git_blob": "b209a8dec870ae4a00f7b87e64aafc449e1dffcd",
+      "url": "https://github.com/yattdev/kandev-service/blob/9509ef6a6554e5302181264fcdfbb22d65ddf510/support-evidence/own-answer-cb42dde1-escalation2.json"
+    },
+    {
+      "path": "patches/kandev-v096-own-answer-comment-boundary.patch",
+      "sha256": "159c5f3cb26345b67ee14dbeed53b9b639d488ad55621e6e1025a1f026032482",
+      "bytes": 4886,
+      "git_blob": "bbe5dc7a850f17b0f3780e3da780a133c6708e2b",
+      "url": "https://github.com/yattdev/kandev-service/blob/9509ef6a6554e5302181264fcdfbb22d65ddf510/patches/kandev-v096-own-answer-comment-boundary.patch"
+    },
+    {
+      "path": "support-evidence/own-answer-cb42dde1.json",
+      "sha256": "fd2a70efc08def15eeb20d75050237028f9b250878db8f32f0e23895c5402a7e",
+      "bytes": 3290,
+      "git_blob": "3a86d2219eca35ee368db048016da6ba0b2369d2",
+      "url": "https://github.com/yattdev/kandev-service/blob/9509ef6a6554e5302181264fcdfbb22d65ddf510/support-evidence/own-answer-cb42dde1.json"
+    },
+    {
+      "path": "support-evidence/own-answer-cb42dde1-escalation1.json",
+      "sha256": "8e33756977f0d7e2f0ff07fe79b73328d21b31edcd49eca8b70b1d71d6df2b5d",
+      "bytes": 1741,
+      "git_blob": "fc0459627f0253490d24378a4ac6e6bbdf0ff1ab",
+      "url": "https://github.com/yattdev/kandev-service/blob/9509ef6a6554e5302181264fcdfbb22d65ddf510/support-evidence/own-answer-cb42dde1-escalation1.json"
+    },
+    {
+      "path": "OWN-ANSWER-CB42DDE1-CONTRACT-REVIEW.md",
+      "sha256": "e9955f2099dbc012acb939cbd29c72cffb96d39f01e1f692376090f8ea33057f",
+      "bytes": 11365,
+      "git_blob": "dec51c4badb95d520727c5857f151cab364ae143",
+      "url": "https://github.com/yattdev/kandev-service/blob/9509ef6a6554e5302181264fcdfbb22d65ddf510/OWN-ANSWER-CB42DDE1-CONTRACT-REVIEW.md"
+    },
+    {
+      "path": "support-evidence/own-answer-f7a1c1da-publication.json",
+      "sha256": "d566294f8ebd2b68809137a0a19993c09f33934562d1b05e8311a0083b1e32af",
+      "bytes": 3141,
+      "git_blob": "693201d24a5bb139acc57b7687833c87a6c2e5ea",
+      "url": "https://github.com/yattdev/kandev-service/blob/9509ef6a6554e5302181264fcdfbb22d65ddf510/support-evidence/own-answer-f7a1c1da-publication.json"
+    }
+  ]
+}

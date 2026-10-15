@@ -1,0 +1,54 @@
+{
+  "request_id": "f7a1c1da-89a5-4741-a905-6756fb4b13c5",
+  "evidence_commit": "9509ef6a6554e5302181264fcdfbb22d65ddf510",
+  "evidence_repository": "yattdev/kandev-service",
+  "evidence_branch": "support/evidence-cb42dde1-f7a1c1da",
+  "publication_verified": "8 exact files retrieved through GitHub and byte-compared to local originals; remote ref verified",
+  "source_classification": "local customization; not upstream-only",
+  "existing_source_owner": "local own-answer module: internal/task/ownanswer, internal/task/repository/sqlite/message_own_answer.go, internal/mcp/handlers/own_answer.go, internal/mcp/server/own_answer.go",
+  "existing_operation": "reconcile_own_question_answer_kandev",
+  "custodian_route": "yattdev personal fork/evidence repository custodian; not asserted to be an independent reviewer",
+  "maintainer_verdict": "UNRESOLVED",
+  "maintainer_review_obtained": false,
+  "support_static_assessment": "Candidate proof contract is published; no approval authority asserted",
+  "review_routes": [
+    {
+      "operation": "create draft source-fork design-review PR",
+      "repository": "yattdev/kandev",
+      "base": "support/own-answer-disposition-6cef6efd",
+      "head": "support/own-answer-comment-boundary-cb42dde1",
+      "result": {
+        "error": "GitHub API error 403: {\"message\":\"Resource not accessible by integration\",\"documentation_url\":\"https://docs.github.com/rest/pulls/pulls#create-a-pull-request\",\"status\":\"403\"}",
+        "error_code": "FORBIDDEN",
+        "error_data": {
+          "message": "Resource not accessible by integration",
+          "documentation_url": "https://docs.github.com/rest/pulls/pulls#create-a-pull-request",
+          "status": "403"
+        }
+      }
+    },
+    {
+      "operation": "create evidence-repository contract-review issue",
+      "repository": "yattdev/kandev-service",
+      "result": {
+        "error": "GitHub API error 403: {\"message\":\"Resource not accessible by integration\",\"documentation_url\":\"https://docs.github.com/rest/issues/issues#create-an-issue\",\"status\":\"403\"}",
+        "error_code": "FORBIDDEN",
+        "error_data": {
+          "message": "Resource not accessible by integration",
+          "documentation_url": "https://docs.github.com/rest/issues/issues#create-an-issue",
+          "status": "403"
+        }
+      }
+    }
+  ],
+  "unavailable_routes": "Source fork issues are disabled; both authorized PR/issue creation interfaces denied writes. No existing matching review thread or separate callable Kandev maintainer route was found.",
+  "smallest_next_action": "An authorized maintainer may review the immutable prepared request and record a bounded verdict through an already permitted route. This request asks for no new credential/grant, Human approval or relay.",
+  "implementation_authorized": false,
+  "activation_authorized": false,
+  "live_state_read_or_write": false,
+  "source_implementation_or_build": false,
+  "unchanged_suites_rerun": false,
+  "provider_actions": false,
+  "original_evidence_unchanged": true,
+  "unrelated_work_preserved": true
+}
