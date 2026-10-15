@@ -1,0 +1,18 @@
+{
+  "request_id": "24103b2e-b245-4644-9828-15ff9adaf614",
+  "escalation_pass": 1,
+  "status": "EXECUTING",
+  "operation_started": "READ_ONLY_AUDIT_OF_EXISTING_ACCEPTED_DEPLOYMENT_AND_ATTESTATION_ROUTE",
+  "recorded_at": "2026-10-15T00:20:13.023541+00:00",
+  "thread_id": "01a137d6-f9dc-7ad0-b2c0-10bb5a542722",
+  "platform_turn_id": null,
+  "operation_turn_id": "bc3d9816-480a-4459-9906-eec233fa9124",
+  "operation_turn_id_kind": "LOCAL_CORRELATION_NOT_PLATFORM_ID",
+  "build_recreate_attempts_total": 1,
+  "second_build_authorized_or_started": false,
+  "accepted_production_identity_and_trio_rechecked": true,
+  "frozen_target_identity_boot_port_rechecked": true,
+  "model_read_or_hash": false,
+  "grant_issued": false,
+  "client_trust_changed": false
+}
