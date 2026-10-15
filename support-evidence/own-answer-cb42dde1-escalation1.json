@@ -1,0 +1,37 @@
+{
+  "request_id": "cb42dde1-ee10-4dfe-99ce-dfd9868ad46c",
+  "escalation_pass": 1,
+  "direct_request_default_fingerprint_matches": [],
+  "quoted_agent_source_checks": [
+    {
+      "quote_sha256": "f841fbe79b6246e6be5a15aa95b066eaa4b8ab5c0ffcdc5cda089da9657019ea",
+      "bounded_matches": 0,
+      "candidates": []
+    },
+    {
+      "quote_sha256": "b2715b5536a892b062bfe6458f5ea04b92708d57268f0bfae97bf8d68cc508a3",
+      "bounded_matches": 0,
+      "candidates": []
+    }
+  ],
+  "read_only": true,
+  "operation_retried": false,
+  "raw_model_config_credentials_read": false,
+  "native_linkage_manufactured": false,
+  "status": "BLOCKED",
+  "both_checkouts_reinspected": true,
+  "host_diagnostics_available": true,
+  "host_reviewed_escalation_previously_succeeded": true,
+  "fingerprint_default_probe_conclusion": "INCONCLUSIVE; empty model candidate only, no raw model fields read",
+  "quote_probe_conclusion": "INCONCLUSIVE; exact prior inline bodies in this task/session only; externalized/rendered/other-session sources not searched",
+  "existing_replay_route": "returns original message; no clarification binding",
+  "existing_affirmative_response_route": "dispatches detached resume; excluded",
+  "existing_rejection_route": "alters decision; excluded",
+  "source_behavior_changed": false,
+  "tests_repeated": false,
+  "prior_source_test_commit": "bb985c2baba703df7b20564d9336f3f256e8544f",
+  "original_receipt_sha256": "d9e80f497a3405a3d0e1934c50b9c4c64fc5fe877351eee9c18fb36343f083f5",
+  "missing_capability": "Reviewed historical direct-native ingress and exact comment-to-question binding in the existing reconciler",
+  "activation_authority": "runtime/deployment/build explicitly excluded",
+  "human_approval_requested": false
+}
