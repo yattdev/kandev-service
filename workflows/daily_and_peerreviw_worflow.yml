@@ -76,7 +76,7 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Codex
-            model: gpt-6.1-sol
+            model: gpt-6-sol
             mode: agent-full-access
           profile_session_start_policy: reuse
           profile_session_end_policy: park
@@ -135,7 +135,7 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Codex
-            model: gpt-6.1-sol
+            model: gpt-6-sol
             mode: agent-full-access
           profile_session_start_policy: reuse
           profile_session_end_policy: park
@@ -248,7 +248,7 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Codex
-            model: gpt-6.1-sol
+            model: gpt-6-sol
             mode: agent-full-access
           profile_session_start_policy: reuse
           profile_session_end_policy: park
