@@ -1,11 +1,15 @@
-# Local binary hotfix overlay
+# Retired local binary hotfix overlay
 
-This directory is intentionally present in the Docker build context. Locally
-built `agentctl`, `agentctl-linux-amd64`, and backend `kandev` binaries may be
-placed here while a tested Kandev source fix is waiting for an upstream image
-release. The binaries are ignored by Git, but `Dockerfile.local` installs them
-into every local image rebuild when they are present. Never place only one of
-the two `agentctl` binaries here; the backend overlay is independent.
+As of the 2026-10-24 stock v0.98.0 deployment, `Dockerfile.local` no longer
+installs these binaries and `.dockerignore` excludes this directory. The
+locally built backend and paired `agentctl` binaries remain here for reference;
+the previous complete image is retained as
+`kandev-local:legacy-overlays-20261024` (image
+`sha256:0575582cdb0f76d597f001f9789fd3e25f9a9eec8070ea884f378208f3627971`).
+The current local image uses the upstream release binaries; `update.sh` keeps
+building from the latest upstream base without restoring these overlays.
+The records below describe earlier deployments, not the currently running
+backend. Do not restore only one of the two `agentctl` binaries.
 
 The agentctl overlay was deployed for Support requests
 `a335c345-f10a-4ae2-a598-7197e94da5d5` and

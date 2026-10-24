@@ -36,6 +36,8 @@ elif args[:2] == ["image", "inspect"]:
     image = args[2]
     if image == "kandev-local:latest":
         value = target.read_text().strip()
+    elif image == "ghcr.io/kdlbs/kandev:latest":
+        value = "sha256:base"
     elif image == "kandev-local:safe-deploy-previous" and rollback.exists():
         value = rollback.read_text().strip()
     else:
@@ -54,7 +56,10 @@ elif args and args[0] == "tag":
         target.write_text(source)
 elif args and args[0] == "compose":
     if "build" in args:
-        target.write_text("sha256:new")
+        if "--print" in args:
+            print('{"group":{"default":{"targets":["kandev"]}},"target":{"kandev":{"tags":["kandev-local:latest"]}}}')
+        else:
+            target.write_text("sha256:new")
     elif "up" in args:
         up_count = state / "up-count"
         count = int(up_count.read_text()) + 1 if up_count.exists() else 1
@@ -62,6 +67,11 @@ elif args and args[0] == "compose":
         current.write_text(target.read_text().strip())
         if os.environ.get("KANDEV_DEPLOY_TEST_UP_FAIL") == "candidate" and count == 1:
             raise SystemExit(17)
+elif args[:2] == ["buildx", "bake"]:
+    if "--allow=network.host" not in args:
+        raise SystemExit("host-network build entitlement missing")
+    (state / "build-entitlement").write_text("network.host")
+    target.write_text("sha256:new")
 elif args and args[0] == "run":
     if "--entrypoint" in args and "sha256sum" in args:
         digest = os.environ["KANDEV_DEPLOY_TEST_GUARD_SHA"]
@@ -142,6 +152,11 @@ class SafeDeployTest(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual((state / "current-image").read_text(), "sha256:new")
         self.assertIn("Deployment accepted", log.read_text())
+
+    def test_build_explicitly_grants_host_network(self) -> None:
+        completed, state, _ = self.run_deploy("always")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual((state / "build-entitlement").read_text(), "network.host")
 
     def test_readiness_failure_restores_previous_image_and_fails(self) -> None:
         completed, state, log = self.run_deploy("rollback")

@@ -42,6 +42,12 @@ else
   fail "kandev-local:latest image not found — run: docker compose build"
 fi
 
+if bash "$COMPOSE_DIR/tests/test-release-binaries.sh" >/dev/null 2>&1; then
+  ok "backend and agentctl binaries match the upstream release"
+else
+  fail "local backend or agentctl binaries differ from the upstream release"
+fi
+
 # Entrypoint must initialize /data ownership without recursively traversing
 # database, project, or task bind mounts on every restart.
 if grep -q 'chown kandev:kandev /data /data/home' "$COMPOSE_DIR/docker-entrypoint-local.sh" \

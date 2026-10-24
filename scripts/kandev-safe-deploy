@@ -146,7 +146,9 @@ deploy_log "Captured rollback image $KANDEV_DEPLOY_PREVIOUS_ID as $KANDEV_DEPLOY
 
 if [[ "$KANDEV_DEPLOY_BUILD" -eq 1 ]]; then
     deploy_log "Building candidate image ..."
-    docker compose -p "$KANDEV_DEPLOY_PROJECT" build "$KANDEV_DEPLOY_SERVICE"
+    KANDEV_DEPLOY_UPSTREAM_ID="$(docker image inspect ghcr.io/kdlbs/kandev:latest --format '{{.Id}}')"
+    bash "$KANDEV_DEPLOY_DIR/scripts/kandev-build-release" \
+        "$KANDEV_DEPLOY_UPSTREAM_ID" "$KANDEV_DEPLOY_PROJECT" "$KANDEV_DEPLOY_SERVICE"
 fi
 
 KANDEV_DEPLOY_CANDIDATE_ID="$(docker image inspect "$KANDEV_DEPLOY_IMAGE_TAG" --format '{{.Id}}' 2>/dev/null || true)"

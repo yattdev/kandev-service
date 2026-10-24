@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+BASE_IMAGE_ID="${1:?upstream image ID required}"
+PROJECT="${2:-kandev}"
+SERVICE="${3:-kandev}"
+if [[ "$BASE_IMAGE_ID" != sha256:* ]]; then
+    echo "ERROR: invalid upstream image ID: $BASE_IMAGE_ID" >&2
+    exit 1
+fi
+
+KANDEV_BASE_IMAGE_ID="$BASE_IMAGE_ID" \
+    docker compose -p "$PROJECT" build --print --build-arg BASE_IMAGE_ID="$BASE_IMAGE_ID" "$SERVICE" \
+    | docker buildx bake --allow=network.host --file -

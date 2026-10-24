@@ -201,8 +201,8 @@ if [[ "$REBUILD" -eq 1 ]]; then
     # same build succeeded minutes later with no changes at all. Without a retry
     # the cron run just dies and kandev silently stays on the old image.
     #
-    # KANDEV_BASE_IMAGE_ID feeds docker-compose.override.yml's BASE_IMAGE_ID
-    # build arg (and thus the com.kandev.base-id label on the built image).
+    # Buildx Bake requires an explicit host-network entitlement for this
+    # Compose build; the helper grants only that existing build capability.
     BUILD_RETRIES="${BUILD_RETRIES:-3}"
     BUILD_RETRY_DELAY="${BUILD_RETRY_DELAY:-30}"
     BUILD_ATTEMPT_TIMEOUT_SECS="${BUILD_ATTEMPT_TIMEOUT_SECS:-900}"
@@ -212,10 +212,9 @@ if [[ "$REBUILD" -eq 1 ]]; then
         # `set +e` + PIPESTATUS: the exit status of the pipeline is tee's, not
         # docker's, so the build result must be read from PIPESTATUS[0].
         set +e
-        KANDEV_BASE_IMAGE_ID="$UPSTREAM_ID" \
-            timeout --signal=TERM --kill-after=30s "$BUILD_ATTEMPT_TIMEOUT_SECS" \
-            docker compose -p kandev build \
-            --build-arg BASE_IMAGE_ID="$UPSTREAM_ID" 2>&1 | tee -a "$LOG_FILE"
+        timeout --signal=TERM --kill-after=30s "$BUILD_ATTEMPT_TIMEOUT_SECS" \
+            bash "$COMPOSE_DIR/scripts/kandev-build-release" "$UPSTREAM_ID" \
+            2>&1 | tee -a "$LOG_FILE"
         rc=${PIPESTATUS[0]}
         set -e
         if [[ "$rc" -eq 0 ]]; then
