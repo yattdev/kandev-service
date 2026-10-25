@@ -861,6 +861,13 @@ else
   fail "backend still uses the 45-second health timeout"
 fi
 
+if grep -Fq 'AGENTCTL_INSTANCE_PORT_MAX=41600' docker-compose.yml \
+    && [ "$(docker exec kandev printenv AGENTCTL_INSTANCE_PORT_MAX 2>/dev/null)" = "41600" ]; then
+  ok "agentctl instance port range is widened beyond the 100-port default"
+else
+  fail "agentctl instance port range is still the 100-port default (agent launches will exhaust it)"
+fi
+
 # ── 14. Port 80 → 38429 NAT redirect scoping ─────────────────────────────────
 section "14. NAT redirect scoping (port 80 → 38429)"
 

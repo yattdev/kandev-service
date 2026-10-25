@@ -64,6 +64,12 @@ services:
       # gate, but allow startup enough time to reach its HTTP listener.
       - KANDEV_HEALTH_TIMEOUT_MS=360000
 
+      # Each live agent runtime pins one agentctl instance port. The upstream
+      # 100-port default (41001-41100) is exhausted by ~90 idle sessions on large
+      # boards, failing every launch with "no available ports in range".
+      - AGENTCTL_INSTANCE_PORT_BASE=41001
+      - AGENTCTL_INSTANCE_PORT_MAX=41600
+
       # Run Node.js (and kandev) in production mode.
       # Effects: disables development-only middleware and verbose error stack traces,
       # enables internal caching and performance optimisations, and reduces log noise.

@@ -67,6 +67,11 @@ with hundreds of sessions can spend more than the upstream 45-second default in
 startup reconciliation before opening the HTTP listener; the longer timeout
 retains the health gate without putting the container into a false crash loop.
 
+It also sets `AGENTCTL_INSTANCE_PORT_BASE=41001` / `AGENTCTL_INSTANCE_PORT_MAX=41600`.
+Every live agent runtime pins one agentctl instance port, and the upstream default
+range (41001-41100) is exhausted by ~90 idle sessions, after which every launch and
+automation fails with `failed to allocate port: no available ports in range`.
+
 `~/Code/kandev` is the single canonical deployment checkout. The installed
 systemd unit checks that tracked files are clean and runs `git switch main`
 before startup. This lets a human temporarily use a `*-workflow` branch for
