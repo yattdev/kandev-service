@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 root = Path(__file__).parents[1]
 module = SourceFileLoader('preview_issue', str(root / 'scripts/kandev-task-preview-issue')).load_module()
-template = json.loads((root / 'support-evidence/task-preview-85278886-template.json').read_text())
+template = json.loads((root / 'tests/fixtures/task-preview-issue-template.json').read_text())
 template.update(main_origin='https://main.example.invalid', preview_origin='https://preview.example.invalid:59433', listen_address='10.23.4.5:59433')
 
 with tempfile.TemporaryDirectory(prefix='preview-issuer-') as tmp:

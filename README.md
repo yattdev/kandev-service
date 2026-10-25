@@ -50,8 +50,6 @@ In the **Add Local Repository** dialog enter:
 ├── docker-compose.litestream.yml  # Litestream sidecar (live SQLite replication to hub)
 ├── docker-compose.ssh-agent.yml   # Optional overlay: SSH agent socket forwarding
 ├── Dockerfile.local               # Extends upstream image (ssh, gh, glab, git config)
-├── Dockerfile.main-branch         # Temporary: builds kandev from github.com/kdlbs/kandev@main
-├── kandev-build-main.sh           # Helper: build/run/revert the main-branch image (see below)
 ├── litestream.yml                 # Litestream config template (installed to ~/.config/)
 ├── kandev-start.sh                # Start helper: freshest-wins litestream restore → compose up
 ├── kandev-start-hub.sh           # Hub start helper: restore from freshest satellite replica
@@ -129,11 +127,11 @@ per build attempt, an 8 GiB free-space floor, and a 960-second post-restart heal
 override them with `BUILD_ATTEMPT_TIMEOUT_SECS`, `MIN_FREE_GB`, or
 `HEALTH_TIMEOUT_SECS` when diagnosing exceptional hardware.
 
-When a tested `agentctl` fix must remain active before its upstream image is
-released, place the paired native and linux-amd64 binaries in
-`.local-hotfix/` as documented there. `Dockerfile.local` overlays both during
-every rebuild, so `update.sh` cannot silently discard the fix. Remove both only
-after verifying the upstream base contains the corresponding source change.
+The local image uses the upstream release backend and `agentctl` binaries.
+The retired `.local-hotfix/` overlays are excluded from the build context;
+the previous feature-rich image remains tagged
+`kandev-local:legacy-overlays-20261024` for reference. See
+`.local-hotfix/README.md` for its provenance.
 
 Each local image records the exact upstream image ID in its
 `com.kandev.base-id` label. The updater compares this label on every run; an
@@ -141,29 +139,6 @@ empty or `unknown` label is deliberately treated as stale. Consequently, if a
 release pull succeeds but the build is interrupted (for example by the disk
 space preflight), the next run resumes the rebuild even though `docker pull`
 now reports that the upstream image is already present.
-
-### Running a fix from `main` ahead of release (`kandev-build-main.sh`)
-
-When a fix has landed on [`kdlbs/kandev@main`](https://github.com/kdlbs/kandev) but
-hasn't shipped in a tagged release yet, `kandev-build-main.sh` builds it from source
-and swaps it in **temporarily**, without touching `Dockerfile.local`,
-`docker-compose.override.yml`, or `update.sh`:
-
-```bash
-bash ~/Code/kandev/kandev-build-main.sh                # build + run main
-bash ~/Code/kandev/kandev-build-main.sh --ref some-branch  # build a specific branch/tag/commit
-bash ~/Code/kandev/kandev-build-main.sh --no-test       # skip the test.sh run at the end
-bash ~/Code/kandev/kandev-build-main.sh --revert        # restore the last release-based backup
-```
-
-It compiles the Go backend + web app from source (`Dockerfile.main-branch`) and layers
-just the resulting binaries onto the existing release-based `kandev-local:latest`,
-health-checking the container afterward and auto-rolling back on failure — mirroring
-`update.sh`'s own rollback safety net. Because the compose build config still points at
-`Dockerfile.local` + the upstream release image, this is self-reverting: the next
-`docker compose build` (run manually, or automatically by `update.sh` once the next
-release ships) rebuilds `kandev-local:latest` from the release again and discards the
-main-branch layer.
 
 ### Codex workspace-write sandbox
 
