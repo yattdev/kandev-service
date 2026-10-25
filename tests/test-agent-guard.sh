@@ -6,7 +6,9 @@ GUARD=/usr/local/bin/kandev-agent-guard
 task_root=""
 while IFS= read -r task_dir_name; do
     candidate="/data/tasks/$task_dir_name"
-    if [[ -d "$candidate" ]]; then
+    # Skip workspaces the guard legitimately refuses (e.g. a recovered task
+    # whose Git worktree backlink no longer matches its marker).
+    if [[ -d "$candidate" ]] && (cd "$candidate" && "$GUARD" -- true) >/dev/null 2>&1; then
         task_root="$candidate"
         break
     fi
@@ -666,7 +668,8 @@ workspace_target_id=""
 workspace_target_root=""
 while IFS='|' read -r candidate_id candidate_dir; do
     candidate_root="/data/tasks/$candidate_dir"
-    if [[ -d "$candidate_root" && "$candidate_root" != "${coordinator_root%/coordinator}" ]]; then
+    if [[ -d "$candidate_root" && "$candidate_root" != "${coordinator_root%/coordinator}" ]] \
+        && (cd "$candidate_root" && "$GUARD" -- true) >/dev/null 2>&1; then
         workspace_target_id="$candidate_id"
         workspace_target_root="$candidate_root"
         break
