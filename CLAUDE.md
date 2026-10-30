@@ -472,6 +472,21 @@ dump inboxes and container logs as potentially sensitive, keep them short-lived,
 and do not claim cross-task confidentiality until per-task UIDs or encrypted
 broker delivery exist. Log redaction is best effort, not a secret scanner.
 
+Incident-scoped cold preservation uses `docker kandev volume inspect <exact-volume>`
+and `docker kandev volume preserve <exact-volume> --output <new-private-directory>`.
+The reviewed binding in `scripts/kandev-agent-docker-operations.py` currently permits
+only Feature 8241 MAIN's retained phase-2 volume and a new `db-cold-*` directory
+inside its `.tox/8241_recovery_20261030` folder. It verifies the active task/session,
+project claim/model, engine labels, creation time and retained directory device/inode;
+absent, empty, referenced or mismatched sources fail closed. A fixed, networkless
+platform helper binds the existing engine mountpoint read-only, checks the kernel
+read-only flag, and creates a private tar, inventory and receipt with verified byte
+counts and SHA256s. No named-volume mount or volume creation is used. Ordinary
+`docker run -v <name>:...` still prefixes named volumes with the run project and
+must not be used to preserve an existing Compose volume. The operations module
+loads per request, allowing reviewed provisioning without a Kandev restart. Tests:
+`python3 tests/test-volume-preservation.py`.
+
 Guarded mobile tasks receive the host Android SDK and AVD catalogue read-only,
 plus `/dev/kvm` for hardware acceleration. Use `emulator -list-avds`, launch
 with the `/usr/local/bin/emulator` wrapper, and control the instance through

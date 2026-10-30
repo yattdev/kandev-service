@@ -3,9 +3,300 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import uuid
+
+
+# Operator-reviewed preservation exception. This does not permit arbitrary
+# volume access: the existing task token, live MAIN binding, immutable project
+# claim, engine labels and retained directory identity must all agree.
+PRESERVATION_SCOPE = {
+    "root": "/data/tasks/feature-8241-pc-upgr_10c",
+    "task": "3c2a0d34-64ad-46f6-a8db-582ce9c623c8",
+    "session": "48733aaa-f324-4ba1-9d0f-cc6fecb30ce2",
+    "workspace": "d35ace87-2aae-4e9c-9114-f9899af7f64b",
+    "project": "kd_8241phase2_20261028",
+    "logical": "phase2_ambo_20261028_db",
+    "volume": "kd_8241phase2_20261028_phase2_ambo_20261028_db",
+    "created": "2026-10-28T10:31:09-04:00",
+    "config_hash": "af564ab8dd65b8f6c41704fd2f0068c58adcb627e09bc89139a69c0d70c8d4c3",
+    "device": 66310,
+    "inode": 40393626,
+}
+
+
+# Executed only by a fixed Python entrypoint in the platform's pinned image.
+# No caller commands, images, source paths, or environment enter this helper.
+PRESERVATION_HELPER = r'''
+import hashlib, json, os, pathlib, stat, sys, tarfile
+
+def require(ok, message):
+    if not ok:
+        raise ValueError(message)
+
+def digest(value):
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+
+def inventory(source, expected):
+    root = source.lstat()
+    require(stat.S_ISDIR(root.st_mode), 'source is not a directory')
+    require((root.st_dev, root.st_ino) == (expected['device'], expected['inode']), 'source inode identity changed')
+    rows = []
+    def failed(error):
+        raise ValueError('source inventory traversal failed')
+    for directory, dirs, files in os.walk(source, followlinks=False, onerror=failed):
+        dirs.sort(); files.sort()
+        for name in ['.'] if directory == str(source) else []:
+            rows.append(record(source, source))
+        for name in dirs + files:
+            rows.append(record(pathlib.Path(directory) / name, source))
+    rows.sort(key=lambda row: row['path'])
+    if expected.get('readonly_required'):
+        require(all(os.statvfs(source / row['path']).f_flag & os.ST_RDONLY for row in rows),
+                'source contains a writable descendant mount')
+    regular = [row for row in rows if row['type'] == 'file']
+    require(regular and any(row['path'] == 'ibdata1' and row['size'] > 0 for row in regular), 'source is empty or lacks retained MariaDB marker')
+    fs = os.statvfs(source)
+    summary = dict(device=root.st_dev, inode=root.st_ino, root_mtime_ns=root.st_mtime_ns,
+                   root_ctime_ns=root.st_ctime_ns, files=len(regular),
+                   directories=len(rows)-len(regular), bytes=sum(row['size'] for row in regular),
+                   inventory_metadata_sha256=digest(rows), capacity_bytes=fs.f_blocks*fs.f_frsize,
+                   available_bytes=fs.f_bavail*fs.f_frsize)
+    return rows, summary
+
+def record(path, source):
+    s = path.lstat()
+    require(s.st_dev == source.lstat().st_dev, 'source crosses a filesystem')
+    require(stat.S_ISREG(s.st_mode) or stat.S_ISDIR(s.st_mode), 'source contains a link or special file')
+    require(not stat.S_ISREG(s.st_mode) or s.st_nlink == 1, 'source contains a hard link')
+    return dict(path=path.relative_to(source).as_posix(), type='file' if stat.S_ISREG(s.st_mode) else 'directory',
+                size=s.st_size, mode=stat.S_IMODE(s.st_mode), uid=s.st_uid, gid=s.st_gid,
+                mtime_ns=s.st_mtime_ns, ctime_ns=s.st_ctime_ns, device=s.st_dev, inode=s.st_ino)
+
+def hash_stream(stream):
+    h = hashlib.sha256()
+    for chunk in iter(lambda: stream.read(1024*1024), b''):
+        h.update(chunk)
+    return h.hexdigest()
+
+def create(path, cfg):
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    os.fchown(fd, cfg['uid'], cfg['gid'])
+    return os.fdopen(fd, 'wb')
+
+class HashReader:
+    def __init__(self, stream):
+        self.stream = stream
+        self.hash = hashlib.sha256()
+    def read(self, size):
+        data = self.stream.read(size)
+        self.hash.update(data)
+        return data
+
+def main(cfg):
+    source = pathlib.Path(cfg['source'])
+    require(not cfg.get('readonly_required') or os.statvfs(source).f_flag & os.ST_RDONLY, 'source mount is not read-only')
+    rows, before = inventory(source, cfg)
+    if cfg['mode'] == 'inspect':
+        return dict(version='task-retained-volume-preservation/v1', source=before)
+    require(before['inventory_metadata_sha256'] == cfg['inventory_metadata_sha256'], 'source inventory changed since preflight')
+    output = pathlib.Path(cfg['output'])
+    destination = output.lstat()
+    require(stat.S_ISDIR(destination.st_mode) and (destination.st_dev, destination.st_ino)
+            == (cfg['output_device'], cfg['output_inode']), 'output inode identity changed')
+    require(not list(output.iterdir()), 'output directory is not empty')
+    fs = os.statvfs(output)
+    require(fs.f_bavail*fs.f_frsize > before['bytes'] + len(rows)*4096 + 10*1024*1024, 'insufficient private archive capacity')
+    archive = output / 'db_volume.tar'
+    with create(archive, cfg) as stream:
+        with tarfile.open(fileobj=stream, mode='w', format=tarfile.PAX_FORMAT) as tar:
+            for row in rows:
+                path = source / row['path']
+                require(record(path, source) == {k:v for k,v in row.items() if k != 'sha256'}, 'source entry changed')
+                info = tar.gettarinfo(str(path), arcname=row['path'])
+                if row['type'] == 'file':
+                    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+                    with os.fdopen(fd, 'rb') as data:
+                        s = os.fstat(data.fileno())
+                        require((s.st_dev,s.st_ino,s.st_size) == (row['device'],row['inode'],row['size']), 'source entry identity changed')
+                        reader = HashReader(data)
+                        tar.addfile(info, reader)
+                        row['sha256'] = reader.hash.hexdigest()
+                else:
+                    tar.addfile(info)
+        stream.flush(); os.fsync(stream.fileno())
+    after_rows, after = inventory(source, cfg)
+    require(after['inventory_metadata_sha256'] == before['inventory_metadata_sha256'], 'source changed during preservation')
+    expected = {row['path']:row for row in rows}
+    seen = set()
+    with tarfile.open(archive, mode='r:') as tar:
+        for member in tar:
+            require(member.name in expected and member.name not in seen, 'archive inventory mismatch')
+            seen.add(member.name); row = expected[member.name]
+            require(member.size == (row['size'] if row['type'] == 'file' else 0), 'archive size mismatch')
+            require((member.uid, member.gid, member.mode) == (row['uid'], row['gid'], row['mode']), 'archive ownership or mode mismatch')
+            if row['type'] == 'file':
+                require(member.isfile(), 'archive entry type mismatch')
+                with tar.extractfile(member) as data:
+                    require(hash_stream(data) == row['sha256'], 'archive content hash mismatch')
+            else:
+                require(member.isdir(), 'archive entry type mismatch')
+    require(seen == set(expected), 'archive is missing source entries')
+    payload = (json.dumps(rows, sort_keys=True, indent=2) + '\n').encode()
+    with create(output / 'inventory.json', cfg) as stream:
+        stream.write(payload); stream.flush(); os.fsync(stream.fileno())
+    with archive.open('rb') as stream:
+        checksum = hash_stream(stream)
+    receipt = dict(version='task-retained-volume-preservation/v1', verified=True, source=before,
+                   source_after=after, archive_bytes=archive.stat().st_size, archive_sha256=checksum,
+                   inventory_sha256=hashlib.sha256(payload).hexdigest(), verified_files=before['files'],
+                   verified_file_bytes=before['bytes'])
+    receipt.update(cfg.get('receipt_identity', {}))
+    with create(output / 'receipt.json', cfg) as stream:
+        stream.write((json.dumps(receipt, sort_keys=True, indent=2)+'\n').encode())
+        stream.flush(); os.fsync(stream.fileno())
+    fd = os.open(output, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    return receipt
+
+try:
+    print(json.dumps(main(json.loads(sys.argv[1])), sort_keys=True))
+except Exception as error:
+    # Never emit source file contents, inventory names, or runtime tracebacks.
+    print('retained-volume preservation failed: ' + (str(error) if isinstance(error, ValueError) else type(error).__name__), file=sys.stderr)
+    sys.exit(78)
+'''
+
+
+class VolumePreservation:
+    def __init__(self, operations):
+        self.op = operations
+        self.b = operations.b
+        self.scope = PRESERVATION_SCOPE
+
+    def require(self, condition, message):
+        if not condition:
+            raise self.b.BrokerError(message)
+
+    def owner(self, volume):
+        s = self.scope
+        repository = Path(s['root']) / 'performcoop'
+        self.require(self.op.root == Path(s['root']) and self.op.cwd == repository and volume == s['volume'],
+                     'volume preservation is restricted to the reviewed task, clone and exact retained volume')
+        with self.b.sqlite3.connect(f'file:{self.b.KANDEV_DB}?mode=ro', uri=True) as con:
+            row = con.execute('''SELECT t.workspace_id, s.state, e.status, e.workspace_path
+                FROM tasks t JOIN task_sessions s ON s.task_id=t.id
+                JOIN task_environments e ON e.id=s.task_environment_id AND e.task_id=t.id
+                WHERE t.id=? AND s.id=?''', (s['task'], s['session'])).fetchone()
+        self.require(row and row[0] == s['workspace'] and row[1] in self.b.ACTIVE_TASK_SESSION_STATES
+                     and row[2] == 'ready' and row[3] == str(repository), 'reviewed MAIN binding is no longer active')
+        model = self.b.load_scoped_model(self.op.root, repository / '.tox/phase2_qa', s['project'])
+        self.require((model.get('volumes') or {}).get(s['logical'], {}).get('name') == volume,
+                     'retained volume does not match the saved task model')
+        self.require(any(m.get('type') == 'volume' and m.get('source') == s['logical']
+                         and m.get('target') == '/var/lib/mysql'
+                         for service in model.get('services', {}).values() for m in service.get('volumes', [])),
+                     'saved model does not identify the retained database mount')
+
+    def volume(self):
+        s = self.scope
+        result = self.op.execute(['volume', 'inspect', s['volume']])
+        self.require(result['returncode'] == 0, 'exact retained volume is absent; nothing was created')
+        try:
+            records = json.loads(result['stdout'])
+            self.require(len(records) == 1, 'retained volume identity is ambiguous')
+            info = records[0]
+            mountpoint = info['Mountpoint']
+            expected_labels = {'com.docker.compose.project': s['project'], 'com.docker.compose.volume': s['logical'],
+                               'com.docker.compose.config-hash': s['config_hash']}
+            self.require(info['Name'] == s['volume'] and info['Driver'] == 'local' and info['Scope'] == 'local'
+                         and info['CreatedAt'] == s['created'] and not info.get('Options')
+                         and all((info.get('Labels') or {}).get(k) == v for k,v in expected_labels.items())
+                         and Path(mountpoint).is_absolute() and ',' not in mountpoint
+                         and mountpoint.endswith('/volumes/' + s['volume'] + '/_data'),
+                         'retained volume engine metadata does not match the reviewed identity')
+        except (ValueError, KeyError, TypeError) as exc:
+            raise self.b.BrokerError('retained volume engine identity is unreadable') from exc
+        consumers = self.op.execute(['ps', '-aq', '--filter', 'volume=' + s['volume']])
+        self.require(consumers['returncode'] == 0 and not consumers['stdout'].strip(),
+                     'cold preservation requires an unreferenced volume, including stopped containers')
+        return info
+
+    def helper(self, image, info, mode, before=None, output=None):
+        s = self.scope
+        cfg = dict(mode=mode, source='/source', device=s['device'], inode=s['inode'], uid=os.getuid(), gid=os.getgid(),
+                   readonly_required=True, receipt_identity={'volume': s['volume'], 'project': s['project'],
+                   'source_read_only': True, 'mountpoint_sha256': hashlib.sha256(info['Mountpoint'].encode()).hexdigest()})
+        argv = ['run', '--rm', '--name', 'kandev-volume-preserve-' + uuid.uuid4().hex,
+                '--label', 'kandev.volume-preservation=v1', '--network', 'none', '--read-only',
+                '--cap-drop', 'ALL', '--cap-add', 'DAC_OVERRIDE', '--security-opt', 'no-new-privileges:true',
+                '--user', '0:0', '--mount', 'type=bind,source=' + info['Mountpoint'] + ',target=/source,readonly,bind-propagation=rslave']
+        if output is not None:
+            host = self.b.translate_to_host(output)
+            self.require(',' not in str(host), 'output path cannot contain a mount delimiter')
+            identity = output.lstat()
+            cfg.update(output='/out', inventory_metadata_sha256=before['source']['inventory_metadata_sha256'],
+                       output_device=identity.st_dev, output_inode=identity.st_ino)
+            argv += ['--cap-add', 'CHOWN', '--mount', 'type=bind,source=' + str(host) + ',target=/out']
+        argv += ['--entrypoint', '/usr/bin/python3', image, '-c', PRESERVATION_HELPER, json.dumps(cfg)]
+        result = self.op.execute(argv)
+        self.require(result['returncode'] == 0, 'read-only preservation helper failed; any partial output was retained: '
+                     + result['stderr'][-512:])
+        try:
+            return json.loads(result['stdout'])
+        except ValueError as exc:
+            raise self.b.BrokerError('preservation helper returned an invalid receipt') from exc
+
+    def handle(self, args):
+        self.require((len(args) == 4 and args[:3] == ['kandev', 'volume', 'inspect'])
+                     or (len(args) == 6 and args[:3] == ['kandev', 'volume', 'preserve'] and args[4] == '--output'),
+                     'usage: docker kandev volume inspect <exact-volume> | preserve <exact-volume> --output <new-private-directory>')
+        self.owner(args[3])
+        self.require(self.b.EXPORT_LOCK.acquire(blocking=False), 'preservation/export is busy; retry later')
+        audit_id = str(uuid.uuid4())
+        try:
+            self.b.audit_compose(self.op.root, self.op.cwd, self.scope['project'], self.scope['project'],
+                                 'volume ' + args[2], 'allow', 'preflight', audit_id=audit_id,
+                                 command_class='cold-preservation')
+            info = self.volume()
+            platform = self.op.execute(['inspect', '--type', 'container', 'kandev', '--format', '{{.Image}}'])
+            image = platform['stdout'].strip()
+            self.require(platform['returncode'] == 0 and re.fullmatch(r'sha256:[0-9a-f]{64}', image),
+                         'trusted platform helper image is unavailable')
+            result = self.helper(image, info, 'inspect')
+            if args[2] == 'preserve':
+                candidate = Path(args[5])
+                self.require(not candidate.is_absolute() and '..' not in candidate.parts,
+                             'preservation output must be relative to the reviewed clone')
+                candidate = self.op.cwd / candidate
+                parent = self.op.cwd / '.tox/8241_recovery_20261030'
+                self.require(candidate.parent == parent and re.fullmatch(r'db-cold-[a-zA-Z0-9_-]{1,80}', candidate.name),
+                             'preservation output must be a new db-cold-* directory in the approved recovery folder')
+                self.require(parent.resolve(strict=True) == parent and not candidate.exists() and not candidate.is_symlink(),
+                             'preservation output already exists or traverses a symlink')
+                self.require(self.volume() == info, 'retained volume metadata changed during preflight')
+                candidate.mkdir(mode=0o700)
+                result = self.helper(image, info, 'preserve', result, candidate)
+                self.require(self.volume() == info, 'retained volume metadata/consumers changed; archive is not accepted')
+                result['output_directory'] = str(candidate)
+            result.update(volume=args[3], project=self.scope['project'], source_read_only=True,
+                          mountpoint_sha256=hashlib.sha256(info['Mountpoint'].encode()).hexdigest())
+            self.b.audit_compose(self.op.root, self.op.cwd, self.scope['project'], self.scope['project'],
+                                 'volume ' + args[2], 'allow', 'ok', audit_id=audit_id,
+                                 command_class='cold-preservation')
+            return {'returncode': 0, 'stdout': json.dumps(result, sort_keys=True) + '\n', 'stderr': ''}
+        except self.b.BrokerError:
+            self.b.audit_compose(self.op.root, self.op.cwd, self.scope['project'], self.scope['project'],
+                                 'volume ' + args[2], 'deny', 'denied', audit_id=audit_id,
+                                 command_class='cold-preservation')
+            raise
+        finally:
+            self.b.EXPORT_LOCK.release()
 
 
 class Operations:
@@ -202,6 +493,8 @@ class Operations:
         return result
 
     def handle(self, args):
+        if args[:2] == ['kandev', 'volume']:
+            return VolumePreservation(self).handle(args)
         if len(args) == 2 and args[1] == "--help" and args[0] in {"build", "run", "ps", "images", "inspect", "logs", "exec", "start", "stop", "restart", "rm", "pull", "version"}:
             return self.execute(args)
         if args[:2] == ["buildx", "build"]:
