@@ -474,10 +474,19 @@ broker delivery exist. Log redaction is best effort, not a secret scanner.
 
 Incident-scoped cold preservation uses `docker kandev volume inspect <exact-volume>`
 and `docker kandev volume preserve <exact-volume> --output <new-private-directory>`.
-The reviewed binding in `scripts/kandev-agent-docker-operations.py` currently permits
-only Feature 8241 MAIN's retained phase-2 volume and a new `db-cold-*` directory
-inside its `.tox/8241_recovery_20261030` folder. It verifies the active task/session,
-project claim/model, engine labels, creation time and retained directory device/inode;
+The reviewed bindings in `scripts/kandev-agent-docker-operations.py` permit only
+Feature 8241 MAIN's retained phase-2 volume and Feature 8505 backend's original
+`kd_a2153c9aef56546f47043f14_mariadb_data` volume, from each exact owner clone.
+They verify the active task/session, project claim/model, engine labels, creation
+time and retained directory device/inode. Feature 8505 additionally verifies its
+repository UUID, original registered source directory and two-way Git backlink.
+Its owner must first run `inspect`: the read-only helper qualifies the existing
+source directory and atomically pins its device/inode in broker-private model
+storage, outside task write scope. `preserve` cannot establish or replace that pin.
+Feature 8241 retains its pre-reviewed fixed inode binding and original output
+folder. Feature 8505's owner creates a mode-0700
+`.kandev/volume-preservation-8505` folder; output must be a new `db-cold-*` child.
+Neither registration grants startup, engine changes, source adoption or data edits;
 absent, empty, referenced or mismatched sources fail closed. A fixed, networkless
 platform helper binds the existing engine mountpoint read-only, checks the kernel
 read-only flag, and creates a private tar, inventory and receipt with verified byte

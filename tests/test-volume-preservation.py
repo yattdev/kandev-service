@@ -34,9 +34,9 @@ class AuthorizationTests(unittest.TestCase):
         self.cwd = self.root / 'performcoop'
         (self.cwd / '.tox/8241_recovery_20261030').mkdir(parents=True)
         original = operations.PRESERVATION_SCOPE
-        self.addCleanup(setattr, operations, 'PRESERVATION_SCOPE', original)
+        self.addCleanup(setattr, operations, 'PRESERVATION_SCOPES', operations.PRESERVATION_SCOPES)
         self.scope = {**original, 'root': str(self.root)}
-        operations.PRESERVATION_SCOPE = self.scope
+        operations.PRESERVATION_SCOPES = (self.scope,)
         db = Path(self.temp.name) / 'metadata.db'
         with sqlite3.connect(db) as con:
             con.executescript('''CREATE TABLE tasks(id,workspace_id);
@@ -59,16 +59,18 @@ class AuthorizationTests(unittest.TestCase):
         self.consumers = ''
         self.absent = False
         self.fake_receipt = {'version': 'task-retained-volume-preservation/v1',
-                             'source': {'inventory_metadata_sha256': 'a'*64}, 'verified': True}
+                             'source': {'inventory_metadata_sha256': 'a'*64, 'device': 123, 'inode': 456}, 'verified': True}
         self.b = SimpleNamespace(BrokerError=Denied, sqlite3=sqlite3, KANDEV_DB=db,
                                  ACTIVE_TASK_SESSION_STATES={'RUNNING'}, EXPORT_LOCK=threading.Lock(),
                                  DOCKER_BIN='docker', run_command=self.command,
                                  audit_compose=lambda *args, **kwargs: None,
                                  load_scoped_model=self.model_load, translate_to_host=lambda p:p)
+        self.b.MODEL_DIR = Path(self.temp.name) / 'models'
+        self.b.MODEL_DIR.mkdir(mode=0o700)
         self.op = operations.Operations(self.b, self.root, self.cwd)
 
     def model_load(self, root, cwd, project):
-        self.assertEqual((root, cwd, project), (self.root, self.cwd/'.tox/phase2_qa', self.scope['project']))
+        self.assertEqual((root, cwd, project), (self.root, self.cwd/self.scope['model_directory'], self.scope['project']))
         return copy.deepcopy(self.model)
 
     def command(self, argv, cwd, **kwargs):
@@ -98,7 +100,7 @@ class AuthorizationTests(unittest.TestCase):
 
     def test_inspect_never_creates_models_volumes_or_containers_with_named_mounts(self):
         self.assertEqual(self.invoke()['returncode'], 0)
-        self.assertEqual([call[1] for call in self.calls], ['volume', 'ps', 'inspect', 'run'])
+        self.assertEqual([call[1] for call in self.calls], ['volume', 'ps', 'inspect', 'run', 'volume', 'ps'])
 
     def test_absent_volume_fails_before_any_helper(self):
         self.absent = True
@@ -148,6 +150,123 @@ class AuthorizationTests(unittest.TestCase):
         result = self.invoke('preserve')
         self.assertEqual(result['returncode'], 0)
         self.assertEqual(directory.stat().st_mode & 0o777, 0o700)
+
+
+class RegisteredDirectoryTests(unittest.TestCase):
+    model_load = AuthorizationTests.model_load
+    command = AuthorizationTests.command
+    invoke = AuthorizationTests.invoke
+
+    def setUp(self):
+        AuthorizationTests.setUp(self)
+        self.scope.update(repository_id='reviewed-repository', source_clone=str(Path(self.temp.name)/'original'),
+                          model_directory='.', qualify_directory_on_owner_inspect=True,
+                          recorded_engine='13.0.2-MariaDB-ubu2604')
+        del self.scope['device'], self.scope['inode']
+        (self.cwd/self.scope['output_parent']).chmod(0o700)
+        common = Path(self.scope['source_clone']) / '.git'
+        self.gitdir = common / 'worktrees/original-task'
+        self.gitdir.mkdir(parents=True)
+        (self.cwd/'.git').write_text('gitdir: '+str(self.gitdir)+'\n')
+        (self.gitdir/'gitdir').write_text(str(self.cwd/'.git')+'\n')
+        (self.gitdir/'commondir').write_text('../..\n')
+        with sqlite3.connect(self.b.KANDEV_DB) as con:
+            con.executescript('''ALTER TABLE tasks ADD COLUMN archived_at;
+                CREATE TABLE task_repositories(task_id,repository_id);
+                CREATE TABLE repositories(id,workspace_id,local_path,deleted_at);
+                CREATE TABLE task_environment_repos(task_environment_id,repository_id,worktree_path,status,
+                    deleted_at,worktree_source_clone_path,worktree_source_common_dir);''')
+            con.execute('INSERT INTO task_repositories VALUES(?,?)', (self.scope['task'], self.scope['repository_id']))
+            con.execute('INSERT INTO repositories VALUES(?,?,?,NULL)',
+                        (self.scope['repository_id'], self.scope['workspace'], self.scope['source_clone']))
+            con.execute('INSERT INTO task_environment_repos VALUES(?,?,?,?,NULL,?,?)',
+                        ('environment', self.scope['repository_id'], str(self.cwd), 'active',
+                         self.scope['source_clone'], str(common)))
+
+    def pin(self):
+        gate = operations.VolumePreservation(self.op)
+        gate.owner(self.scope['volume'])
+        return gate.pin_path()
+
+    def test_preserve_cannot_qualify_and_only_inspect_establishes_private_pin(self):
+        with self.assertRaisesRegex(Denied, 'run owner volume inspect'):
+            self.invoke('preserve')
+        self.assertFalse(self.calls)
+        result = json.loads(self.invoke()['stdout'])
+        self.assertTrue(result['original_registered_directory_verified'])
+        self.assertTrue(result['source_directory_pin_established'])
+        pin = self.pin()
+        self.assertEqual(pin.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(pin.parent.stat().st_mode & 0o777, 0o700)
+        helper = next(call for call in self.calls if call[1] == 'run')
+        cfg = json.loads(helper[-1])
+        self.assertTrue(cfg['qualify_directory'])
+        self.assertNotIn('device', cfg)
+        before = pin.read_bytes()
+        self.calls.clear()
+        self.assertEqual(self.invoke('preserve')['returncode'], 0)
+        helper = next(call for call in self.calls if call[1] == 'run')
+        cfg = json.loads(helper[-1])
+        self.assertFalse(cfg['qualify_directory'])
+        self.assertEqual((cfg['device'], cfg['inode']), (123, 456))
+        self.assertEqual(before, pin.read_bytes())
+
+    def test_wrong_task_clone_volume_repository_and_source_backlink_are_denied(self):
+        for attr, value in [('root', self.root.parent), ('cwd', self.root)]:
+            saved = getattr(self.op, attr); setattr(self.op, attr, value)
+            with self.assertRaises(Denied): self.invoke()
+            setattr(self.op, attr, saved)
+        with self.assertRaises(Denied):
+            self.op.handle(['kandev', 'volume', 'inspect', 'another-volume'])
+        for sql, restore, value in [
+                ("UPDATE repositories SET workspace_id='foreign'", 'UPDATE repositories SET workspace_id=?', self.scope['workspace']),
+                ("UPDATE task_repositories SET repository_id='different'", 'UPDATE task_repositories SET repository_id=?', self.scope['repository_id']),
+                ("UPDATE task_environment_repos SET worktree_path='/different'", 'UPDATE task_environment_repos SET worktree_path=?', str(self.cwd)),
+                ("UPDATE tasks SET archived_at='archived'", 'UPDATE tasks SET archived_at=?', None)]:
+            with sqlite3.connect(self.b.KANDEV_DB) as con:
+                con.execute(sql)
+            with self.assertRaises(Denied): self.invoke()
+            with sqlite3.connect(self.b.KANDEV_DB) as con:
+                con.execute(restore, (value,))
+        backlink = self.gitdir/'gitdir'
+        backlink.write_text('/different/.git\n')
+        with self.assertRaises(Denied): self.invoke()
+        self.assertFalse(self.calls)
+        self.assertFalse((self.b.MODEL_DIR/'volume-preservation').exists())
+
+    def test_absent_source_never_creates_a_volume_helper_or_pin(self):
+        self.absent = True
+        with self.assertRaisesRegex(Denied, 'absent; nothing was created'): self.invoke()
+        self.assertEqual([call[1:3] for call in self.calls], [['volume', 'inspect']])
+        self.assertFalse(self.pin().exists())
+
+    def test_pin_is_not_replaced_on_new_inode_and_untrusted_pin_files_fail(self):
+        self.invoke()
+        pin = self.pin(); before = pin.read_bytes()
+        self.fake_receipt['source']['inode'] += 1
+        with self.assertRaisesRegex(Denied, 'differs from its established owner pin'): self.invoke()
+        self.assertEqual(pin.read_bytes(), before)
+        pin.chmod(0o644); self.calls.clear()
+        with self.assertRaisesRegex(Denied, 'not broker-private'): self.invoke()
+        self.assertFalse(self.calls)
+        pin.unlink(); pin.symlink_to(self.cwd/'.git')
+        with self.assertRaises(Denied): self.invoke()
+        self.assertFalse(self.calls)
+
+    def test_consumer_or_changed_engine_identity_cannot_establish_pin(self):
+        self.consumers = 'stopped-container\n'
+        with self.assertRaises(Denied): self.invoke()
+        self.assertFalse(self.pin().exists())
+        self.consumers = ''; self.info['CreatedAt'] = 'replacement'
+        with self.assertRaises(Denied): self.invoke()
+        self.assertFalse(self.pin().exists())
+        self.assertFalse(any(call[1] == 'run' for call in self.calls))
+
+    def test_preservation_parent_must_be_private(self):
+        self.invoke()
+        (self.cwd/self.scope['output_parent']).chmod(0o755)
+        with self.assertRaisesRegex(Denied, 'parent must be owner-private'): self.invoke('preserve')
+        self.assertFalse((self.cwd/self.scope['output_parent']/'db-cold-unit').exists())
 
 
 class ArchiveTests(unittest.TestCase):
@@ -222,6 +341,18 @@ class ArchiveTests(unittest.TestCase):
         self.cfg['output_inode'] += 1
         self.run_helper(78)
         self.assertFalse(list(self.output.iterdir()))
+
+    def test_directory_qualification_is_readonly_inspect_only(self):
+        (self.source/'ibdata1').write_bytes(b'opaque fixture')
+        self.cfg['qualify_directory'] = True
+        del self.cfg['device'], self.cfg['inode']
+        result = self.run_helper()
+        self.assertEqual(result['source']['inode'], self.source.stat().st_ino)
+        self.cfg['mode'] = 'preserve'
+        self.run_helper(78)
+        self.assertFalse(list(self.output.iterdir()))
+        self.cfg.update(mode='inspect', readonly_required=True)
+        self.run_helper(78)
 
 
 if __name__ == '__main__':

@@ -6,10 +6,11 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import uuid
 
 
-# Operator-reviewed preservation exception. This does not permit arbitrary
+# Operator-reviewed preservation bindings. These do not permit arbitrary
 # volume access: the existing task token, live MAIN binding, immutable project
 # claim, engine labels and retained directory identity must all agree.
 PRESERVATION_SCOPE = {
@@ -24,7 +25,30 @@ PRESERVATION_SCOPE = {
     "config_hash": "af564ab8dd65b8f6c41704fd2f0068c58adcb627e09bc89139a69c0d70c8d4c3",
     "device": 66310,
     "inode": 40393626,
+    "model_directory": ".tox/phase2_qa",
+    "output_parent": ".tox/8241_recovery_20261030",
 }
+
+PRESERVATION_SCOPES = (PRESERVATION_SCOPE, {
+    "root": "/data/tasks/feature-8505-backend_3u2c5m5u",
+    "task": "186f5591-f7fc-44e5-a41d-79d0373c08c3",
+    "session": "3cabbc06-d565-43ba-a7ab-4ded188346c3",
+    "workspace": "d35ace87-2aae-4e9c-9114-f9899af7f64b",
+    "repository_id": "28bb119f-3284-4feb-85bc-61c78c160587",
+    "source_clone": "/data/home/Code/performcoop",
+    "project": "kd_a2153c9aef56546f47043f14",
+    "logical": "mariadb_data",
+    "volume": "kd_a2153c9aef56546f47043f14_mariadb_data",
+    "created": "2026-11-03T10:18:45-05:00",
+    "config_hash": "73ba6ec033d42caa19be063323fa94ca2f000678e2bc8604eb336a15225a103d",
+    "model_directory": ".",
+    "output_parent": ".kandev/volume-preservation-8505",
+    # Only this verified owner may establish the directory pin, through inspect.
+    # Preserve cannot qualify a source or replace a previously recorded pin.
+    "qualify_directory_on_owner_inspect": True,
+    "provenance_receipt_sha256": "f1caea2beb9a0faf83333cb0a6cc8b129a8b6b48b23b178b7826842ddca6ab64",
+    "recorded_engine": "13.0.2-MariaDB-ubu2604",
+})
 
 
 # Executed only by a fixed Python entrypoint in the platform's pinned image.
@@ -42,7 +66,10 @@ def digest(value):
 def inventory(source, expected):
     root = source.lstat()
     require(stat.S_ISDIR(root.st_mode), 'source is not a directory')
-    require((root.st_dev, root.st_ino) == (expected['device'], expected['inode']), 'source inode identity changed')
+    if expected.get('qualify_directory'):
+        require(expected['mode'] == 'inspect', 'only owner inspect may qualify a source directory')
+    else:
+        require((root.st_dev, root.st_ino) == (expected['device'], expected['inode']), 'source inode identity changed')
     rows = []
     def failed(error):
         raise ValueError('source inventory traversal failed')
@@ -177,17 +204,22 @@ class VolumePreservation:
     def __init__(self, operations):
         self.op = operations
         self.b = operations.b
-        self.scope = PRESERVATION_SCOPE
+        self.scope = None
+        self.directory = None
 
     def require(self, condition, message):
         if not condition:
             raise self.b.BrokerError(message)
 
     def owner(self, volume):
+        matches = [s for s in PRESERVATION_SCOPES
+                   if self.op.root == Path(s['root']) and self.op.cwd == Path(s['root']) / 'performcoop'
+                   and volume == s['volume']]
+        self.require(len(matches) == 1,
+                     'volume preservation is restricted to the reviewed task, clone and exact retained volume')
+        self.scope = matches[0]
         s = self.scope
         repository = Path(s['root']) / 'performcoop'
-        self.require(self.op.root == Path(s['root']) and self.op.cwd == repository and volume == s['volume'],
-                     'volume preservation is restricted to the reviewed task, clone and exact retained volume')
         with self.b.sqlite3.connect(f'file:{self.b.KANDEV_DB}?mode=ro', uri=True) as con:
             row = con.execute('''SELECT t.workspace_id, s.state, e.status, e.workspace_path
                 FROM tasks t JOIN task_sessions s ON s.task_id=t.id
@@ -195,13 +227,109 @@ class VolumePreservation:
                 WHERE t.id=? AND s.id=?''', (s['task'], s['session'])).fetchone()
         self.require(row and row[0] == s['workspace'] and row[1] in self.b.ACTIVE_TASK_SESSION_STATES
                      and row[2] == 'ready' and row[3] == str(repository), 'reviewed MAIN binding is no longer active')
-        model = self.b.load_scoped_model(self.op.root, repository / '.tox/phase2_qa', s['project'])
+        if s.get('repository_id'):
+            self.registered_directory(repository)
+        model = self.b.load_scoped_model(self.op.root, repository / s['model_directory'], s['project'])
         self.require((model.get('volumes') or {}).get(s['logical'], {}).get('name') == volume,
                      'retained volume does not match the saved task model')
         self.require(any(m.get('type') == 'volume' and m.get('source') == s['logical']
                          and m.get('target') == '/var/lib/mysql'
                          for service in model.get('services', {}).values() for m in service.get('volumes', [])),
                      'saved model does not identify the retained database mount')
+
+    def registered_directory(self, repository):
+        s = self.scope
+        common = Path(s['source_clone']) / '.git'
+        with self.b.sqlite3.connect(f'file:{self.b.KANDEV_DB}?mode=ro', uri=True) as con:
+            row = con.execute('''SELECT COUNT(*) FROM task_sessions ts
+                JOIN tasks t ON t.id=ts.task_id AND t.archived_at IS NULL
+                JOIN task_environment_repos er ON er.task_environment_id=ts.task_environment_id
+                JOIN task_repositories tr ON tr.task_id=ts.task_id AND tr.repository_id=er.repository_id
+                JOIN repositories r ON r.id=er.repository_id
+                WHERE ts.id=? AND ts.task_id=? AND r.id=? AND r.workspace_id=? AND r.deleted_at IS NULL
+                AND r.local_path=? AND er.worktree_path=? AND er.status='active' AND er.deleted_at IS NULL
+                AND er.worktree_source_clone_path=? AND er.worktree_source_common_dir=?
+                AND (SELECT COUNT(*) FROM task_repositories WHERE task_id=ts.task_id)=1''',
+                (s['session'], s['task'], s['repository_id'], s['workspace'], s['source_clone'],
+                 str(repository), s['source_clone'], str(common))).fetchone()
+        self.require(row and row[0] == 1, 'reviewed original repository registration does not match')
+        try:
+            link = repository / '.git'
+            self.require(repository.resolve(strict=True) == repository and not link.is_symlink(),
+                         'reviewed repository directory is not the original registered clone')
+            text = link.read_text().strip()
+            self.require(text.startswith('gitdir: '), 'reviewed repository Git backlink is invalid')
+            gitdir = Path(text[8:])
+            self.require(gitdir.is_absolute() and gitdir.resolve(strict=True) == gitdir
+                         and gitdir.parent == common / 'worktrees'
+                         and (gitdir / 'gitdir').read_text().strip() == str(link)
+                         and (gitdir / (gitdir / 'commondir').read_text().strip()).resolve(strict=True) == common,
+                         'reviewed repository Git backlink does not match its original source')
+        except OSError as exc:
+            raise self.b.BrokerError('reviewed original repository directory is unavailable') from exc
+
+    def pin_path(self):
+        digest = hashlib.sha256(json.dumps(self.scope, sort_keys=True).encode()).hexdigest()
+        return self.b.MODEL_DIR / 'volume-preservation' / (digest + '.json')
+
+    def private_pin_parent(self, parent):
+        self.require(parent.resolve(strict=True) == parent, 'directory pin storage traverses a symlink')
+        identity = parent.lstat()
+        self.require(stat.S_ISDIR(identity.st_mode) and identity.st_uid == os.getuid()
+                     and stat.S_IMODE(identity.st_mode) == 0o700, 'directory pin storage is not broker-private')
+
+    def read_pin(self):
+        path = self.pin_path()
+        if path.parent.exists() or path.parent.is_symlink():
+            self.private_pin_parent(path.parent)
+        try:
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            raise self.b.BrokerError('source directory pin is unavailable') from exc
+        try:
+            with os.fdopen(fd) as stream:
+                identity = os.fstat(stream.fileno())
+                self.require(stat.S_ISREG(identity.st_mode) and identity.st_uid == os.getuid()
+                             and stat.S_IMODE(identity.st_mode) == 0o600 and identity.st_nlink == 1
+                             and identity.st_size <= 4096, 'source directory pin is not broker-private')
+                pin = json.load(stream)
+            self.require(pin['version'] == 1 and pin['scope_sha256'] == path.stem and pin['volume'] == self.scope['volume']
+                         and type(pin['device']) is int and pin['device'] >= 0
+                         and type(pin['inode']) is int and pin['inode'] > 0, 'source directory pin identity mismatch')
+            return pin
+        except (ValueError, KeyError, TypeError) as exc:
+            raise self.b.BrokerError('source directory pin is invalid') from exc
+
+    def establish_pin(self, result):
+        path = self.pin_path()
+        source = result['source']
+        pin = {'version': 1, 'scope_sha256': path.stem, 'volume': self.scope['volume'],
+               'device': source['device'], 'inode': source['inode']}
+        self.require(type(pin['device']) is int and pin['device'] >= 0
+                     and type(pin['inode']) is int and pin['inode'] > 0, 'helper returned invalid source identity')
+        path.parent.mkdir(mode=0o700, exist_ok=True)
+        self.private_pin_parent(path.parent)
+        temporary = path.parent / ('.' + uuid.uuid4().hex)
+        try:
+            fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(fd, 'w') as stream:
+                json.dump(pin, stream, sort_keys=True)
+                stream.flush(); os.fsync(stream.fileno())
+            try:
+                os.link(temporary, path)
+            except FileExistsError:
+                pass
+            directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+        finally:
+            temporary.unlink(missing_ok=True)
+        self.require(self.read_pin() == pin, 'existing source directory pin differs; no replacement is permitted')
+        self.directory = pin
 
     def volume(self):
         s = self.scope
@@ -229,7 +357,11 @@ class VolumePreservation:
 
     def helper(self, image, info, mode, before=None, output=None):
         s = self.scope
-        cfg = dict(mode=mode, source='/source', device=s['device'], inode=s['inode'], uid=os.getuid(), gid=os.getgid(),
+        identity = self.directory or {k: s[k] for k in ('device', 'inode') if k in s}
+        self.require(identity or (mode == 'inspect' and s.get('qualify_directory_on_owner_inspect')),
+                     'run owner volume inspect to qualify the original source directory before preservation')
+        cfg = dict(mode=mode, source='/source', **{k: identity[k] for k in ('device', 'inode') if k in identity},
+                   qualify_directory=not bool(identity), uid=os.getuid(), gid=os.getgid(),
                    readonly_required=True, receipt_identity={'volume': s['volume'], 'project': s['project'],
                    'source_read_only': True, 'mountpoint_sha256': hashlib.sha256(info['Mountpoint'].encode()).hexdigest()})
         argv = ['run', '--rm', '--name', 'kandev-volume-preserve-' + uuid.uuid4().hex,
@@ -257,6 +389,10 @@ class VolumePreservation:
                      or (len(args) == 6 and args[:3] == ['kandev', 'volume', 'preserve'] and args[4] == '--output'),
                      'usage: docker kandev volume inspect <exact-volume> | preserve <exact-volume> --output <new-private-directory>')
         self.owner(args[3])
+        if self.scope.get('qualify_directory_on_owner_inspect'):
+            self.directory = self.read_pin()
+            self.require(self.directory or args[2] == 'inspect',
+                         'run owner volume inspect to qualify the original source directory before preservation')
         self.require(self.b.EXPORT_LOCK.acquire(blocking=False), 'preservation/export is busy; retry later')
         audit_id = str(uuid.uuid4())
         try:
@@ -269,16 +405,27 @@ class VolumePreservation:
             self.require(platform['returncode'] == 0 and re.fullmatch(r'sha256:[0-9a-f]{64}', image),
                          'trusted platform helper image is unavailable')
             result = self.helper(image, info, 'inspect')
+            if self.directory:
+                self.require(all(result['source'].get(k) == self.directory[k] for k in ('device', 'inode')),
+                             'source directory differs from its established owner pin')
+            self.require(self.volume() == info, 'retained volume metadata/consumers changed during inspection')
+            if self.scope.get('qualify_directory_on_owner_inspect') and self.directory is None:
+                self.establish_pin(result)
             if args[2] == 'preserve':
                 candidate = Path(args[5])
                 self.require(not candidate.is_absolute() and '..' not in candidate.parts,
                              'preservation output must be relative to the reviewed clone')
                 candidate = self.op.cwd / candidate
-                parent = self.op.cwd / '.tox/8241_recovery_20261030'
+                parent = self.op.cwd / self.scope['output_parent']
                 self.require(candidate.parent == parent and re.fullmatch(r'db-cold-[a-zA-Z0-9_-]{1,80}', candidate.name),
                              'preservation output must be a new db-cold-* directory in the approved recovery folder')
                 self.require(parent.resolve(strict=True) == parent and not candidate.exists() and not candidate.is_symlink(),
                              'preservation output already exists or traverses a symlink')
+                if self.scope.get('repository_id'):
+                    identity = parent.lstat()
+                    self.require(stat.S_ISDIR(identity.st_mode) and identity.st_uid == os.getuid()
+                                 and stat.S_IMODE(identity.st_mode) == 0o700,
+                                 'preservation output parent must be owner-private mode 0700')
                 self.require(self.volume() == info, 'retained volume metadata changed during preflight')
                 candidate.mkdir(mode=0o700)
                 result = self.helper(image, info, 'preserve', result, candidate)
@@ -286,6 +433,12 @@ class VolumePreservation:
                 result['output_directory'] = str(candidate)
             result.update(volume=args[3], project=self.scope['project'], source_read_only=True,
                           mountpoint_sha256=hashlib.sha256(info['Mountpoint'].encode()).hexdigest())
+            if self.scope.get('repository_id'):
+                result.update(repository_id=self.scope['repository_id'], original_registered_directory_verified=True,
+                              source_directory_pin_established=True,
+                              recorded_engine_provenance=self.scope['recorded_engine'],
+                              engine_volume_identity={k: info[k] for k in ('Name', 'Driver', 'Scope', 'CreatedAt', 'Labels')},
+                              registration_sha256=self.pin_path().stem)
             self.b.audit_compose(self.op.root, self.op.cwd, self.scope['project'], self.scope['project'],
                                  'volume ' + args[2], 'allow', 'ok', audit_id=audit_id,
                                  command_class='cold-preservation')
