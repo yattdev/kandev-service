@@ -40,6 +40,7 @@ workflows:
           agent_profile:
             agent_name: Copilot
             model: gpt-6.1-sol
+            mode: https://agentclientprotocol.com/protocol/session-modes#plan
             config_options:
                 reasoning_effort: high
           profile_session_start_policy: reuse
@@ -85,9 +86,10 @@ workflows:
             agent_name: Copilot
             model: gpt-6.1-terra
             mode: https://agentclientprotocol.com/protocol/session-modes#agent
-            config_options: {}
-          profile_session_start_policy: reuse
-          profile_session_end_policy: park
+            config_options:
+                reasoning_effort: medium
+          profile_session_start_policy: new
+          profile_session_end_policy: complete
           disable_unclassified_fallback: false
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
@@ -130,10 +132,10 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Copilot
-            model: gpt-6-luna
+            model: gpt-6.1-terra
             mode: https://agentclientprotocol.com/protocol/session-modes#agent
             config_options:
-                reasoning_effort: high
+                reasoning_effort: medium
           profile_session_start_policy: new
           profile_session_end_policy: complete
           disable_unclassified_fallback: false
@@ -155,7 +157,8 @@ workflows:
             agent_name: Copilot
             model: gpt-6.1-terra
             mode: https://agentclientprotocol.com/protocol/session-modes#agent
-            config_options: {}
+            config_options:
+                reasoning_effort: medium
           profile_session_start_policy: reuse
           profile_session_end_policy: park
           disable_unclassified_fallback: false
@@ -192,7 +195,8 @@ workflows:
             agent_name: Copilot
             model: gpt-6.1-terra
             mode: https://agentclientprotocol.com/protocol/session-modes#agent
-            config_options: {}
+            config_options:
+                reasoning_effort: medium
           profile_session_start_policy: new
           profile_session_end_policy: complete
           disable_unclassified_fallback: false
@@ -231,10 +235,8 @@ workflows:
           agent_profile:
             agent_name: Copilot
             model: gpt-6.1-terra
-            mode: https://agentclientprotocol.com/protocol/session-modes#plan
-            config_options:
-                allow_all: "on"
-                reasoning_effort: high
+            mode: https://agentclientprotocol.com/protocol/session-modes#agent
+            config_options: {}
           profile_session_start_policy: new
           profile_session_end_policy: park
           disable_unclassified_fallback: false
@@ -257,7 +259,7 @@ workflows:
           agent_profile:
             agent_name: Copilot
             model: gpt-6.1-sol
-            mode: https://agentclientprotocol.com/protocol/session-modes#agent
+            mode: https://agentclientprotocol.com/protocol/session-modes#plan
             config_options:
                 reasoning_effort: high
           profile_session_start_policy: new
@@ -310,7 +312,8 @@ workflows:
             agent_name: Copilot
             model: gpt-6.1-terra
             mode: https://agentclientprotocol.com/protocol/session-modes#agent
-            config_options: {}
+            config_options:
+                reasoning_effort: medium
           profile_session_start_policy: new
           profile_session_end_policy: complete
           disable_unclassified_fallback: false
