@@ -38,9 +38,8 @@ workflows:
           show_in_command_panel: true
           allow_manual_move: true
           agent_profile:
-            agent_name: Codex
+            agent_name: Copilot
             model: gpt-6.1-sol
-            mode: agent-full-access
             config_options:
                 reasoning_effort: high
           profile_session_start_policy: reuse
@@ -83,11 +82,10 @@ workflows:
           show_in_command_panel: true
           allow_manual_move: true
           agent_profile:
-            agent_name: Codex
-            model: gpt-6-sol
-            mode: agent-full-access
-            config_options:
-                reasoning_effort: high
+            agent_name: Copilot
+            model: gpt-6.1-terra
+            mode: https://agentclientprotocol.com/protocol/session-modes#agent
+            config_options: {}
           profile_session_start_policy: reuse
           profile_session_end_policy: park
           disable_unclassified_fallback: false
@@ -106,6 +104,11 @@ workflows:
           is_start_step: false
           show_in_command_panel: false
           allow_manual_move: true
+          agent_profile:
+            agent_name: Copilot
+            model: gpt-6.1-terra
+            mode: https://agentclientprotocol.com/protocol/session-modes#agent
+            config_options: {}
           profile_session_start_policy: reuse
           profile_session_end_policy: park
           disable_unclassified_fallback: false
@@ -113,9 +116,6 @@ workflows:
           cancel_triggers_turn_complete: false
           complete_task_on_enter: false
           stage_type: hold
-          session_target:
-            kind: step
-            step_position: 3
         - name: Pr-CI-fixup
           position: 5
           color: bg-indigo-500
@@ -129,9 +129,9 @@ workflows:
           show_in_command_panel: true
           allow_manual_move: true
           agent_profile:
-            agent_name: Codex
+            agent_name: Copilot
             model: gpt-6-luna
-            mode: agent-full-access
+            mode: https://agentclientprotocol.com/protocol/session-modes#agent
             config_options:
                 reasoning_effort: high
           profile_session_start_policy: new
@@ -152,11 +152,10 @@ workflows:
           show_in_command_panel: false
           allow_manual_move: true
           agent_profile:
-            agent_name: Codex
-            model: gpt-6-sol
-            mode: agent-full-access
-            config_options:
-                reasoning_effort: high
+            agent_name: Copilot
+            model: gpt-6.1-terra
+            mode: https://agentclientprotocol.com/protocol/session-modes#agent
+            config_options: {}
           profile_session_start_policy: reuse
           profile_session_end_policy: park
           disable_unclassified_fallback: false
@@ -190,11 +189,10 @@ workflows:
           allow_manual_move: true
           auto_archive_after_hours: 72
           agent_profile:
-            agent_name: Codex
-            model: gpt-6-luna
-            mode: agent-full-access
-            config_options:
-                reasoning_effort: high
+            agent_name: Copilot
+            model: gpt-6.1-terra
+            mode: https://agentclientprotocol.com/protocol/session-modes#agent
+            config_options: {}
           profile_session_start_policy: new
           profile_session_end_policy: complete
           disable_unclassified_fallback: false
@@ -231,10 +229,11 @@ workflows:
           show_in_command_panel: true
           allow_manual_move: true
           agent_profile:
-            agent_name: Codex
+            agent_name: Copilot
             model: gpt-6.1-terra
-            mode: agent-full-access
+            mode: https://agentclientprotocol.com/protocol/session-modes#plan
             config_options:
+                allow_all: "on"
                 reasoning_effort: high
           profile_session_start_policy: new
           profile_session_end_policy: park
@@ -256,9 +255,9 @@ workflows:
           show_in_command_panel: true
           allow_manual_move: true
           agent_profile:
-            agent_name: Codex
+            agent_name: Copilot
             model: gpt-6.1-sol
-            mode: agent-full-access
+            mode: https://agentclientprotocol.com/protocol/session-modes#agent
             config_options:
                 reasoning_effort: high
           profile_session_start_policy: new
@@ -285,11 +284,10 @@ workflows:
           show_in_command_panel: false
           allow_manual_move: true
           agent_profile:
-            agent_name: Codex
-            model: gpt-6-sol
-            mode: agent-full-access
-            config_options:
-                reasoning_effort: high
+            agent_name: Copilot
+            model: gpt-6.1-terra
+            mode: https://agentclientprotocol.com/protocol/session-modes#agent
+            config_options: {}
           profile_session_start_policy: reuse
           profile_session_end_policy: park
           disable_unclassified_fallback: false
@@ -309,11 +307,10 @@ workflows:
           allow_manual_move: true
           auto_archive_after_hours: 72
           agent_profile:
-            agent_name: Codex
-            model: gpt-6-luna
-            mode: agent-full-access
-            config_options:
-                reasoning_effort: high
+            agent_name: Copilot
+            model: gpt-6.1-terra
+            mode: https://agentclientprotocol.com/protocol/session-modes#agent
+            config_options: {}
           profile_session_start_policy: new
           profile_session_end_policy: complete
           disable_unclassified_fallback: false
