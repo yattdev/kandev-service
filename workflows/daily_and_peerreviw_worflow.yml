@@ -1,4 +1,4 @@
-version: 2
+version: 3
 type: kandev_workflow
 workflows:
     - name: Daily workflow
@@ -14,15 +14,17 @@ workflows:
           allow_manual_move: true
           profile_session_start_policy: reuse
           profile_session_end_policy: complete
+          disable_unclassified_fallback: false
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
           complete_task_on_enter: false
+          stage_type: custom
         - name: Spec
           position: 1
           color: bg-purple-500
           prompt: |-
             {{task_prompt}}
-            @dw-spec
+            @codex-dw-spec
           events:
             on_enter:
                 - type: enable_plan_mode
@@ -37,13 +39,16 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Copilot
-            model: gpt-5.6-sol
-            mode: https://agentclientprotocol.com/protocol/session-modes#plan
+            model: gpt-6.1-sol
+            config_options:
+                reasoning_effort: high
           profile_session_start_policy: reuse
           profile_session_end_policy: park
+          disable_unclassified_fallback: false
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
           complete_task_on_enter: false
+          stage_type: custom
         - name: Todo
           position: 2
           color: bg-slate-500
@@ -57,13 +62,15 @@ workflows:
           allow_manual_move: true
           profile_session_start_policy: reuse
           profile_session_end_policy: complete
+          disable_unclassified_fallback: false
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
           complete_task_on_enter: false
-        - name: Work
+          stage_type: custom
+        - name: Work-review-qa
           position: 3
           color: bg-blue-500
-          prompt: '@dw-work'
+          prompt: '@codex-dw-wip'
           events:
             on_enter:
                 - type: auto_start_agent
@@ -76,17 +83,21 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Copilot
-            model: gpt-5.6-terra
+            model: gpt-6.1-terra
             mode: https://agentclientprotocol.com/protocol/session-modes#agent
+            config_options: {}
           profile_session_start_policy: reuse
-          profile_session_end_policy: complete
+          profile_session_end_policy: park
+          disable_unclassified_fallback: false
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
           complete_task_on_enter: false
+          stage_type: custom
         - name: Blocked
           position: 4
           color: bg-red-500
-          prompt: '@dw-blocked'
+          prompt: |
+            @dw-blocked
           events:
             on_enter:
                 - type: auto_start_agent
@@ -95,62 +106,20 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Copilot
-            model: gpt-5.6-terra
+            model: gpt-6.1-terra
             mode: https://agentclientprotocol.com/protocol/session-modes#agent
+            config_options: {}
           profile_session_start_policy: reuse
           profile_session_end_policy: park
+          disable_unclassified_fallback: false
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
           complete_task_on_enter: false
-        - name: Review
+          stage_type: hold
+        - name: Pr-CI-fixup
           position: 5
-          color: bg-yellow-500
-          prompt: '@dw-review'
-          events:
-            on_enter:
-                - type: reset_agent_context
-                - type: auto_start_agent
-            on_turn_complete:
-                - type: move_to_next
-          is_start_step: false
-          show_in_command_panel: true
-          allow_manual_move: true
-          agent_profile:
-            agent_name: Copilot
-            model: gpt-5.6-terra
-            mode: https://agentclientprotocol.com/protocol/session-modes#plan
-          profile_session_start_policy: reuse
-          profile_session_end_policy: complete
-          auto_advance_requires_signal: true
-          cancel_triggers_turn_complete: false
-          complete_task_on_enter: false
-        - name: QA
-          position: 6
-          color: bg-orange-500
-          prompt: '@dw-qa'
-          events:
-            on_enter:
-                - type: auto_start_agent
-            on_turn_complete:
-                - type: move_to_step
-                  config:
-                    step_position: 7
-          is_start_step: false
-          show_in_command_panel: true
-          allow_manual_move: true
-          agent_profile:
-            agent_name: Copilot
-            model: gpt-6-sol
-            mode: https://agentclientprotocol.com/protocol/session-modes#agent
-          profile_session_start_policy: reuse
-          profile_session_end_policy: complete
-          auto_advance_requires_signal: true
-          cancel_triggers_turn_complete: false
-          complete_task_on_enter: false
-        - name: PR
-          position: 7
           color: bg-indigo-500
-          prompt: '@dw-pull-request'
+          prompt: '@codex-dw-pr-cifixup'
           events:
             on_enter:
                 - type: auto_start_agent
@@ -163,36 +132,19 @@ workflows:
             agent_name: Copilot
             model: gpt-6-luna
             mode: https://agentclientprotocol.com/protocol/session-modes#agent
-          profile_session_start_policy: reuse
+            config_options:
+                reasoning_effort: high
+          profile_session_start_policy: new
           profile_session_end_policy: complete
+          disable_unclassified_fallback: false
           auto_advance_requires_signal: true
           cancel_triggers_turn_complete: false
           complete_task_on_enter: false
-        - name: CI Fixup
-          position: 8
-          color: bg-amber-500
-          prompt: '@dw-ci-fixup'
-          events:
-            on_enter:
-                - type: auto_start_agent
-            on_turn_complete:
-                - type: move_to_next
-          is_start_step: false
-          show_in_command_panel: true
-          allow_manual_move: true
-          agent_profile:
-            agent_name: Copilot
-            model: gpt-5.6-terra
-            mode: https://agentclientprotocol.com/protocol/session-modes#autopilot
-          profile_session_start_policy: reuse
-          profile_session_end_policy: complete
-          auto_advance_requires_signal: true
-          cancel_triggers_turn_complete: false
-          complete_task_on_enter: false
+          stage_type: custom
         - name: Human-QA
-          position: 9
+          position: 6
           color: bg-orange-500
-          prompt: '@dw-human-qa-review'
+          prompt: '@codex-dw-human-qa-review'
           events:
             on_enter:
                 - type: auto_start_agent
@@ -201,15 +153,18 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Copilot
-            model: gpt-5.6-terra
+            model: gpt-6.1-terra
             mode: https://agentclientprotocol.com/protocol/session-modes#agent
+            config_options: {}
           profile_session_start_policy: reuse
           profile_session_end_policy: park
+          disable_unclassified_fallback: false
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
           complete_task_on_enter: false
+          stage_type: custom
         - name: ToDeploy
-          position: 10
+          position: 7
           color: bg-cyan-500
           events: {}
           is_start_step: false
@@ -217,13 +172,15 @@ workflows:
           allow_manual_move: true
           profile_session_start_policy: reuse
           profile_session_end_policy: complete
+          disable_unclassified_fallback: false
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
           complete_task_on_enter: false
+          stage_type: custom
         - name: Done
-          position: 11
+          position: 8
           color: bg-green-500
-          prompt: '@dw-done'
+          prompt: '@codex-dw-done'
           events:
             on_enter:
                 - type: auto_start_agent
@@ -233,13 +190,16 @@ workflows:
           auto_archive_after_hours: 72
           agent_profile:
             agent_name: Copilot
-            model: gpt-6-luna
+            model: gpt-6.1-terra
             mode: https://agentclientprotocol.com/protocol/session-modes#agent
-          profile_session_start_policy: reuse
+            config_options: {}
+          profile_session_start_policy: new
           profile_session_end_policy: complete
+          disable_unclassified_fallback: false
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
           complete_task_on_enter: true
+          stage_type: custom
     - name: PR Review
       steps:
         - name: Backlogs
@@ -251,9 +211,11 @@ workflows:
           allow_manual_move: true
           profile_session_start_policy: reuse
           profile_session_end_policy: complete
+          disable_unclassified_fallback: false
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
           complete_task_on_enter: false
+          stage_type: custom
         - name: Review
           position: 1
           color: bg-yellow-500
@@ -268,13 +230,18 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Copilot
-            model: gpt-5.6-terra
-            mode: https://agentclientprotocol.com/protocol/session-modes#autopilot
-          profile_session_start_policy: reuse
+            model: gpt-6.1-terra
+            mode: https://agentclientprotocol.com/protocol/session-modes#plan
+            config_options:
+                allow_all: "on"
+                reasoning_effort: high
+          profile_session_start_policy: new
           profile_session_end_policy: park
+          disable_unclassified_fallback: false
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
           complete_task_on_enter: false
+          stage_type: custom
         - name: QA
           position: 2
           color: bg-blue-500
@@ -289,13 +256,17 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Copilot
-            model: gpt-6-sol
-            mode: https://agentclientprotocol.com/protocol/session-modes#autopilot
-          profile_session_start_policy: reuse
+            model: gpt-6.1-sol
+            mode: https://agentclientprotocol.com/protocol/session-modes#agent
+            config_options:
+                reasoning_effort: high
+          profile_session_start_policy: new
           profile_session_end_policy: park
+          disable_unclassified_fallback: false
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
           complete_task_on_enter: false
+          stage_type: custom
         - name: Human-QA
           position: 3
           color: bg-cyan-500
@@ -314,17 +285,20 @@ workflows:
           allow_manual_move: true
           agent_profile:
             agent_name: Copilot
-            model: gpt-5.6-terra
+            model: gpt-6.1-terra
             mode: https://agentclientprotocol.com/protocol/session-modes#agent
+            config_options: {}
           profile_session_start_policy: reuse
           profile_session_end_policy: park
+          disable_unclassified_fallback: false
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
           complete_task_on_enter: false
+          stage_type: custom
         - name: Done
           position: 4
           color: bg-green-500
-          prompt: '@dw-done'
+          prompt: '@codex-dw-done'
           events:
             on_enter:
                 - type: auto_start_agent
@@ -334,11 +308,14 @@ workflows:
           auto_archive_after_hours: 72
           agent_profile:
             agent_name: Copilot
-            model: gpt-6-luna
+            model: gpt-6.1-terra
             mode: https://agentclientprotocol.com/protocol/session-modes#agent
-          profile_session_start_policy: reuse
+            config_options: {}
+          profile_session_start_policy: new
           profile_session_end_policy: complete
+          disable_unclassified_fallback: false
           auto_advance_requires_signal: false
           cancel_triggers_turn_complete: false
           complete_task_on_enter: true
+          stage_type: custom
 
