@@ -128,13 +128,12 @@ workflows:
           is_start_step: false
           show_in_command_panel: true
           allow_manual_move: true
-          agent_profile:
-            agent_name: Copilot
-            model: gpt-6-luna
-            mode: https://agentclientprotocol.com/protocol/session-modes#agent
-            config_options:
-                reasoning_effort: high
           profile_session_start_policy: new
+		  agent_profile:
+			agent_name: Copilot
+			model: gpt-6.1-terra
+			mode: https://agentclientprotocol.com/protocol/session-modes#agent
+			config_options: {}
           profile_session_end_policy: complete
           disable_unclassified_fallback: false
           auto_advance_requires_signal: true
